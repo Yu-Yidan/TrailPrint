@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}{{ project.name }} · TrailPrint{% endblock %}
+{% block content %}
+<a class="back" href="{{ url_for('dashboard') }}">← All projects</a>
+<section class="project-header"><div><p class="eyebrow">PRINT PROJECT</p>
+<h1>{{ project.name.replace('-', ' ')|title }}</h1><p><code>prints/{{ project.name }}/</code></p></div></section>
+<section class="detail-grid">
+  <article class="panel"><h2>Project status</h2>
+    <div class="status-row"><span>GPX route</span><strong class="{{ 'good' if has_gpx else 'bad' }}">{{ 'Ready' if has_gpx else 'Missing' }}</strong></div>
+    <div class="status-row"><span>Printable STL</span><strong class="{{ 'good' if stl_files else '' }}">{{ stl_files|length ~ ' file(s)' if stl_files else 'Not built' }}</strong></div>
+    {% if stl_files %}<div class="file-list">{% for filename in stl_files %}
+      <a href="{{ url_for('download_file', slug=project.name, filename=filename) }}">↓ {{ filename }}</a>
+    {% endfor %}</div>{% endif %}
+  </article>
+  <article class="panel"><h2>TrailPrint3D settings</h2>
+    <form method="post" action="{{ url_for('build_project', slug=project.name) }}" id="build-form">
+      <label class="field-label" for="shape">Shape</label>
+      <select class="text-input" id="shape" name="shape">
+        {% for value, label in shapes.items() %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+      </select>
+      <label class="field-label" for="shape-extra">Shape extras</label>
+      <select class="text-input" id="shape-extra" name="shape_extra"></select>
+      <label class="field-label" for="resolution">Resolution <strong id="resolution-value">4</strong></label>
+      <input class="range-input" id="resolution" name="resolution" type="range" min="1" max="10" value="4">
+      <p class="fine-print" id="resolution-note">Higher values add terrain detail but take longer. EmGi recommends 8 or lower.</p>
+      <label class="locked-setting"><input type="checkbox" checked disabled><span><strong>Single-color trail</strong><small>Always enabled for TrailPrint builds</small></span><span class="lock">Locked</span></label>
+      <button class="button primary build-button" {% if not has_gpx or (job and job.state in ['queued','running']) %}disabled{% endif %}>Build with Blender</button>
+    </form>
+  </article>
+</section>
+{% if job %}<section class="build-status {{ job.state }}" id="build-status" data-job-id="{{ job.id }}">
+  <div><strong id="job-state">{{ job.state|title }}</strong><p id="job-message">{{ job.message }}</p></div>
+  <div class="progress-track"><span id="job-progress"></span></div><small id="job-elapsed"></small>
+</section>{% endif %}
+<script>window.TRAILPRINT_EXTRAS = {{ extras|tojson }}; window.TRAILPRINT_EXTRA_LABELS = {{ extra_labels|tojson }};</script>
+<script src="{{ url_for('static', filename='project.js') }}"></script>
+{% endblock %}

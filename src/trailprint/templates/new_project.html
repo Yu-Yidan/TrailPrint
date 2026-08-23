@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}New project · TrailPrint{% endblock %}
+{% block content %}
+<a class="back" href="{{ url_for('dashboard') }}">← All projects</a>
+<section class="form-shell">
+  <div class="form-heading"><p class="eyebrow">NEW PRINT</p><h1>Create a project</h1>
+  <p>Add a GPX recording. We’ll validate it and prepare a complete project folder.</p></div>
+  {% if error %}<div class="notice error">{{ error }}</div>{% endif %}
+  <form method="post" action="{{ url_for('save_project') }}" enctype="multipart/form-data" id="project-form">
+    <label class="field-label" for="gpx">GPX route</label>
+    <label class="drop-zone" id="drop-zone" for="gpx">
+      <input id="gpx" name="gpx" type="file" accept=".gpx,application/gpx+xml" required>
+      <span class="upload-icon">⇧</span><strong id="file-title">Drop your GPX file here</strong>
+      <span id="file-help">or click to choose a file · maximum 10 MB</span>
+    </label>
+    <label class="field-label" for="name">Project name</label>
+    <input class="text-input" id="name" name="name" value="{{ name or '' }}" placeholder="Mount Tam loop" required>
+    <p class="path-preview">Folder: <code>prints/<span id="slug-preview">project-name</span>/</code></p>
+    <div class="form-actions"><a class="button secondary" href="{{ url_for('dashboard') }}">Cancel</a>
+    <button class="button primary" type="submit">Create project</button></div>
+  </form>
+</section>
+<script src="{{ url_for('static', filename='new-project.js') }}"></script>
+{% endblock %}

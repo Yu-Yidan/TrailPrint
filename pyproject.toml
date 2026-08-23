@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "trailprint"
+version = "0.1.0"
+description = "Turn GPX tracks into printable 3D route models"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = ["Flask>=3.0,<4"]
+
+[project.scripts]
+trailprint = "trailprint.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+trailprint = ["templates/*.html", "static/*.css", "static/*.js"]

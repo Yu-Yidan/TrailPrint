@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Projects · TrailPrint{% endblock %}
+{% block content %}
+<section class="hero">
+  <div><p class="eyebrow">YOUR TRAILS, MADE PHYSICAL</p><h1>Print projects</h1>
+  <p>Turn recorded routes into tangible, elevation-aware models.</p></div>
+  <a class="button primary" href="{{ url_for('new_project') }}">＋ New project</a>
+</section>
+{% if projects %}
+<section class="project-grid">
+  {% for project in projects %}
+  <a class="project-card" href="{{ url_for('project_detail', slug=project.slug) }}">
+    <div class="terrain-mark">⌁</div>
+    <h2>{{ project.slug.replace('-', ' ')|title }}</h2>
+    <p class="slug">prints/{{ project.slug }}</p>
+    <div class="statuses">
+      <span class="status {{ 'ready' if project.has_gpx else 'missing' }}">{{ 'GPX ready' if project.has_gpx else 'GPX missing' }}</span>
+      <span class="status {{ 'ready' if project.has_stl else '' }}">{{ 'STL built' if project.has_stl else 'Not built' }}</span>
+    </div>
+  </a>
+  {% endfor %}
+</section>
+{% else %}
+<section class="empty-state"><div class="terrain-mark">⌁</div><h2>No projects yet</h2>
+<p>Upload your first route and make it printable.</p>
+<a class="button primary" href="{{ url_for('new_project') }}">Create your first project</a></section>
+{% endif %}
+{% endblock %}
