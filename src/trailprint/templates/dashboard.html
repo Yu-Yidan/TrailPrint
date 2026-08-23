@@ -9,17 +9,36 @@
 {% if projects %}
 <section class="project-grid">
   {% for project in projects %}
-  <a class="project-card" href="{{ url_for('project_detail', slug=project.slug) }}">
-    <div class="terrain-mark">⌁</div>
-    <h2>{{ project.slug.replace('-', ' ')|title }}</h2>
-    <p class="slug">prints/{{ project.slug }}</p>
-    <div class="statuses">
-      <span class="status {{ 'ready' if project.has_gpx else 'missing' }}">{{ 'GPX ready' if project.has_gpx else 'GPX missing' }}</span>
-      <span class="status {{ 'ready' if project.has_stl else '' }}">{{ 'STL built' if project.has_stl else 'Not built' }}</span>
-    </div>
-  </a>
+  <article class="project-card-wrap">
+    {% if project.slug != 'example-trail' %}<button class="delete-icon" type="button"
+      data-delete-slug="{{ project.slug }}" data-delete-title="{{ project.slug.replace('-', ' ')|title }}"
+      aria-label="Delete {{ project.slug.replace('-', ' ')|title }}"><svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M4 7h16M9 7V4h6v3m3 0-1 13H7L6 7m4 4v5m4-5v5"/>
+      </svg></button>{% endif %}
+    <a class="project-card" href="{{ url_for('project_detail', slug=project.slug) }}">
+      <div class="terrain-mark">⌁</div>
+      <h2>{{ project.slug.replace('-', ' ')|title }}</h2>
+      <p class="slug">prints/{{ project.slug }}</p>
+      <div class="statuses">
+        <span class="status {{ 'ready' if project.has_gpx else 'missing' }}">{{ 'GPX ready' if project.has_gpx else 'GPX missing' }}</span>
+        <span class="status {{ 'ready' if project.has_stl else '' }}">{{ 'STL built' if project.has_stl else 'Not built' }}</span>
+      </div>
+    </a>
+  </article>
   {% endfor %}
 </section>
+<dialog class="delete-dialog" id="delete-dialog">
+  <form method="post" id="delete-form">
+    <button class="dialog-close" type="button" aria-label="Close">×</button>
+    <p class="eyebrow">DELETE PROJECT</p><h2>Move <span id="delete-title"></span> to trash?</h2>
+    <p>This removes the complete project folder from the app. A recoverable copy will remain for 30 days.</p>
+    <label class="field-label" for="delete-confirmation">Type <code id="delete-slug-label"></code> to confirm</label>
+    <input class="text-input" id="delete-confirmation" name="confirmation" autocomplete="off" required>
+    <div class="form-actions"><button class="button secondary" id="delete-cancel" type="button">Cancel</button>
+      <button class="button danger" id="delete-confirm" type="submit" disabled>Move to trash</button></div>
+  </form>
+</dialog>
+<script src="{{ url_for('static', filename='delete-project.js') }}"></script>
 {% else %}
 <section class="empty-state"><div class="terrain-mark">⌁</div><h2>No projects yet</h2>
 <p>Upload your first route and make it printable.</p>

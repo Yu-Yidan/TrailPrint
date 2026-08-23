@@ -64,6 +64,10 @@ class BuildManager:
         matches = [job for job in self._jobs.values() if job.project == project.resolve()]
         return max(matches, key=lambda job: job.started_at or 0) if matches else None
 
+    def is_active(self, project: Path) -> bool:
+        job = self.for_project(project)
+        return bool(job and job.state in {"queued", "running"})
+
     def serialize(self, job: BuildJob) -> dict:
         now = job.finished_at or time.time()
         progress = read_progress() if job.state == "running" else {}

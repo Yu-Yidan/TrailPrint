@@ -5,7 +5,9 @@ import re
 import shutil
 import tempfile
 import unicodedata
+import uuid
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import BinaryIO, List
 
@@ -14,6 +16,7 @@ from .gpx import read_gpx
 
 
 MAX_GPX_BYTES = 10 * 1024 * 1024
+TRASH_PATTERN = re.compile(r"^(?P<slug>[a-z0-9][a-z0-9-]*)--(?P<stamp>\d{8}T\d{6}Z)--[a-f0-9]{8}$")
 
 
 @dataclass(frozen=True)
@@ -93,3 +96,48 @@ def create_project(prints_dir: Path, presets_dir: Path, name: str, gpx_data: byt
         shutil.rmtree(temporary, ignore_errors=True)
         raise
     return destination
+
+
+def trash_project(prints_dir: Path, trash_dir: Path, slug: str, confirmation: str,
+                  now: datetime = None) -> Path:
+    """Move a confirmed project to recoverable local trash."""
+    if slug == "example-trail":
+        raise ValueError("The example project is protected and cannot be deleted.")
+    if confirmation != slug:
+        raise ValueError(f"Type '{slug}' exactly to confirm deletion.")
+    root = prints_dir.resolve()
+    raw_project = root / slug
+    if raw_project.is_symlink():
+        raise ValueError("Symbolic-link projects cannot be deleted from the app.")
+    project = resolve_project(prints_dir, slug)
+    if not project.is_dir():
+        raise ValueError(f"Project '{slug}' does not exist.")
+    trash_dir.mkdir(parents=True, exist_ok=True)
+    trash_root = trash_dir.resolve()
+    moment = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    destination = trash_root / f"{slug}--{moment.strftime('%Y%m%dT%H%M%SZ')}--{uuid.uuid4().hex[:8]}"
+    if destination.parent != trash_root:
+        raise ValueError("Invalid trash destination.")
+    os.rename(project, destination)
+    return destination
+
+
+def purge_trash(trash_dir: Path, retention_days: int = 30, now: datetime = None) -> List[Path]:
+    """Remove recognized app trash entries older than the retention window."""
+    if not trash_dir.is_dir():
+        return []
+    moment = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    cutoff = moment - timedelta(days=retention_days)
+    removed = []
+    for entry in trash_dir.iterdir():
+        match = TRASH_PATTERN.fullmatch(entry.name)
+        if not match or not entry.is_dir() or entry.is_symlink():
+            continue
+        try:
+            created = datetime.strptime(match.group("stamp"), "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+        if created < cutoff:
+            shutil.rmtree(entry)
+            removed.append(entry)
+    return removed

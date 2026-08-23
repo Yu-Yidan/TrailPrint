@@ -1,11 +1,12 @@
 import io
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
 from trailprint.blender_bridge import BuildSettings
-from trailprint.projects import create_project, read_upload, slugify
+from trailprint.projects import create_project, purge_trash, read_upload, slugify, trash_project
 from trailprint.web import create_app
 
 
@@ -40,6 +41,53 @@ class ProjectServiceTests(unittest.TestCase):
             read_upload(io.BytesIO(GPX), "route.txt")
         with self.assertRaisesRegex(ValueError, "10 MB or smaller"):
             read_upload(io.BytesIO(b"x" * 11), "route.gpx", limit=10)
+
+    def test_confirmed_project_is_moved_to_recoverable_trash(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            project = create_project(root / "prints", ROOT / "presets", "Keep My Files", GPX)
+            (project / "deliverables/model.stl").write_text("mesh", encoding="utf-8")
+
+            destination = trash_project(
+                root / "prints", root / ".trailprint-trash", "keep-my-files", "keep-my-files",
+                now=datetime(2026, 8, 23, 12, 0, tzinfo=timezone.utc))
+
+            self.assertFalse(project.exists())
+            self.assertTrue((destination / "route.gpx").is_file())
+            self.assertTrue((destination / "deliverables/model.stl").is_file())
+            self.assertTrue(destination.name.startswith("keep-my-files--20260823T120000Z--"))
+
+    def test_delete_requires_exact_slug_and_protects_example(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            project = create_project(root / "prints", ROOT / "presets", "My Route", GPX)
+            with self.assertRaisesRegex(ValueError, "exactly"):
+                trash_project(root / "prints", root / ".trailprint-trash", "my-route", "My Route")
+            self.assertTrue(project.is_dir())
+
+            example = create_project(root / "prints", ROOT / "presets", "Example Trail", GPX)
+            with self.assertRaisesRegex(ValueError, "protected"):
+                trash_project(root / "prints", root / ".trailprint-trash",
+                              "example-trail", "example-trail")
+            self.assertTrue(example.is_dir())
+
+    def test_purge_only_removes_recognized_trash_older_than_30_days(self):
+        with tempfile.TemporaryDirectory() as temp:
+            trash = Path(temp) / ".trailprint-trash"
+            trash.mkdir()
+            old = trash / "old-route--20260701T120000Z--0123abcd"
+            recent = trash / "new-route--20260820T120000Z--0123abcd"
+            unknown = trash / "do-not-touch"
+            for path in (old, recent, unknown):
+                path.mkdir()
+            now = datetime(2026, 8, 23, 12, 0, tzinfo=timezone.utc)
+
+            removed = purge_trash(trash, retention_days=30, now=now)
+
+            self.assertEqual(removed, [old])
+            self.assertFalse(old.exists())
+            self.assertTrue(recent.is_dir())
+            self.assertTrue(unknown.is_dir())
 
 
 class WebTests(unittest.TestCase):
@@ -90,10 +138,48 @@ class WebTests(unittest.TestCase):
         self.assertIn(b"unavailable for Rectangle", response.data)
         self.assertIsNone(self.build_manager.started)
 
+    def test_dashboard_shows_delete_control_except_for_example(self):
+        create_project(self.root / "prints", self.root / "presets", "Example Trail", GPX)
+        create_project(self.root / "prints", self.root / "presets", "Coastal Run", GPX)
+
+        page = self.client.get("/").data
+
+        self.assertIn(b'data-delete-slug="coastal-run"', page)
+        self.assertNotIn(b'data-delete-slug="example-trail"', page)
+
+    def test_delete_moves_project_after_exact_confirmation(self):
+        project = create_project(self.root / "prints", self.root / "presets", "Coastal Run", GPX)
+
+        response = self.client.post(
+            "/projects/coastal-run/delete", data={"confirmation": "coastal-run"},
+            follow_redirects=True)
+
+        self.assertIn(b"Moved &#39;coastal-run&#39; to local trash", response.data)
+        self.assertFalse(project.exists())
+        trashed = list((self.root / ".trailprint-trash").iterdir())
+        self.assertEqual(len(trashed), 1)
+        self.assertTrue((trashed[0] / "route.gpx").is_file())
+
+    def test_delete_rejects_wrong_confirmation_and_active_build(self):
+        project = create_project(self.root / "prints", self.root / "presets", "Coastal Run", GPX)
+        response = self.client.post(
+            "/projects/coastal-run/delete", data={"confirmation": "Coastal Run"},
+            follow_redirects=True)
+        self.assertIn(b"exactly to confirm deletion", response.data)
+        self.assertTrue(project.is_dir())
+
+        self.build_manager.active = True
+        response = self.client.post(
+            "/projects/coastal-run/delete", data={"confirmation": "coastal-run"},
+            follow_redirects=True)
+        self.assertIn(b"currently building", response.data)
+        self.assertTrue(project.is_dir())
+
 
 class FakeBuildManager:
     def __init__(self):
         self.started = None
+        self.active = False
 
     def start(self, project, settings):
         self.started = SimpleNamespace(id="test-job", project=project.resolve(), settings=settings,
@@ -102,6 +188,9 @@ class FakeBuildManager:
 
     def for_project(self, project):
         return self.started if self.started and self.started.project == project.resolve() else None
+
+    def is_active(self, project):
+        return self.active
 
     def get(self, job_id):
         return self.started if self.started and self.started.id == job_id else None

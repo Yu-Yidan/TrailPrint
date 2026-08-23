@@ -7,7 +7,7 @@ from flask import Flask, abort, flash, jsonify, redirect, render_template, reque
 from .blender_bridge import BuildSettings, EXTRA_LABELS, SHAPE_EXTRAS, SHAPE_LABELS
 from .config import load_config
 from .jobs import BuildBusy, BuildManager
-from .projects import create_project, list_projects, read_upload, resolve_project
+from .projects import create_project, list_projects, purge_trash, read_upload, resolve_project, trash_project
 
 
 def create_app(repo_root: Path = None, build_manager: BuildManager = None) -> Flask:
@@ -19,8 +19,10 @@ def create_app(repo_root: Path = None, build_manager: BuildManager = None) -> Fl
         REPO_ROOT=root,
         PRINTS_DIR=root / "prints",
         PRESETS_DIR=root / "presets",
+        TRASH_DIR=root / ".trailprint-trash",
     )
     app.extensions["trailprint_builds"] = build_manager or BuildManager()
+    purge_trash(app.config["TRASH_DIR"], retention_days=30)
 
     @app.get("/")
     def dashboard():
@@ -79,6 +81,20 @@ def create_app(repo_root: Path = None, build_manager: BuildManager = None) -> Fl
         else:
             flash("TrailPrint3D build started in Blender.", "success")
         return redirect(url_for("project_detail", slug=slug, job=job.id if 'job' in locals() else None))
+
+    @app.post("/projects/<slug>/delete")
+    def delete_project(slug):
+        project = get_project(slug)
+        try:
+            if app.extensions["trailprint_builds"].is_active(project):
+                raise ValueError("This project is currently building. Wait for the build to finish before deleting it.")
+            trash_project(app.config["PRINTS_DIR"], app.config["TRASH_DIR"], slug,
+                          request.form.get("confirmation", ""))
+        except (OSError, ValueError) as exc:
+            flash(str(exc), "error")
+        else:
+            flash(f"Moved '{slug}' to local trash. It can be recovered for 30 days.", "success")
+        return redirect(url_for("dashboard"))
 
     @app.get("/builds/<job_id>")
     def build_status(job_id):

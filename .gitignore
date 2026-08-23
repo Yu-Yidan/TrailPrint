@@ -2,6 +2,7 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .venv/
+.trailprint-trash/
 dist/
 build/
 prints/*/build/*

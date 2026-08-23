@@ -31,4 +31,7 @@ Start the project dashboard and open <http://127.0.0.1:5000>:
 The interface lists existing projects, accepts GPX files by drag-and-drop, and
 can run TrailPrint3D from a project detail page. The reduced interface exposes
 shape, shape extras, and resolution while always enabling single-color trail
-mode. Run the command from the repository root so it can find `prints/`.
+mode. Projects can be deleted from the dashboard after typing the exact folder
+slug; deleted folders remain recoverable in `.trailprint-trash/` for 30 days.
+The bundled `example-trail` project is protected. Run the command from the
+repository root so it can find `prints/`.
