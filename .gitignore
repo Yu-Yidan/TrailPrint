@@ -1,5 +1,7 @@
 __pycache__/
 *.py[cod]
+*.egg-info/
+.DS_Store
 .pytest_cache/
 .venv/
 .trailprint-trash/
@@ -7,3 +9,7 @@ dist/
 build/
 prints/*/build/*
 !prints/*/build/.gitkeep
+prints/*/location.json
+prints/*/project_analytics.json
+data/analytics/
+result.json

@@ -1,47 +1,23 @@
 {% extends "base.html" %}
 {% block title %}Projects · TrailPrint{% endblock %}
 {% block content %}
-<section class="hero">
-  <div><p class="eyebrow">YOUR TRAILS, MADE PHYSICAL</p><h1>Print projects</h1>
-  <p>Turn recorded routes into tangible, elevation-aware models.</p></div>
-  <a class="button primary" href="{{ url_for('new_project') }}">＋ New project</a>
+{% if analytics_status_warnings %}<div class="notice error"><strong>Workflow metadata needs attention.</strong> Add the missing status{% if analytics_status_warnings|length != 1 %}es{% endif %} to <code>data/analytics/dim_status.csv</code>: {{ analytics_status_warnings|join(', ') }}. This does not block project work.</div>{% endif %}
+<section class="hero funnel-hero"><div><p class="eyebrow">PRODUCTION FUNNEL</p><h1>Print projects</h1><p>Move every trail from source file to finished print.</p></div><div class="hero-actions"><a class="button secondary" href="{{ url_for('deleted_projects') }}">Deleted projects{% if deleted_count %} ({{ deleted_count }}){% endif %}</a><a class="button primary" href="{{ url_for('new_project') }}">＋ New project</a></div></section>
+<nav class="funnel-tabs" role="tablist" aria-label="Project status" data-default-stage="{{ default_stage }}">
+{% for stage_key, stage_label in funnel_stages %}<button class="funnel-tab" type="button" role="tab" id="tab-{{ stage_key }}" data-stage="{{ stage_key }}" aria-controls="panel-{{ stage_key }}" aria-selected="false">{{ stage_label }} <span>{{ grouped_projects[stage_key]|length }}</span></button>{% endfor %}
+</nav>
+<section class="funnel tabbed-funnel">
+{% for stage_key, stage_label in funnel_stages %}<section class="funnel-stage stage-{{ stage_key }}" id="panel-{{ stage_key }}" role="tabpanel" aria-labelledby="tab-{{ stage_key }}" data-stage-panel="{{ stage_key }}" hidden><div class="funnel-projects">
+{% for project in grouped_projects[stage_key] %}<article class="funnel-row">
+  <a class="funnel-project-link" href="{{ url_for('project_detail', slug=project.slug) }}"><strong>{{ project.slug.replace('-', ' ')|title }}</strong><small>{% if stage_key == 'created' %}GPX ready{% elif stage_key == 'stl' %}STL files ready{% elif stage_key == '3mf' %}3MF ready{% elif stage_key == 'printing' %}Started {{ project.printing_started_at.strftime('%Y-%m-%d %H:%M') if project.printing_started_at else 'recently' }}{% else %}Completed {{ project.completed_at.strftime('%Y-%m-%d %H:%M') if project.completed_at else 'recently' }}{% endif %}</small></a>
+  <div class="funnel-actions"><form method="post" action="{{ url_for('open_project_folder', slug=project.slug) }}"><button class="folder-link" type="submit">↗ Project folder</button></form>
+  {% if stage_key == '3mf' %}<form method="post" action="{{ url_for('production_status', slug=project.slug) }}"><input type="hidden" name="action" value="start"><button class="button primary compact-button" type="submit">Start printing</button></form>
+  {% elif stage_key == 'printing' %}<form method="post" action="{{ url_for('production_status', slug=project.slug) }}"><input type="hidden" name="action" value="complete"><button class="button primary compact-button" type="submit">Mark completed</button></form><form method="post" action="{{ url_for('production_status', slug=project.slug) }}"><input type="hidden" name="action" value="back"><button class="button secondary compact-button" type="submit">Move back</button></form>
+  {% elif stage_key == 'completed' %}<form method="post" action="{{ url_for('production_status', slug=project.slug) }}"><input type="hidden" name="action" value="back"><button class="button secondary compact-button" type="submit">Move back</button></form>{% endif %}
+  {% if project.slug != 'example-trail' %}<button class="delete-icon funnel-delete" type="button" data-delete-slug="{{ project.slug }}" data-delete-title="{{ project.slug.replace('-', ' ')|title }}" aria-label="Delete {{ project.slug.replace('-', ' ')|title }}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3m3 0-1 13H7L6 7m4 4v5m4-5v5"/></svg></button>{% endif %}</div>
+</article>{% else %}<p class="funnel-empty">No projects at this stage.</p>{% endfor %}
+</div></section>{% endfor %}
 </section>
-{% if projects %}
-<section class="project-grid">
-  {% for project in projects %}
-  <article class="project-card-wrap">
-    {% if project.slug != 'example-trail' %}<button class="delete-icon" type="button"
-      data-delete-slug="{{ project.slug }}" data-delete-title="{{ project.slug.replace('-', ' ')|title }}"
-      aria-label="Delete {{ project.slug.replace('-', ' ')|title }}"><svg viewBox="0 0 24 24" aria-hidden="true">
-        <path d="M4 7h16M9 7V4h6v3m3 0-1 13H7L6 7m4 4v5m4-5v5"/>
-      </svg></button>{% endif %}
-    <a class="project-card" href="{{ url_for('project_detail', slug=project.slug) }}">
-      <div class="terrain-mark">⌁</div>
-      <h2>{{ project.slug.replace('-', ' ')|title }}</h2>
-      <p class="slug">prints/{{ project.slug }}</p>
-      <div class="statuses">
-        <span class="status {{ 'ready' if project.has_gpx else 'missing' }}">{{ 'GPX ready' if project.has_gpx else 'GPX missing' }}</span>
-        <span class="status {{ 'ready' if project.has_stl else '' }}">{{ 'STL built' if project.has_stl else 'Not built' }}</span>
-      </div>
-    </a>
-  </article>
-  {% endfor %}
-</section>
-<dialog class="delete-dialog" id="delete-dialog">
-  <form method="post" id="delete-form">
-    <button class="dialog-close" type="button" aria-label="Close">×</button>
-    <p class="eyebrow">DELETE PROJECT</p><h2>Move <span id="delete-title"></span> to trash?</h2>
-    <p>This removes the complete project folder from the app. A recoverable copy will remain for 30 days.</p>
-    <label class="field-label" for="delete-confirmation">Type <code id="delete-slug-label"></code> to confirm</label>
-    <input class="text-input" id="delete-confirmation" name="confirmation" autocomplete="off" required>
-    <div class="form-actions"><button class="button secondary" id="delete-cancel" type="button">Cancel</button>
-      <button class="button danger" id="delete-confirm" type="submit" disabled>Move to trash</button></div>
-  </form>
-</dialog>
-<script src="{{ url_for('static', filename='delete-project.js') }}"></script>
-{% else %}
-<section class="empty-state"><div class="terrain-mark">⌁</div><h2>No projects yet</h2>
-<p>Upload your first route and make it printable.</p>
-<a class="button primary" href="{{ url_for('new_project') }}">Create your first project</a></section>
-{% endif %}
+{% if projects %}<dialog class="delete-dialog" id="delete-dialog"><form method="post" id="delete-form"><button class="dialog-close" type="button" aria-label="Close">×</button><p class="eyebrow">DELETE PROJECT</p><h2>Move <span id="delete-title"></span> to trash?</h2><p>This removes the complete project folder from the app. A recoverable copy will remain for 30 days.</p><label class="field-label" for="delete-confirmation">Type <code id="delete-slug-label"></code> to confirm</label><input class="text-input" id="delete-confirmation" name="confirmation" autocomplete="off" required><div class="form-actions"><button class="button secondary" id="delete-cancel" type="button">Cancel</button><button class="button danger" id="delete-confirm" type="submit" disabled>Move to trash</button></div></form></dialog><script src="{{ url_for('static', filename='delete-project.js') }}"></script>{% endif %}
+<script src="{{ url_for('static', filename='dashboard.js') }}"></script>
 {% endblock %}

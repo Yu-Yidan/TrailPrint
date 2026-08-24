@@ -4,9 +4,15 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from trailprint.blender_bridge import BuildSettings
-from trailprint.projects import create_project, purge_trash, read_upload, slugify, trash_project
+from trailprint.bambu import BambuEnvironment
+from trailprint.location import save_location
+from trailprint.projects import (create_project, list_deleted_projects,
+                                 permanently_delete_projects, purge_trash, read_upload,
+                                 restore_project, slugify, trash_project,
+                                 update_production_status)
 from trailprint.web import create_app
 
 
@@ -37,7 +43,7 @@ class ProjectServiceTests(unittest.TestCase):
             self.assertEqual(list(prints.iterdir()), [])
 
     def test_upload_rejects_wrong_extension_and_size(self):
-        with self.assertRaisesRegex(ValueError, "\.gpx extension"):
+        with self.assertRaisesRegex(ValueError, r"\.gpx extension"):
             read_upload(io.BytesIO(GPX), "route.txt")
         with self.assertRaisesRegex(ValueError, "10 MB or smaller"):
             read_upload(io.BytesIO(b"x" * 11), "route.gpx", limit=10)
@@ -89,6 +95,93 @@ class ProjectServiceTests(unittest.TestCase):
             self.assertTrue(recent.is_dir())
             self.assertTrue(unknown.is_dir())
 
+    def test_deleted_projects_can_be_listed_and_restored(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            project = create_project(root / "prints", ROOT / "presets", "Restore Me", GPX)
+            deleted = trash_project(
+                root / "prints", root / ".trailprint-trash", "restore-me", "restore-me",
+                now=datetime(2026, 8, 20, 12, 0, tzinfo=timezone.utc))
+            now = datetime(2026, 8, 23, 12, 0, tzinfo=timezone.utc)
+
+            summaries = list_deleted_projects(root / ".trailprint-trash", now=now)
+            restored = restore_project(
+                root / "prints", root / ".trailprint-trash", deleted.name, now=now)
+
+            self.assertEqual([(item.slug, item.days_remaining) for item in summaries],
+                             [("restore-me", 27)])
+            self.assertEqual(restored, project)
+            self.assertTrue((restored / "route.gpx").is_file())
+            self.assertFalse(deleted.exists())
+
+    def test_restore_rejects_conflict_and_expired_entry(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            create_project(root / "prints", ROOT / "presets", "Conflict", GPX)
+            trash = root / ".trailprint-trash"
+            trash.mkdir()
+            conflict = trash / "conflict--20260820T120000Z--0123abcd"
+            conflict.mkdir()
+            now = datetime(2026, 8, 23, 12, 0, tzinfo=timezone.utc)
+            with self.assertRaisesRegex(ValueError, "already exists"):
+                restore_project(root / "prints", trash, conflict.name, now=now)
+            expired = trash / "expired--20260701T120000Z--0123abcd"
+            expired.mkdir()
+            with self.assertRaisesRegex(ValueError, "expired"):
+                restore_project(root / "prints", trash, expired.name, now=now)
+
+    def test_production_status_follows_validated_funnel_transitions(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            project = create_project(root / "prints", ROOT / "presets", "Production", GPX)
+            with self.assertRaisesRegex(ValueError, "3MF"):
+                update_production_status(project, "start")
+            (project / "deliverables/production.3mf").write_bytes(b"3mf")
+            started_at = datetime(2026, 8, 23, 12, 0, tzinfo=timezone.utc)
+            completed_at = datetime(2026, 8, 23, 14, 0, tzinfo=timezone.utc)
+
+            started = update_production_status(project, "start", now=started_at)
+            completed = update_production_status(project, "complete", now=completed_at)
+            printing_again = update_production_status(project, "back")
+            reset = update_production_status(project, "back")
+
+            self.assertEqual(started["status"], "printing")
+            self.assertEqual(completed["status"], "completed")
+            self.assertEqual(printing_again["status"], "printing")
+            self.assertEqual(reset, {})
+            self.assertFalse((project / "workflow.json").exists())
+
+    def test_permanent_delete_removes_only_validated_selection(self):
+        with tempfile.TemporaryDirectory() as temp:
+            trash = Path(temp) / ".trailprint-trash"
+            trash.mkdir()
+            first = trash / "first--20260820T120000Z--0123abcd"
+            second = trash / "second--20260820T120000Z--0123abcd"
+            first.mkdir(); second.mkdir()
+            now = datetime(2026, 8, 23, 12, 0, tzinfo=timezone.utc)
+
+            removed = permanently_delete_projects(
+                trash, [first.name, first.name], "DELETE", now=now)
+
+            self.assertEqual([path.name for path in removed], [first.name])
+            self.assertFalse(first.exists())
+            self.assertTrue(second.exists())
+
+    def test_permanent_delete_validates_every_entry_before_removal(self):
+        with tempfile.TemporaryDirectory() as temp:
+            trash = Path(temp) / ".trailprint-trash"
+            trash.mkdir()
+            valid = trash / "valid--20260820T120000Z--0123abcd"
+            valid.mkdir()
+            now = datetime(2026, 8, 23, 12, 0, tzinfo=timezone.utc)
+            with self.assertRaisesRegex(ValueError, "safely recoverable"):
+                permanently_delete_projects(
+                    trash, [valid.name, "../outside"], "DELETE", now=now)
+            self.assertTrue(valid.exists())
+            with self.assertRaisesRegex(ValueError, "Type DELETE"):
+                permanently_delete_projects(trash, [valid.name], "delete", now=now)
+            self.assertTrue(valid.exists())
+
 
 class WebTests(unittest.TestCase):
     def setUp(self):
@@ -99,15 +192,30 @@ class WebTests(unittest.TestCase):
         (self.root / "presets/standard.yaml").write_text(
             (ROOT / "presets/standard.yaml").read_text(), encoding="utf-8")
         self.build_manager = FakeBuildManager()
-        self.app = create_app(self.root, self.build_manager)
+        self.bambu_manager = FakeBambuManager()
+        self.bambu_environment = BambuEnvironment(
+            Path("/Applications/BambuStudio"), self.root / "bambu",
+            "Bambu Lab P1S 0.4 nozzle", "0.20mm Standard @BBL X1C",
+            ({"number": 1, "name": "Black PLA", "color": "#000000"},
+             {"number": 2, "name": "White PLA", "color": "#FFFFFF"},
+             {"number": 3, "name": "Red PLA", "color": "#FF0000"},
+             {"number": 4, "name": "Green PLA", "color": "#00AA00"}))
+        self.environment_patch = patch(
+            "trailprint.web.discover_environment", return_value=self.bambu_environment)
+        self.environment_patch.start()
+        self.app = create_app(self.root, self.build_manager, self.bambu_manager)
         self.app.config.update(TESTING=True)
         self.client = self.app.test_client()
 
     def tearDown(self):
+        self.environment_patch.stop()
         self.temp.cleanup()
 
     def test_dashboard_and_create_redirect(self):
-        self.assertIn(b"No projects yet", self.client.get("/").data)
+        empty_page = self.client.get("/").data
+        self.assertIn(b"Project created", empty_page)
+        self.assertIn(b"No projects at this stage", empty_page)
+        self.assertIn(b"Deleted projects", empty_page)
         response = self.client.post("/projects", data={
             "name": "Coastal Run", "gpx": (io.BytesIO(GPX), "coast.gpx")},
             content_type="multipart/form-data")
@@ -126,9 +234,272 @@ class WebTests(unittest.TestCase):
     def test_build_action_starts_blender_job_with_validated_settings(self):
         create_project(self.root / "prints", self.root / "presets", "Build Me", GPX)
         response = self.client.post("/projects/build-me/build", data={
-            "shape": "CIRCLE", "shape_extra": "OUTER TEXT", "resolution": "6"})
+            "shape": "CIRCLE", "shape_extra": "OUTER TEXT", "resolution": "6",
+            "plate_title": "Volcano Loop", "plate_text_1": "{length}",
+            "plate_text_2": "Gain {elevation}", "plate_text_3": "{duration}",
+            "plate_text_4": "Hawaii", "plate_text_5": "2026",
+            "x_offset": "1.25", "y_offset": "-0.5", "fixed_elevation_scale": "on",
+            "city": "Volcano", "state": "Hawaii", "country": "United States"})
         self.assertEqual(response.status_code, 302)
-        self.assertEqual(self.build_manager.started.settings, BuildSettings("CIRCLE", "OUTER TEXT", 6))
+        settings = self.build_manager.started.settings
+        self.assertEqual((settings.shape, settings.shape_extra, settings.resolution),
+                         ("CIRCLE", "OUTER TEXT", 6))
+        self.assertEqual(settings.plate_title, "Volcano Loop")
+        self.assertEqual(settings.plate_text_1, "0.41 mi")
+        self.assertEqual(settings.plate_text_2, "Gain 105 ft")
+        self.assertEqual(settings.plate_text_5, "2026")
+        self.assertEqual((settings.x_offset, settings.y_offset), (1.25, -0.5))
+        self.assertTrue(settings.fixed_elevation_scale)
+        self.assertEqual(settings.plate_recess_depth, 1.5)
+        self.assertEqual((settings.city, settings.state, settings.country),
+                         ("Volcano", "Hawaii", "United States"))
+        self.assertTrue((self.root / "prints/build-me/location.json").is_file())
+
+    def test_project_page_surfaces_emgi_defaults(self):
+        project = create_project(self.root / "prints", self.root / "presets", "Build Me", GPX)
+        save_location(project, "Volcano", "Hawaii", "United States")
+        page = self.client.get("/projects/build-me").data
+        for expected in (b'name="plate_title" value="Build Me"',
+                         b'name="plate_text_1" value="0.41 mi"',
+                         b'name="plate_text_2" value=""',
+                         b'name="plate_text_3" value=""',
+                         b'name="plate_text_4" value="United States"',
+                         b'name="plate_text_5" value="Hawaii"',
+                         b'name="city" type="hidden" value="Volcano"',
+                         b'name="state" type="hidden" value="Hawaii"',
+                         b'name="country" type="hidden" value="United States"',
+                         b'name="x_offset" type="number" value="0"',
+                         b'name="y_offset" type="number" value="0"',
+                         b'name="fixed_elevation_scale"'):
+            self.assertIn(expected, page)
+        self.assertIn(b'id="resolution-value">8', page)
+        self.assertIn(b'name="resolution" type="range" min="1" max="10" value="8"', page)
+        self.assertIn(b'id="text-orientation"', page)
+        self.assertIn(b'id="plate-text-settings"', page)
+        self.assertIn(b'data-cached="true"', page)
+        self.assertNotIn(b"Trail location", page)
+        self.assertIn(b'id="use-metric" type="checkbox" name="use_metric"', page)
+        self.assertIn(b'name="plate_recess_depth" type="number" value="1.5"', page)
+        self.assertNotIn(b"{length}", page)
+
+    def test_project_page_surfaces_literal_gpx_trip_date(self):
+        project = create_project(self.root / "prints", self.root / "presets", "Dated Trip", GPX)
+        (project / "route.gpx").write_text(
+            '<gpx><trk><trkseg><trkpt lat="1" lon="2"><time>2025-07-04T08:30:00Z</time>'
+            '</trkpt><trkpt lat="1.1" lon="2.1"/></trkseg></trk></gpx>', encoding="utf-8")
+        page = self.client.get("/projects/dated-trip").data
+        self.assertIn(b'name="plate_text_2" value="2025.07.04"', page)
+
+    def test_metric_build_resolves_measurement_tokens(self):
+        create_project(self.root / "prints", self.root / "presets", "Metric", GPX)
+        self.client.post("/projects/metric/build", data={
+            "shape": "HEXAGON", "shape_extra": "OUTER TEXT", "resolution": "8",
+            "plate_title": "Metric", "plate_text_1": "{length}",
+            "plate_text_2": "{elevation}", "plate_text_3": "{speed}",
+            "plate_text_4": "", "plate_text_5": "", "use_metric": "on"})
+        settings = self.build_manager.started.settings
+        self.assertEqual(settings.unit_system, "METRIC")
+        self.assertEqual(settings.plate_text_1, "0.66 km")
+        self.assertEqual(settings.plate_text_2, "32 m")
+        self.assertEqual(settings.plate_text_3, "0.00 km/h")
+
+    def test_project_script_defaults_outer_text_and_hides_plate_text_for_none(self):
+        script = self.client.get("/static/project.js").data
+        self.assertIn(b"extras.includes('OUTER TEXT') ? 'OUTER TEXT' : 'NONE'", script)
+        self.assertIn(b"plateTextSettings.hidden = !hasText", script)
+        self.assertIn(b"field.hidden = !usesFive", script)
+        self.assertIn(b"plateRecessSetting.hidden = !hasPlate", script)
+
+    def test_recess_is_ignored_for_layout_without_a_plate(self):
+        create_project(self.root / "prints", self.root / "presets", "No Plate", GPX)
+        self.client.post("/projects/no-plate/build", data={
+            "shape": "HEXAGON", "shape_extra": "INNER TEXT", "resolution": "8",
+            "plate_title": "No Plate", "plate_recess_depth": "3"})
+        self.assertEqual(self.build_manager.started.settings.plate_recess_depth, 0)
+
+    def test_running_build_replaces_visible_settings_with_embedded_status(self):
+        project = create_project(self.root / "prints", self.root / "presets", "Build Me", GPX)
+        self.build_manager.started = SimpleNamespace(
+            id="running-job", project=project.resolve(), settings=BuildSettings(),
+            state="running", message="Generating terrain")
+        page = self.client.get("/projects/build-me").data
+        self.assertIn(b'class="panel settings-panel building"', page)
+        self.assertIn(b'id="build-status"', page)
+        self.assertIn(b"Parameters are locked while Blender builds your model.", page)
+        self.assertIn(b'id="cancel-build"', page)
+        self.assertIn(b'/builds/running-job/cancel', page)
+        self.assertIn(b'id="build-form" hidden', page)
+
+    def test_location_endpoint_returns_detected_values(self):
+        project = create_project(self.root / "prints", self.root / "presets", "Build Me", GPX)
+        detected = {"city": "Volcano", "state": "Hawaii", "country": "United States"}
+        with patch("trailprint.web.detect_location", return_value=detected) as lookup:
+            response = self.client.post("/projects/build-me/location")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json(), {"status": "resolved", **detected})
+        lookup.assert_called_once_with(project)
+
+    def test_location_endpoint_failure_is_nonfatal(self):
+        create_project(self.root / "prints", self.root / "presets", "Build Me", GPX)
+        with patch("trailprint.web.detect_location", side_effect=OSError("offline")):
+            response = self.client.post("/projects/build-me/location")
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.get_json()["status"], "failed")
+
+    def test_preview_page_and_image_are_project_scoped(self):
+        project = create_project(self.root / "prints", self.root / "presets", "Build Me", GPX)
+        stl = project / "deliverables/build-me.stl"
+        stl.write_bytes(b"preview data")
+        (project / "build/preview.png").write_bytes(b"png preview")
+        page = self.client.get("/projects/build-me/preview")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b"VALIDATED MODEL PREVIEW", page.data)
+        self.assertIn(b"build-me.stl", page.data)
+        self.assertIn(b'class="preview-sidebar panel preview-parts"', page.data)
+        self.assertIn(b'class="preview-sidebar panel preview-validation"', page.data)
+        self.assertNotIn(b"Reset view", page.data)
+        self.assertNotIn(b"preview.js", page.data)
+        self.assertIn(b"Three-plate print setup", page.data)
+        self.assertIn(b"Export unavailable", page.data)
+        response = self.client.get("/projects/build-me/preview-image")
+        self.assertEqual(response.data, b"png preview")
+        response.close()
+        (project / "build/preview.png").unlink()
+        self.assertEqual(self.client.get("/projects/build-me/preview-image").status_code, 404)
+
+    def test_bambu_export_starts_with_four_filament_assignments(self):
+        project = create_project(self.root / "prints", self.root / "presets", "Build Me", GPX)
+        for name in ("build-me.stl", "build-me_Trail.stl", "build-me_Plate.stl",
+                     "build-me_Text.stl"):
+            (project / "deliverables" / name).write_bytes(b"stl")
+        (project / "build/preview.png").write_bytes(b"png")
+
+        page = self.client.get("/projects/build-me/preview")
+        self.assertIn(b"Bambu Lab P1S 0.4 nozzle", page.data)
+        self.assertNotIn(b"Export unavailable", page.data)
+        response = self.client.post("/projects/build-me/bambu", data={
+            "trail_filament": "3", "terrain_filament": "4",
+            "plate_filament": "1", "text_filament": "2"})
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(self.bambu_manager.started.settings.by_role(),
+                         {"trail": 3, "terrain": 4, "plate": 1, "text": 2})
+
+    def test_bambu_script_opens_output_folder_after_success(self):
+        script = self.client.get("/static/bambu.js").data
+        self.assertIn(b"await fetch(bambuStatus.dataset.openFolderUrl", script)
+        self.assertIn(b"job.state === 'success'", script)
+        self.assertIn(b"location.href = bambuStatus.dataset.homeUrl", script)
+
+    def test_deleted_projects_page_restores_project(self):
+        project = create_project(self.root / "prints", self.root / "presets", "Restore Me", GPX)
+        self.client.post("/projects/restore-me/delete", data={"confirmation": "restore-me"})
+        dashboard = self.client.get("/").data
+        self.assertIn(b"Deleted projects (1)", dashboard)
+        page = self.client.get("/deleted-projects")
+        self.assertIn(b"Restore Me", page.data)
+        deleted = next((self.root / ".trailprint-trash").iterdir())
+
+        response = self.client.post(
+            f"/deleted-projects/{deleted.name}/restore", follow_redirects=True)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Restored &#39;restore-me&#39;", response.data)
+        self.assertTrue(project.is_dir())
+
+    def test_deleted_projects_page_bulk_permanently_deletes_selection(self):
+        for name in ("Delete One", "Delete Two"):
+            create_project(self.root / "prints", self.root / "presets", name, GPX)
+            slug = name.lower().replace(" ", "-")
+            self.client.post(f"/projects/{slug}/delete", data={"confirmation": slug})
+        deleted = sorted((self.root / ".trailprint-trash").iterdir())
+        page = self.client.get("/deleted-projects").data
+        self.assertIn(b'id="select-all-deleted"', page)
+        self.assertIn(b"Delete permanently", page)
+
+        response = self.client.post("/deleted-projects/permanent-delete", data={
+            "entries": [deleted[0].name, deleted[1].name], "confirmation": "DELETE",
+        }, follow_redirects=True)
+
+        self.assertIn(b"Permanently deleted 2 project(s)", response.data)
+        self.assertEqual(list((self.root / ".trailprint-trash").iterdir()), [])
+
+    def test_bulk_permanent_delete_requires_confirmation(self):
+        create_project(self.root / "prints", self.root / "presets", "Keep Me", GPX)
+        self.client.post("/projects/keep-me/delete", data={"confirmation": "keep-me"})
+        deleted = next((self.root / ".trailprint-trash").iterdir())
+
+        response = self.client.post("/deleted-projects/permanent-delete", data={
+            "entries": deleted.name, "confirmation": "delete",
+        }, follow_redirects=True)
+
+        self.assertIn(b"Type DELETE exactly", response.data)
+        self.assertTrue(deleted.is_dir())
+
+    def test_dashboard_production_controls_move_project_through_funnel(self):
+        project = create_project(self.root / "prints", self.root / "presets", "Print Me", GPX)
+        (project / "deliverables/print-me.3mf").write_bytes(b"3mf")
+        page = self.client.get("/").data
+        self.assertIn(b"Start printing", page)
+
+        self.client.post("/projects/print-me/production-status", data={"action": "start"})
+        page = self.client.get("/").data
+        self.assertIn(b"Mark completed", page)
+        self.client.post("/projects/print-me/production-status", data={"action": "complete"})
+        page = self.client.get("/").data
+        self.assertIn(b"Completed ", page)
+        self.assertIn(b"Move back", page)
+
+    def test_dashboard_uses_live_count_tabs_and_folder_controls(self):
+        create_project(self.root / "prints", self.root / "presets", "Created", GPX)
+        built = create_project(self.root / "prints", self.root / "presets", "Built", GPX)
+        (built / "deliverables/built.stl").write_bytes(b"stl")
+
+        page = self.client.get("/").data
+
+        self.assertEqual(page.count(b'class="funnel-tab"'), 5)
+        self.assertIn(b'data-stage="created"', page)
+        self.assertIn(b'data-stage="stl"', page)
+        self.assertIn(b'Project created <span>1</span>', page)
+        self.assertIn(b'STL generated <span>1</span>', page)
+        self.assertIn(b"dashboard.js", page)
+        self.assertEqual(page.count(b"Project folder"), 2)
+
+    def test_open_project_folder_uses_resolved_project_path(self):
+        project = create_project(self.root / "prints", self.root / "presets", "Open Me", GPX)
+        with patch("trailprint.web.subprocess.Popen") as opener:
+            response = self.client.post("/projects/open-me/open-project-folder")
+        self.assertEqual(response.status_code, 302)
+        opener.assert_called_once_with(["open", str(project)], start_new_session=True)
+
+    def test_cancel_build_endpoint_uses_build_manager(self):
+        project = create_project(self.root / "prints", self.root / "presets", "Build Me", GPX)
+        self.build_manager.started = SimpleNamespace(
+            id="cancel-me", project=project.resolve(), settings=BuildSettings(),
+            state="running", message="Generating terrain")
+
+        response = self.client.post("/builds/cancel-me/cancel")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.build_manager.started.state, "cancelling")
+
+    def test_open_output_folder_uses_resolved_deliverables_path(self):
+        project = create_project(self.root / "prints", self.root / "presets", "Build Me", GPX)
+        with patch("trailprint.web.subprocess.Popen") as opener:
+            response = self.client.post("/projects/build-me/open-output-folder")
+        self.assertEqual(response.status_code, 302)
+        opener.assert_called_once_with(
+            ["open", str(project / "deliverables")], start_new_session=True)
+
+    def test_open_output_folder_failure_is_nonfatal(self):
+        project = create_project(self.root / "prints", self.root / "presets", "Build Me", GPX)
+        (project / "deliverables/build-me.stl").write_bytes(b"stl")
+        (project / "build/preview.png").write_bytes(b"png")
+        with patch("trailprint.web.subprocess.Popen", side_effect=OSError("Finder unavailable")):
+            response = self.client.post(
+                "/projects/build-me/open-output-folder", follow_redirects=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Could not open the output folder", response.data)
 
     def test_build_rejects_incompatible_extra(self):
         create_project(self.root / "prints", self.root / "presets", "Build Me", GPX)
@@ -136,6 +507,14 @@ class WebTests(unittest.TestCase):
             "shape": "SQUARE", "shape_extra": "OUTER TEXT", "resolution": "4"},
             follow_redirects=True)
         self.assertIn(b"unavailable for Rectangle", response.data)
+        self.assertIsNone(self.build_manager.started)
+
+    def test_build_rejects_title_that_does_not_fit(self):
+        create_project(self.root / "prints", self.root / "presets", "Build Me", GPX)
+        response = self.client.post("/projects/build-me/build", data={
+            "shape": "HEXAGON", "shape_extra": "OUTER TEXT", "resolution": "8",
+            "plate_title": "WWWWWWWWWW"}, follow_redirects=True)
+        self.assertIn(b"Shorten the title before building", response.data)
         self.assertIsNone(self.build_manager.started)
 
     def test_dashboard_shows_delete_control_except_for_example(self):
@@ -195,9 +574,24 @@ class FakeBuildManager:
     def get(self, job_id):
         return self.started if self.started and self.started.id == job_id else None
 
+    def cancel(self, job_id):
+        job = self.get(job_id)
+        if job is None:
+            raise ValueError("Build job was not found.")
+        job.state, job.message = "cancelling", "Stopping Blender safely…"
+        return job
+
     def serialize(self, job):
         return {"id": job.id, "state": job.state, "message": job.message, "phase": job.message,
-                "percent": None, "elapsed_seconds": 0, "outputs": []}
+                "percent": None, "elapsed_seconds": 0, "outputs": [],
+                "can_cancel": job.state in {"queued", "running"}}
+
+
+class FakeBambuManager(FakeBuildManager):
+    def start(self, project, settings):
+        self.started = SimpleNamespace(id="bambu-job", project=project.resolve(), settings=settings,
+                                       state="queued", message="Waiting to start", output="")
+        return self.started
 
 
 if __name__ == "__main__":
