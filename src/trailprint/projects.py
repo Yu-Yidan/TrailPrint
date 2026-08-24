@@ -1,5 +1,6 @@
 """Safe creation and discovery of print projects."""
 
+import json
 import os
 import re
 import shutil
@@ -9,7 +10,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import BinaryIO, List
+from typing import BinaryIO, List, Optional
 
 from .config import load_config
 from .gpx import read_gpx
@@ -17,6 +18,9 @@ from .gpx import read_gpx
 
 MAX_GPX_BYTES = 10 * 1024 * 1024
 TRASH_PATTERN = re.compile(r"^(?P<slug>[a-z0-9][a-z0-9-]*)--(?P<stamp>\d{8}T\d{6}Z)--[a-f0-9]{8}$")
+FUNNEL_STAGES = (("created", "Project created"), ("stl", "STL generated"),
+                 ("3mf", "3MF generated"), ("printing", "Printing started"),
+                 ("completed", "Print completed"))
 
 
 @dataclass(frozen=True)
@@ -24,6 +28,19 @@ class ProjectSummary:
     slug: str
     has_gpx: bool
     has_stl: bool
+    has_3mf: bool
+    stage: str
+    printing_started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+
+
+@dataclass(frozen=True)
+class DeletedProjectSummary:
+    entry: str
+    slug: str
+    deleted_at: datetime
+    expires_at: datetime
+    days_remaining: int
 
 
 def slugify(name: str) -> str:
@@ -52,12 +69,77 @@ def list_projects(prints_dir: Path) -> List[ProjectSummary]:
     projects = []
     for path in sorted(prints_dir.iterdir(), key=lambda item: item.name.lower()):
         if path.is_dir() and not path.name.startswith("."):
+            deliverables = path / "deliverables"
+            has_stl = any(deliverables.glob("*.stl")) if deliverables.is_dir() else False
+            has_3mf = (deliverables / f"{path.name}.3mf").is_file()
+            workflow = read_workflow(path)
+            manual = workflow.get("status")
+            stage = (manual if manual in {"printing", "completed"} else
+                     "3mf" if has_3mf else "stl" if has_stl else "created")
             projects.append(ProjectSummary(
                 path.name,
                 (path / "route.gpx").is_file(),
-                any((path / "deliverables").glob("*.stl")) if (path / "deliverables").is_dir() else False,
+                has_stl, has_3mf, stage,
+                _parse_timestamp(workflow.get("printing_started_at")),
+                _parse_timestamp(workflow.get("completed_at")),
             ))
     return projects
+
+
+def _parse_timestamp(value) -> Optional[datetime]:
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed.astimezone(timezone.utc) if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def read_workflow(project: Path) -> dict:
+    try:
+        value = json.loads((project / "workflow.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return value if isinstance(value, dict) and value.get("status") in {"printing", "completed"} else {}
+
+
+def update_production_status(project: Path, action: str, now: datetime = None) -> dict:
+    project = project.resolve()
+    workflow = read_workflow(project)
+    current = workflow.get("status")
+    moment = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    timestamp = moment.isoformat().replace("+00:00", "Z")
+    path = project / "workflow.json"
+    if action == "start":
+        if current is not None:
+            raise ValueError("This project has already entered printing.")
+        if not (project / "deliverables" / f"{project.name}.3mf").is_file():
+            raise ValueError("Create the project 3MF before starting printing.")
+        workflow = {"status": "printing", "printing_started_at": timestamp, "completed_at": None}
+    elif action == "complete":
+        if current != "printing":
+            raise ValueError("Only a printing project can be marked completed.")
+        workflow = {**workflow, "status": "completed", "completed_at": timestamp}
+    elif action == "back":
+        if current == "completed":
+            workflow = {**workflow, "status": "printing", "completed_at": None}
+        elif current == "printing":
+            path.unlink(missing_ok=True)
+            return {}
+        else:
+            raise ValueError("This project cannot move back from its current stage.")
+    else:
+        raise ValueError("Invalid production status action.")
+    descriptor, temporary_name = tempfile.mkstemp(prefix=".workflow-", suffix=".json", dir=str(project))
+    os.close(descriptor)
+    temporary = Path(temporary_name)
+    try:
+        temporary.write_text(json.dumps(workflow, indent=2) + "\n", encoding="utf-8")
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return workflow
 
 
 def read_upload(stream: BinaryIO, filename: str, limit: int = MAX_GPX_BYTES) -> bytes:
@@ -122,7 +204,8 @@ def trash_project(prints_dir: Path, trash_dir: Path, slug: str, confirmation: st
     return destination
 
 
-def purge_trash(trash_dir: Path, retention_days: int = 30, now: datetime = None) -> List[Path]:
+def purge_trash(trash_dir: Path, retention_days: int = 30, now: datetime = None,
+                before_remove=None) -> List[Path]:
     """Remove recognized app trash entries older than the retention window."""
     if not trash_dir.is_dir():
         return []
@@ -138,6 +221,87 @@ def purge_trash(trash_dir: Path, retention_days: int = 30, now: datetime = None)
         except ValueError:
             continue
         if created < cutoff:
+            if before_remove:
+                before_remove(entry)
             shutil.rmtree(entry)
             removed.append(entry)
     return removed
+
+
+def list_deleted_projects(trash_dir: Path, retention_days: int = 30,
+                          now: datetime = None) -> List[DeletedProjectSummary]:
+    """List safe, recognized trash entries that are still recoverable."""
+    if not trash_dir.is_dir():
+        return []
+    moment = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    projects = []
+    for entry in trash_dir.iterdir():
+        match = TRASH_PATTERN.fullmatch(entry.name)
+        if not match or not entry.is_dir() or entry.is_symlink():
+            continue
+        try:
+            deleted_at = datetime.strptime(
+                match.group("stamp"), "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+        expires_at = deleted_at + timedelta(days=retention_days)
+        if expires_at <= moment:
+            continue
+        seconds = max(0, (expires_at - moment).total_seconds())
+        projects.append(DeletedProjectSummary(
+            entry.name, match.group("slug"), deleted_at, expires_at,
+            max(1, int((seconds + 86399) // 86400))))
+    return sorted(projects, key=lambda item: item.deleted_at, reverse=True)
+
+
+def restore_project(prints_dir: Path, trash_dir: Path, entry_name: str,
+                    retention_days: int = 30, now: datetime = None) -> Path:
+    """Restore one recognized trash entry without overwriting active work."""
+    match = TRASH_PATTERN.fullmatch(entry_name)
+    if not match:
+        raise ValueError("Invalid deleted project entry.")
+    try:
+        deleted_at = datetime.strptime(
+            match.group("stamp"), "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
+    except ValueError as exc:
+        raise ValueError("Invalid deleted project timestamp.") from exc
+    moment = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    if deleted_at + timedelta(days=retention_days) <= moment:
+        raise ValueError("This deleted project has expired and can no longer be restored.")
+    trash_root = trash_dir.resolve()
+    source = trash_root / entry_name
+    if source.parent != trash_root or source.is_symlink() or not source.is_dir():
+        raise ValueError("Deleted project could not be found safely.")
+    prints_dir.mkdir(parents=True, exist_ok=True)
+    destination = resolve_project(prints_dir, match.group("slug"))
+    if destination.exists():
+        raise ValueError(f"A project named '{destination.name}' already exists.")
+    os.rename(source, destination)
+    return destination
+
+
+def permanently_delete_projects(trash_dir: Path, entry_names, confirmation: str,
+                                retention_days: int = 30,
+                                now: datetime = None, before_remove=None) -> List[Path]:
+    """Permanently remove a fully validated selection of recoverable trash entries."""
+    if confirmation != "DELETE":
+        raise ValueError("Type DELETE exactly to confirm permanent deletion.")
+    entries = list(dict.fromkeys(str(name) for name in entry_names if name))
+    if not entries:
+        raise ValueError("Select at least one deleted project.")
+    recoverable = {item.entry for item in list_deleted_projects(
+        trash_dir, retention_days=retention_days, now=now)}
+    trash_root = trash_dir.resolve()
+    paths = []
+    for name in entries:
+        if not TRASH_PATTERN.fullmatch(name) or name not in recoverable:
+            raise ValueError("One or more selected projects are not safely recoverable trash entries.")
+        path = trash_root / name
+        if path.parent != trash_root or path.is_symlink() or not path.is_dir():
+            raise ValueError("One or more selected projects could not be found safely.")
+        paths.append(path)
+    for path in paths:
+        if before_remove:
+            before_remove(path)
+        shutil.rmtree(path)
+    return paths

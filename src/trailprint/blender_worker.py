@@ -8,6 +8,30 @@ import traceback
 from pathlib import Path
 
 
+def resolve_text(value, config):
+    replacements = {
+        "{date}": config.get("trip_date", ""), "{city}": config.get("city", ""),
+        "{state}": config.get("state", ""), "{country}": config.get("country", ""),
+        "{length}": config.get("length", ""), "{elevation}": config.get("elevation", ""),
+        "{duration}": config.get("duration", ""), "{speed}": config.get("speed", ""),
+    }
+    for token, replacement in replacements.items():
+        value = value.replace(token, replacement)
+    return value
+
+
+def with_plate_clearance(original, props, clearance):
+    """Wrap TrailPrint3D's cutter without changing its trail tolerance."""
+    def wrapped(plate, terrain):
+        original_tolerance = props.tolerance
+        try:
+            props.tolerance = float(clearance)
+            return original(plate, terrain)
+        finally:
+            props.tolerance = original_tolerance
+    return wrapped
+
+
 def main():
     try:
         import bpy
@@ -30,11 +54,29 @@ def main():
         props.shape = config["shape"]
         props.shapeTextStyle = config["shape_extra"]
         props.num_subdivisions = int(config["resolution"])
+        props.titlefield = resolve_text(config["plate_title"], config)
+        props.textfield1 = resolve_text(config["plate_text_1"], config)
+        props.textfield2 = resolve_text(config["plate_text_2"], config)
+        props.textfield3 = resolve_text(config["plate_text_3"], config)
+        props.textfield4 = resolve_text(config["plate_text_4"], config)
+        props.textfield5 = resolve_text(config["plate_text_5"], config)
+        props.xTerrainOffset = float(config["x_offset"])
+        props.yTerrainOffset = float(config["y_offset"])
+        props.fixedElevationScale = bool(config["fixed_elevation_scale"])
+        props.plateInsertValue = float(config.get("plate_recess_depth", 0))
         props.singleColorMode = True
         props.disable_auto_export = False
         props.disable_3mf_export = True
         props.exportformat = "STL"
-        utils.runGeneration(0)
+        terrain_utils = importlib.import_module(module_root + ".utils.terrain")
+        original_plate_insert = terrain_utils.plateInsert
+
+        terrain_utils.plateInsert = with_plate_clearance(
+            original_plate_insert, props, config.get("plate_recess_clearance", 0))
+        try:
+            utils.runGeneration(0)
+        finally:
+            terrain_utils.plateInsert = original_plate_insert
         export_dir = Path(config["export_path"])
         # TrailPrint3D chooses OBJ whenever its hidden element mode is PAINT,
         # even when no elements are active. Preserve that default generation

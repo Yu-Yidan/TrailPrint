@@ -7,7 +7,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from .blender_bridge import BuildSettings, read_progress, run_blender_build
+from .blender_bridge import BuildCancelled, BuildSettings, read_progress, run_blender_build
+from .mesh_validation import read_report
 
 
 @dataclass
@@ -20,6 +21,8 @@ class BuildJob:
     started_at: Optional[float] = None
     finished_at: Optional[float] = None
     outputs: List[str] = field(default_factory=list)
+    validation: dict = field(default_factory=dict)
+    cancel_event: threading.Event = field(default_factory=threading.Event, repr=False)
 
 
 class BuildBusy(ValueError):
@@ -43,14 +46,27 @@ class BuildManager:
         return job
 
     def _run(self, job: BuildJob):
-        job.state, job.message, job.started_at = "running", "Starting Blender", time.time()
+        job.started_at = time.time()
+        if job.cancel_event.is_set():
+            job.state, job.message, job.finished_at = "cancelled", "Build cancelled.", time.time()
+            with self._lock:
+                if self._active == job.id:
+                    self._active = None
+            return
+        job.state, job.message = "running", "Starting Blender"
         try:
-            outputs = run_blender_build(job.project, job.settings)
+            outputs = run_blender_build(job.project, job.settings, cancel_event=job.cancel_event)
+        except BuildCancelled:
+            job.state, job.message = "cancelled", "Build cancelled. Previous deliverables were preserved."
         except Exception as exc:
+            job.validation = read_report(job.project / "build/validation.json")
             job.state, job.message = "error", str(exc)
         else:
             job.outputs = [path.name for path in outputs]
-            job.state, job.message = "success", f"Generated {len(outputs)} STL file(s)."
+            job.validation = read_report(job.project / "build/validation.json")
+            recovery = " using an automatic no-Shape-Extras recovery" if job.validation.get("fallback_used") else ""
+            preview = "" if job.validation.get("preview", {}).get("valid") else " Preview image generation failed."
+            job.state, job.message = "success", f"Generated {len(outputs)} validated STL file(s){recovery}.{preview}"
         finally:
             job.finished_at = time.time()
             with self._lock:
@@ -66,15 +82,32 @@ class BuildManager:
 
     def is_active(self, project: Path) -> bool:
         job = self.for_project(project)
-        return bool(job and job.state in {"queued", "running"})
+        return bool(job and job.state in {"queued", "running", "cancelling"})
+
+    def cancel(self, job_id: str) -> BuildJob:
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                raise ValueError("Build job was not found.")
+            if job.state == "cancelling":
+                return job
+            if job.state not in {"queued", "running"}:
+                raise ValueError("This build can no longer be cancelled.")
+            job.cancel_event.set()
+            job.state, job.message = "cancelling", "Stopping Blender safely…"
+            return job
 
     def serialize(self, job: BuildJob) -> dict:
         now = job.finished_at or time.time()
-        progress = read_progress() if job.state == "running" else {}
+        progress = read_progress() if job.state in {"running", "cancelling"} else {}
         percent = progress.get("progress", progress.get("percent"))
         phase = progress.get("phase", progress.get("message", job.message))
         return {
             "id": job.id, "state": job.state, "message": job.message, "phase": phase,
             "percent": percent, "elapsed_seconds": round(now - (job.started_at or now), 1),
-            "outputs": job.outputs,
+            "outputs": job.outputs, "validation": job.validation,
+            "can_cancel": job.state in {"queued", "running"},
+            "preview_url": (f"/projects/{job.project.name}/preview"
+                            if job.state == "success" and job.validation.get("preview", {}).get("valid")
+                            and (job.project / "build/preview.png").is_file() else None),
         }
