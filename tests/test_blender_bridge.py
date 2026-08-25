@@ -9,13 +9,25 @@ from unittest.mock import patch
 
 import trimesh
 
-from trailprint.blender_bridge import (BuildCancelled, BuildSettings, _run_command,
-                                       run_blender_build)
-from trailprint.blender_worker import resolve_text, with_plate_clearance
+from trailprint.blender_bridge import (BuildCancelled, BuildSettings, _failure_detail,
+                                       _run_command, run_blender_build)
+from trailprint.blender_worker import (fixed_elevation_multiplier, resolve_text,
+                                       with_plate_clearance)
 from trailprint.gpx import read_gpx_trip_date
 
 
 class SettingsTests(unittest.TestCase):
+    def test_fixed_elevation_target_compensates_for_latitude(self):
+        self.assertAlmostEqual(fixed_elevation_multiplier(15, 0), 1.5)
+        self.assertAlmostEqual(fixed_elevation_multiplier(15, 60), 0.75)
+
+    def test_failure_detail_prefers_exception_over_stdout(self):
+        result = subprocess.CompletedProcess(
+            [], 1, "First name: Square Stand\n",
+            "Traceback (most recent call last):\n  File x\nAttributeError: missing function\n",
+        )
+        self.assertEqual(_failure_detail(result), "AttributeError: missing function")
+
     def test_cancelled_build_preserves_previous_outputs_and_reports(self):
         with tempfile.TemporaryDirectory() as temp:
             project = Path(temp) / "project"
@@ -27,6 +39,7 @@ class SettingsTests(unittest.TestCase):
                 project / "deliverables/keep.3mf": b"previous 3mf",
                 project / "build/preview.png": b"previous preview",
                 project / "build/validation.json": b'{"valid": true}',
+                project / "build/elevation.json": b'{"source_min_m": 1}',
             }
             for path, data in previous.items():
                 path.write_bytes(data)
@@ -112,12 +125,20 @@ class SettingsTests(unittest.TestCase):
                 self.assertEqual(config["trip_date"], "2022.09.21")
                 self.assertEqual(config["x_offset"], 0.0)
                 self.assertFalse(config["fixed_elevation_scale"])
+                self.assertEqual(config["fixed_elevation_target_mm"], 15.0)
+                self.assertAlmostEqual(config["center_latitude"], 0.0)
                 self.assertEqual(config["plate_recess_depth"], 0.0)
                 self.assertEqual(config["plate_recess_clearance"], 0.0)
+                self.assertTrue(config["include_water"])
+                self.assertFalse(config["include_ocean"])
                 terrain = trimesh.creation.box(extents=[100, 80, 5])
                 trail = trimesh.creation.box(extents=[60, 3, 2]).subdivide()
                 terrain.export(Path(config["export_path"], "project.stl"))
                 trail.export(Path(config["export_path"], "project_Trail.stl"))
+                Path(config["export_path"], "terrain-elevation.json").write_text(json.dumps({
+                    "source_min_m": 100, "source_max_m": 200,
+                    "min_thickness_mm": 2, "unit_system": "IMPERIAL",
+                }), encoding="utf-8")
                 return subprocess.CompletedProcess(command, 0, "ok", "")
 
             with patch("trailprint.blender_bridge.subprocess.run", side_effect=fake_run):
@@ -128,6 +149,9 @@ class SettingsTests(unittest.TestCase):
             self.assertGreater((project / "build/preview.png").stat().st_size, 1000)
             report = json.loads((project / "build/validation.json").read_text(encoding="utf-8"))
             self.assertTrue(report["preview"]["valid"])
+            elevation = json.loads((project / "build/elevation.json").read_text(encoding="utf-8"))
+            self.assertEqual((elevation["source_min_m"], elevation["source_max_m"]), (100, 200))
+            self.assertEqual(elevation["unit_system"], "IMPERIAL")
 
     def test_trip_date_and_location_tokens_are_resolved(self):
         with tempfile.TemporaryDirectory() as temp:

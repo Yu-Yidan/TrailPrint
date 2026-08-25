@@ -1,9 +1,9 @@
 {% extends "base.html" %}
-{% block title %}{{ project.name }} · TrailPrint{% endblock %}
+{% block title %}{{ project_title }} · TrailPrint{% endblock %}
 {% block content %}
 <a class="back" href="{{ url_for('dashboard') }}">← All projects</a>
 <section class="project-header"><div><p class="eyebrow">PRINT PROJECT</p>
-<h1>{{ project.name.replace('-', ' ')|title }}</h1><p><code>prints/{{ project.name }}/</code></p></div></section>
+<h1>{{ project_title }}</h1><p><code>prints/{{ project.name }}/</code></p></div></section>
 <section class="detail-grid">
   <article class="panel"><h2>Project status</h2>
     <div class="status-row"><span>GPX route</span><strong class="{{ 'good' if has_gpx else 'bad' }}">{{ 'Ready' if has_gpx else 'Missing' }}</strong></div>
@@ -74,7 +74,17 @@
           <label><span>X offset</span><input class="text-input" name="x_offset" type="number" value="0" step="any"></label>
           <label><span>Y offset</span><input class="text-input" name="y_offset" type="number" value="0" step="any"></label>
         </div>
-        <label class="toggle-setting"><input type="checkbox" name="fixed_elevation_scale"><span><strong>Fixed elevation scale (10 mm)</strong><small>Force the vertical range to 10 mm before EmGi's elevation multiplier.</small></span></label>
+        <div class="terrain-elevation">
+          {% if expected_relief is none %}<strong>Expected terrain relief unavailable</strong><p class="fine-print">The GPX does not contain enough usable elevation data, so natural elevation scaling will be retained.</p>
+          {% elif expected_relief > relief_limit %}<strong>Expected relief: {{ '%.1f'|format(expected_relief) }} mm · Automatically limited to {{ '%.0f'|format(relief_limit) }} mm</strong><p class="fine-print">Approximately {{ '%.0f'|format(relief_limit + 2) }} mm total terrain thickness including the standard 2 mm base.</p>
+          {% else %}<strong>Expected relief: {{ '%.1f'|format(expected_relief) }} mm · Natural elevation scale retained</strong><p class="fine-print">Approximately {{ '%.1f'|format(expected_relief + 2) }} mm total terrain thickness including the standard 2 mm base.</p>{% endif %}
+        </div>
+      </fieldset>
+      <fieldset class="settings-group">
+        <legend>Water</legend>
+        <p class="fine-print">Water prints as separate blue inserts with matching terrain recesses, avoiding repeated AMS filament changes.</p>
+        <label class="toggle-setting"><input type="checkbox" name="include_water" checked><span><strong>Include lakes and major rivers</strong><small>Uses OpenStreetMap water data. Minor streams, canals, and ditches are excluded.</small></span></label>
+        <label class="toggle-setting"><input type="checkbox" name="include_ocean"><span><strong>Include ocean</strong><small>Experimental coastline generation for coastal terrain.</small></span></label>
       </fieldset>
       <label class="locked-setting"><input type="checkbox" checked disabled><span><strong>Single-color trail</strong><small>Always enabled for TrailPrint builds</small></span><span class="lock">Locked</span></label>
       <button class="button primary build-button" {% if not has_gpx or (job and job.state in ['queued','running','cancelling']) %}disabled{% endif %}>Build with Blender</button>

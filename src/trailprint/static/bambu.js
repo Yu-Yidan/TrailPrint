@@ -30,3 +30,22 @@ document.querySelectorAll('.filament-grid select').forEach(select => {
       .style.setProperty('--filament-color', option.dataset.color);
   });
 });
+
+const elevationPanel = document.querySelector('#terrain-elevation');
+if (elevationPanel) {
+  const grey = document.querySelector('#grey-start');
+  const white = document.querySelector('#white-start');
+  const summary = document.querySelector('#terrain-band-summary');
+  const updateBands = () => {
+    const maximum = Number(elevationPanel.dataset.max);
+    const greyStart = Number(grey.value);
+    const whiteStart = Number(white.value);
+    let label = 'Green only';
+    if (Number.isFinite(greyStart) && greyStart < maximum) label = 'Green + Grey';
+    if (Number.isFinite(whiteStart) && whiteStart < maximum) label = 'Green + Grey + White';
+    summary.textContent = `Expected terrain colors: ${label}`;
+  };
+  grey.addEventListener('input', updateBands);
+  white.addEventListener('input', updateBands);
+  updateBands();
+}

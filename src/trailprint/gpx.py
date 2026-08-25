@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import List, Tuple
 
 Point3 = Tuple[float, float, float]
+AUTO_RELIEF_LIMIT_MM = 15.0
 
 
 @dataclass(frozen=True)
@@ -138,6 +139,61 @@ def read_gpx(path: Path) -> List[Point3]:
     if len(points) < 2:
         raise ValueError("GPX must contain at least two track points")
     return points
+
+
+def estimate_print_relief_mm(path: Path, map_size_mm: float = 100.0):
+    """Estimate TrailPrint3D relief from embedded GPX elevations and bounds."""
+    try:
+        root = ET.parse(path).getroot()
+    except (OSError, ET.ParseError):
+        return None
+    points = []
+    for node in root.iter():
+        if node.tag.rsplit("}", 1)[-1] not in {"trkpt", "rtept"}:
+            continue
+        try:
+            lat, lon = float(node.attrib["lat"]), float(node.attrib["lon"])
+        except (KeyError, ValueError):
+            continue
+        elevation = None
+        for child in node:
+            if child.tag.rsplit("}", 1)[-1] == "ele" and child.text:
+                try:
+                    elevation = float(child.text)
+                except ValueError:
+                    pass
+                break
+        points.append((lat, lon, elevation))
+    elevated = [point for point in points if point[2] is not None]
+    if len(points) < 2 or len(elevated) < 2:
+        return None
+    earth_radius_km = 6371.0
+
+    def mercator(lat, lon):
+        bounded_lat = min(89.0, max(-89.0, lat))
+        return (earth_radius_km * math.radians(lon),
+                earth_radius_km * math.log(
+                    math.tan(math.pi / 4 + math.radians(bounded_lat) / 2)))
+
+    projected = [mercator(point[0], point[1]) for point in points]
+    width = max(point[0] for point in projected) - min(point[0] for point in projected)
+    height = max(point[1] for point in projected) - min(point[1] for point in projected)
+    diagonal = math.hypot(width, height)
+    if diagonal <= 0:
+        return None
+    horizontal_scale = float(map_size_mm) / diagonal
+    heights = [(elevation / 1000.0) * horizontal_scale / math.cos(math.radians(lat))
+               for lat, _lon, elevation in elevated]
+    relief = max(heights) - min(heights)
+    return relief if math.isfinite(relief) and relief >= 0 else None
+
+
+def gpx_center_latitude(path: Path) -> float:
+    try:
+        points = read_gpx(path)
+    except ValueError:
+        return 0.0
+    return (min(point[0] for point in points) + max(point[0] for point in points)) / 2
 
 
 def project(points: List[Point3], max_size_mm: float, elevation_scale: float) -> List[Point3]:

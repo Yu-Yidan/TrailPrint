@@ -14,6 +14,8 @@ from typing import BinaryIO, List, Optional
 
 from .config import load_config
 from .gpx import read_gpx
+from .naming import (META_FILE, STORAGE_PATTERN, canonical_3mf_name, human_name,
+                     logical_slug, read_project_meta, storage_name)
 
 
 MAX_GPX_BYTES = 10 * 1024 * 1024
@@ -26,6 +28,7 @@ FUNNEL_STAGES = (("created", "Project created"), ("stl", "STL generated"),
 @dataclass(frozen=True)
 class ProjectSummary:
     slug: str
+    name: str
     has_gpx: bool
     has_stl: bool
     has_3mf: bool
@@ -63,6 +66,14 @@ def resolve_project(prints_dir: Path, slug: str) -> Path:
     return project
 
 
+def _active_project_for_slug(prints_dir: Path, slug: str) -> Optional[Path]:
+    if not prints_dir.is_dir():
+        return None
+    return next((path for path in prints_dir.iterdir()
+                 if path.is_dir() and not path.name.startswith(".")
+                 and logical_slug(path) == slug), None)
+
+
 def list_projects(prints_dir: Path) -> List[ProjectSummary]:
     if not prints_dir.is_dir():
         return []
@@ -71,13 +82,13 @@ def list_projects(prints_dir: Path) -> List[ProjectSummary]:
         if path.is_dir() and not path.name.startswith("."):
             deliverables = path / "deliverables"
             has_stl = any(deliverables.glob("*.stl")) if deliverables.is_dir() else False
-            has_3mf = (deliverables / f"{path.name}.3mf").is_file()
+            has_3mf = (deliverables / canonical_3mf_name(path)).is_file()
             workflow = read_workflow(path)
             manual = workflow.get("status")
             stage = (manual if manual in {"printing", "completed"} else
                      "3mf" if has_3mf else "stl" if has_stl else "created")
             projects.append(ProjectSummary(
-                path.name,
+                path.name, human_name(path),
                 (path / "route.gpx").is_file(),
                 has_stl, has_3mf, stage,
                 _parse_timestamp(workflow.get("printing_started_at")),
@@ -114,7 +125,7 @@ def update_production_status(project: Path, action: str, now: datetime = None) -
     if action == "start":
         if current is not None:
             raise ValueError("This project has already entered printing.")
-        if not (project / "deliverables" / f"{project.name}.3mf").is_file():
+        if not (project / "deliverables" / canonical_3mf_name(project)).is_file():
             raise ValueError("Create the project 3MF before starting printing.")
         workflow = {"status": "printing", "printing_started_at": timestamp, "completed_at": None}
     elif action == "complete":
@@ -157,7 +168,7 @@ def create_project(prints_dir: Path, presets_dir: Path, name: str, gpx_data: byt
     slug = slugify(name)
     prints_dir.mkdir(parents=True, exist_ok=True)
     destination = resolve_project(prints_dir, slug)
-    if destination.exists():
+    if destination.exists() or _active_project_for_slug(prints_dir, slug):
         raise ValueError(f"A project named '{slug}' already exists.")
 
     temporary = Path(tempfile.mkdtemp(prefix=".trailprint-", dir=str(prints_dir)))
@@ -180,10 +191,52 @@ def create_project(prints_dir: Path, presets_dir: Path, name: str, gpx_data: byt
     return destination
 
 
+def migrate_active_project(project: Path) -> Path:
+    """Apply the sortable name to one active project and all binary deliverables."""
+    project = project.resolve()
+    meta = read_project_meta(project)
+    if not meta.get("id_project"):
+        return project
+    slug = str(meta.get("project_slug") or logical_slug(project))
+    expected = project.parent / storage_name(meta["id_project"], slug)
+    if expected != project and expected.exists():
+        raise ValueError(f"Cannot rename '{project.name}': '{expected.name}' already exists.")
+    prefix = f"{storage_name(meta['id_project'], slug).split('-', 1)[0]}-"
+    deliverables = project / "deliverables"
+    if deliverables.is_dir():
+        renames = []
+        for path in deliverables.iterdir():
+            if path.is_file() and path.suffix.lower() in {".stl", ".3mf"} and not path.name.startswith(prefix):
+                target = path.with_name(prefix + path.name)
+                if target.exists():
+                    raise ValueError(f"Cannot rename deliverable: '{target.name}' already exists.")
+                renames.append((path, target))
+        for source, target in renames:
+            os.rename(source, target)
+    if expected != project:
+        os.rename(project, expected)
+    return expected
+
+
+def migrate_active_projects(prints_dir: Path) -> List[Path]:
+    projects = [path for path in prints_dir.iterdir()
+                if path.is_dir() and not path.name.startswith(".")] if prints_dir.is_dir() else []
+    targets = {}
+    for project in projects:
+        meta = read_project_meta(project)
+        if not meta.get("id_project"):
+            continue
+        target = project.parent / storage_name(meta["id_project"], meta.get("project_slug") or logical_slug(project))
+        if target in targets or (target.exists() and target != project):
+            raise ValueError(f"Cannot migrate projects: '{target.name}' is not unique.")
+        targets[target] = project
+    return [migrate_active_project(project) for project in projects]
+
+
 def trash_project(prints_dir: Path, trash_dir: Path, slug: str, confirmation: str,
                   now: datetime = None) -> Path:
     """Move a confirmed project to recoverable local trash."""
-    if slug == "example-trail":
+    if logical_slug(raw_project := (prints_dir.resolve() / slug)) == "example-trail":
         raise ValueError("The example project is protected and cannot be deleted.")
     if confirmation != slug:
         raise ValueError(f"Type '{slug}' exactly to confirm deletion.")
@@ -274,7 +327,7 @@ def restore_project(prints_dir: Path, trash_dir: Path, entry_name: str,
         raise ValueError("Deleted project could not be found safely.")
     prints_dir.mkdir(parents=True, exist_ok=True)
     destination = resolve_project(prints_dir, match.group("slug"))
-    if destination.exists():
+    if destination.exists() or _active_project_for_slug(prints_dir, logical_slug(source)):
         raise ValueError(f"A project named '{destination.name}' already exists.")
     os.rename(source, destination)
     return destination

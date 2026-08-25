@@ -10,7 +10,7 @@ from PIL import ImageFont
 FONT_PATH = Path("/System/Library/Fonts/Supplemental/Arial Black.ttf")
 TEXT_HEIGHT_MM = 5.0
 TITLE_LIMITS_MM = {
-    "HEXAGON": {"INNER TEXT": 45.0, "OUTER TEXT": 54.0, "FRONT TEXT": 54.0},
+    "HEXAGON": {"INNER TEXT": 45.0, "OUTER TEXT": 60.5, "FRONT TEXT": 60.5},
     "OCTAGON": {"OUTER TEXT": 41.3},
     "CIRCLE": {"OUTER TEXT": 77.8},
 }
@@ -21,7 +21,7 @@ def readable_project_name(slug: str) -> str:
 
 
 def resolve_project_title(value: str, slug: str) -> str:
-    return str(value).replace("{name}", readable_project_name(slug))
+    return str(value).replace("{name}", readable_project_name(slug)).strip()
 
 
 @lru_cache(maxsize=1)

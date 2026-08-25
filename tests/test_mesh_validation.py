@@ -4,10 +4,14 @@ from pathlib import Path
 
 import trimesh
 
-from trailprint.mesh_validation import inspect_stl, validate_stls
+from trailprint.mesh_validation import inspect_stl, mesh_role, validate_stls
 
 
 class MeshValidationTests(unittest.TestCase):
+    def test_water_and_ocean_outputs_share_water_role(self):
+        self.assertEqual(mesh_role(Path("0019-route_WATER.stl"), "0019-route"), "water")
+        self.assertEqual(mesh_role(Path("0019-Ocean.stl"), "0019-route"), "water")
+
     def test_valid_set_and_fragmented_trail(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

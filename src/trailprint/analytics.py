@@ -14,6 +14,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from .projects import TRASH_PATTERN, list_deleted_projects, read_workflow
+from .naming import canonical_3mf_name, format_project_id, human_name, logical_slug
 
 
 PACIFIC = ZoneInfo("America/Los_Angeles")
@@ -43,11 +44,7 @@ def pacific_ds(moment: datetime) -> str:
 
 
 def project_name(project: Path) -> str:
-    try:
-        first = (project / "README.md").read_text(encoding="utf-8").splitlines()[0].strip()
-    except (OSError, IndexError):
-        first = ""
-    return first.lstrip("#").strip() or project.name.replace("-", " ").title()
+    return human_name(project)
 
 
 def effective_status(project: Path) -> str:
@@ -57,7 +54,7 @@ def effective_status(project: Path) -> str:
     if workflow.get("status") == "printing":
         return "print started"
     deliverables = project / "deliverables"
-    if (deliverables / f"{project.name}.3mf").is_file():
+    if (deliverables / canonical_3mf_name(project)).is_file():
         return "3mf generated"
     if deliverables.is_dir() and any(deliverables.glob("*.stl")):
         return "stl generated"
@@ -137,7 +134,8 @@ class AnalyticsStore:
                 meta = self._read_meta(folder)
                 if not meta:
                     identifier = next_id; next_id += 1
-                    slug = TRASH_PATTERN.fullmatch(folder.name).group("slug") if deleted else folder.name
+                    slug = (TRASH_PATTERN.fullmatch(folder.name).group("slug") if deleted
+                            else logical_slug(folder))
                     created = datetime.fromtimestamp(
                         getattr(folder.stat(), "st_birthtime", folder.stat().st_ctime), timezone.utc)
                     status = "project soft deleted" if deleted else effective_status(folder)
@@ -162,17 +160,26 @@ class AnalyticsStore:
         with self.locked():
             rows = _read_csv(self.projects_path)
             identifier = max((int(row["id_project"]) for row in rows), default=0) + 1
+            format_project_id(identifier)
             meta = {"id_project": identifier, "dim_project_name": name.strip(),
-                    "project_slug": project.name, "ts_created": format_ts(moment),
+                    "project_slug": logical_slug(project), "ts_created": format_ts(moment),
                     "latest_status": "project created", "baseline_ds": pacific_ds(moment),
                     "baseline_status": "project created"}
             self._write_meta(project, meta)
             rows.append({"id_project": identifier, "dim_project_name": name.strip(),
-                         "project_slug": project.name, "ts_created": format_ts(moment),
+                         "project_slug": logical_slug(project), "ts_created": format_ts(moment),
                          "ts_permanently_deleted": ""})
             _write_csv(self.projects_path, PROJECT_FIELDS, rows)
             self._append_fact_locked(meta, "", "project created", moment)
             return meta
+
+    def next_project_id(self) -> int:
+        """Return the next available ID, enforcing the sortable-name capacity."""
+        with self.locked():
+            rows = _read_csv(self.projects_path)
+            identifier = max((int(row["id_project"]) for row in rows), default=0) + 1
+            format_project_id(identifier)
+            return identifier
 
     def sync_project(self, project: Path, moment: datetime = None) -> bool:
         moment = moment or utc_now()
@@ -314,7 +321,7 @@ class AnalyticsStore:
         rows = _read_csv(self.projects_path)
         identifier = max((int(row["id_project"]) for row in rows), default=0) + 1
         match = TRASH_PATTERN.fullmatch(project.name)
-        slug = match.group("slug") if match else project.name
+        slug = match.group("slug") if match else logical_slug(project)
         created = datetime.fromtimestamp(
             getattr(project.stat(), "st_birthtime", project.stat().st_ctime), timezone.utc)
         status = "project soft deleted" if match else effective_status(project)
