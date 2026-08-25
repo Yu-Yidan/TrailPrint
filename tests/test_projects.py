@@ -1,4 +1,5 @@
 import io
+import json
 import tempfile
 import unittest
 from datetime import datetime, timezone
@@ -17,7 +18,7 @@ from trailprint.web import create_app
 
 
 ROOT = Path(__file__).resolve().parents[1]
-GPX = (ROOT / "prints/example-trail/route.gpx").read_bytes()
+GPX = (ROOT / "tests/fixtures/example-route.gpx").read_bytes()
 
 
 class ProjectServiceTests(unittest.TestCase):
@@ -220,7 +221,8 @@ class WebTests(unittest.TestCase):
             "name": "Coastal Run", "gpx": (io.BytesIO(GPX), "coast.gpx")},
             content_type="multipart/form-data")
         self.assertEqual(response.status_code, 302)
-        self.assertTrue((self.root / "prints/coastal-run/route.gpx").is_file())
+        self.assertTrue((self.root / "prints/0001-coastal-run/route.gpx").is_file())
+        self.assertEqual(response.headers["Location"], "/projects/0001-coastal-run")
         page = self.client.get(response.headers["Location"])
         self.assertIn(b"Coastal Run", page.data)
 
@@ -239,6 +241,7 @@ class WebTests(unittest.TestCase):
             "plate_text_2": "Gain {elevation}", "plate_text_3": "{duration}",
             "plate_text_4": "Hawaii", "plate_text_5": "2026",
             "x_offset": "1.25", "y_offset": "-0.5", "fixed_elevation_scale": "on",
+            "include_water": "on", "include_ocean": "on",
             "city": "Volcano", "state": "Hawaii", "country": "United States"})
         self.assertEqual(response.status_code, 302)
         settings = self.build_manager.started.settings
@@ -249,7 +252,9 @@ class WebTests(unittest.TestCase):
         self.assertEqual(settings.plate_text_2, "Gain 105 ft")
         self.assertEqual(settings.plate_text_5, "2026")
         self.assertEqual((settings.x_offset, settings.y_offset), (1.25, -0.5))
-        self.assertTrue(settings.fixed_elevation_scale)
+        self.assertFalse(settings.fixed_elevation_scale)
+        self.assertTrue(settings.include_water)
+        self.assertTrue(settings.include_ocean)
         self.assertEqual(settings.plate_recess_depth, 1.5)
         self.assertEqual((settings.city, settings.state, settings.country),
                          ("Volcano", "Hawaii", "United States"))
@@ -269,8 +274,7 @@ class WebTests(unittest.TestCase):
                          b'name="state" type="hidden" value="Hawaii"',
                          b'name="country" type="hidden" value="United States"',
                          b'name="x_offset" type="number" value="0"',
-                         b'name="y_offset" type="number" value="0"',
-                         b'name="fixed_elevation_scale"'):
+                         b'name="y_offset" type="number" value="0"'):
             self.assertIn(expected, page)
         self.assertIn(b'id="resolution-value">8', page)
         self.assertIn(b'name="resolution" type="range" min="1" max="10" value="8"', page)
@@ -280,7 +284,26 @@ class WebTests(unittest.TestCase):
         self.assertNotIn(b"Trail location", page)
         self.assertIn(b'id="use-metric" type="checkbox" name="use_metric"', page)
         self.assertIn(b'name="plate_recess_depth" type="number" value="1.5"', page)
+        self.assertIn(b'name="include_water" checked', page)
+        self.assertIn(b'name="include_ocean"', page)
+        self.assertNotIn(b'name="fixed_elevation_scale"', page)
+        self.assertIn(b"Natural elevation scale retained", page)
         self.assertNotIn(b"{length}", page)
+
+    def test_tall_route_is_automatically_limited(self):
+        project = create_project(self.root / "prints", self.root / "presets", "Tall", GPX)
+        (project / "route.gpx").write_text('''<gpx><trk><trkseg>
+          <trkpt lat="45" lon="-122"><ele>0</ele></trkpt>
+          <trkpt lat="45.01" lon="-122.01"><ele>1000</ele></trkpt>
+        </trkseg></trk></gpx>''', encoding="utf-8")
+        page = self.client.get("/projects/tall").data
+        self.assertIn(b"Automatically limited to 15 mm", page)
+
+        self.client.post("/projects/tall/build", data={
+            "shape": "HEXAGON", "shape_extra": "NONE", "resolution": "8",
+            "plate_title": "Tall", "include_water": "on"})
+
+        self.assertTrue(self.build_manager.started.settings.fixed_elevation_scale)
 
     def test_project_page_surfaces_literal_gpx_trip_date(self):
         project = create_project(self.root / "prints", self.root / "presets", "Dated Trip", GPX)
@@ -367,23 +390,51 @@ class WebTests(unittest.TestCase):
         (project / "build/preview.png").unlink()
         self.assertEqual(self.client.get("/projects/build-me/preview-image").status_code, 404)
 
-    def test_bambu_export_starts_with_four_filament_assignments(self):
+    def test_bambu_export_starts_with_terrain_band_assignments(self):
         project = create_project(self.root / "prints", self.root / "presets", "Build Me", GPX)
         for name in ("build-me.stl", "build-me_Trail.stl", "build-me_Plate.stl",
                      "build-me_Text.stl"):
             (project / "deliverables" / name).write_bytes(b"stl")
         (project / "build/preview.png").write_bytes(b"png")
+        (project / "build/elevation.json").write_text(json.dumps({
+            "source_min_m": 500, "source_max_m": 2500,
+            "model_surface_min_z_mm": 5.5, "model_surface_max_z_mm": 25.5,
+            "min_thickness_mm": 2, "unit_system": "IMPERIAL",
+        }), encoding="utf-8")
 
         page = self.client.get("/projects/build-me/preview")
         self.assertIn(b"Bambu Lab P1S 0.4 nozzle", page.data)
         self.assertNotIn(b"Export unavailable", page.data)
         response = self.client.post("/projects/build-me/bambu", data={
-            "trail_filament": "3", "terrain_filament": "4",
-            "plate_filament": "1", "text_filament": "2"})
+            "trail_filament": "3", "land_filament": "4",
+            "mountain_filament": "1", "summit_filament": "2",
+            "plate_filament": "1", "text_filament": "2",
+            "grey_start": "4000", "white_start": "7500"})
 
         self.assertEqual(response.status_code, 302)
         self.assertEqual(self.bambu_manager.started.settings.by_role(),
                          {"trail": 3, "terrain": 4, "plate": 1, "text": 2})
+        self.assertEqual(self.bambu_manager.started.settings.terrain_filaments(),
+                         {"land": 4, "mountain": 1, "summit": 2})
+
+    def test_water_build_surfaces_fourth_plate_and_blue_filament(self):
+        project = create_project(self.root / "prints", self.root / "presets", "Wet Route", GPX)
+        for name in ("wet-route.stl", "wet-route_Trail.stl", "wet-route_Plate.stl",
+                     "wet-route_Text.stl", "wet-route_WATER.stl"):
+            (project / "deliverables" / name).write_bytes(b"stl")
+        (project / "build/preview.png").write_bytes(b"png")
+        (project / "build/elevation.json").write_text(json.dumps({
+            "source_min_m": 100, "source_max_m": 200,
+            "model_surface_min_z_mm": 2, "model_surface_max_z_mm": 8,
+            "min_thickness_mm": 2, "unit_system": "METRIC",
+        }), encoding="utf-8")
+
+        page = self.client.get("/projects/wet-route/preview")
+
+        self.assertIn(b"Four-plate print setup", page.data)
+        self.assertIn(b"Plate 4: blue Water inserts", page.data)
+        self.assertIn(b'name="water_filament"', page.data)
+        self.assertIn(b"blue-only plate", page.data)
 
     def test_bambu_script_opens_output_folder_after_success(self):
         script = self.client.get("/static/bambu.js").data

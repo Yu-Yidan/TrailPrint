@@ -1,13 +1,14 @@
 # Workflow
 
-1. Copy `prints/example-trail` to a lowercase, hyphenated project name.
-2. Replace `route.gpx` and record its source in the project's README.
-3. Choose Shape, Shape Extras, plate text, terrain offsets, elevation scale,
-   and Resolution on the project page.
-4. Click **Build with Blender**, or run `trailprint build prints/<project-name>`.
+1. Create a project in the local interface so it receives the next sortable ID.
+2. Confirm the uploaded `route.gpx` and record its source in the project's README.
+3. Choose Shape, Shape Extras, plate text, terrain offsets, water options, and
+   Resolution on the project page. Elevation scaling is selected automatically.
+4. Click **Build with Blender**, or run
+   `trailprint build prints/<four-digit-id>-<project-name>`.
 5. Inspect the validated STL set in the browser preview.
-6. Optionally choose a configured Bambu filament for Trail, Terrain, Plate, and
-   Text, then create the reviewable three-plate 3MF from the preview page.
+6. Optionally choose configured Bambu filaments for Trail, Terrain, Plate, Text,
+   and generated Water, then create the reviewable 3MF from the preview page.
 7. Open the 3MF in Bambu Studio, confirm the AMS mapping and all slicing
    settings, slice, and print.
 
@@ -43,6 +44,9 @@ TrailPrint maintains these UTF-8 CSV files under `data/analytics/`:
   `ds`, and the project name used when the event occurred
 
 New projects receive the next integer ID immediately and IDs are never reused.
+The integer is formatted with four digits only in folder and deliverable names
+(for example, ID `16` becomes `0016-ruoxi-alaska`); IDs above 9999 are rejected
+so normal alphabetical sorting remains numerically ordered.
 Existing projects are initialized once by filesystem creation time, with slug
 as a deterministic tie-breaker. No historical facts are backfilled. A project
 created and permanently deleted on the same Pacific day is absent from the
@@ -92,7 +96,8 @@ The local interface intentionally exposes a small subset of TrailPrint3D:
 - Country and state detected asynchronously from the first GPX point, shown in
   editable Text 4 and Text 5 fields respectively, and cached in `location.json`
 - X and Y terrain offsets
-- Optional fixed 10 mm elevation scale
+- Expected printed relief calculated from GPX elevations; routes above 15 mm
+  are automatically limited to 15 mm of relief (about 17 mm with the base)
 - A terrain-shaped plate recess, defaulting to 1.5 mm deep with zero digital
   clearance; available only for layouts that generate a separate plate
 - Terrain resolution from 1–10 (8 by default; 8 or lower recommended)
@@ -130,22 +135,39 @@ geometry, not Bambu printer profiles, slicing, supports, or G-code.
 ## Bambu Studio project export
 
 The preview page reads the currently selected printer, process, filament names,
-and filament colors from the local Bambu Studio configuration. It creates an
+and filament colors from the local Bambu Studio configuration. A successful
+Blender build also records the downloaded terrain's real elevation range and
+model-Z mapping; older builds must be rebuilt once before elevation colors are
+available. TrailPrint creates an
 unsliced `deliverables/<project-name>.3mf` with this plate layout:
 
 1. Trail
 2. Terrain
 3. Plate + Text as one object containing two independently assignable parts
+4. Water, when generated, as blue recessed inserts in one multipart object
 
-Terrain defaults to filament slot 1 and Plate to slot 3. If slot 3 is not
-configured, Plate uses the highest available slot. Trail and Text choose the
-closest configured color to their preview colors. After a successful export,
+Terrain offers Land, Mountain, and Summit filament selectors, defaulting to the
+closest configured green, neutral-grey, and white colors. Mountain begins at
+1,200 m and Summit at 2,300 m by default. Imperial projects display and accept
+cutoffs in feet; Metric projects use meters. The cutoffs and filament slots are
+editable and can be saved as local defaults. Terrain that never reaches the
+mountain cutoff remains green, terrain below the summit cutoff uses green and
+grey, and higher terrain uses all three; bands thinner than one configured
+print layer are omitted. Plate defaults to slot 3. If slot 3 is not configured,
+Plate uses the highest available slot. Trail and Text choose the closest
+configured color to their preview colors. After a successful export,
 the deliverables folder opens in Finder and the browser returns to the project
 dashboard.
 
+Lakes and major rivers are enabled by default; minor waterways are omitted to
+avoid fragile pieces. Ocean/coastline generation is experimental and must be
+enabled per build. Water uses TrailPrint3D's recessed single-color geometry and
+prints alone on its plate, avoiding water-to-terrain filament swaps. If no usable
+water data is returned, the build succeeds and retains the three-plate layout.
+
 TrailPrint disables the prime tower and writes zero for all purge volumes. This
-reduces waste but can cause visible color contamination, especially on the
-multipart third plate. The result must be opened and reviewed in Bambu Studio;
+reduces waste but can cause visible color contamination at terrain transitions
+and on the multipart third plate. The result must be opened and reviewed in Bambu Studio;
 TrailPrint does not automatically slice, send, or start a printer job. A new 3MF
 only replaces the previous one after its archive, plate layout, multipart
 structure, filament assignments, prime-tower setting, and purge matrix validate.

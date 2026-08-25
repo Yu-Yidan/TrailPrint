@@ -16,7 +16,7 @@ class PipelineTests(unittest.TestCase):
             project = Path(temp) / "sample"
             project.mkdir()
             (project / "route.gpx").write_text(
-                (ROOT / "prints/example-trail/route.gpx").read_text(), encoding="utf-8")
+                (ROOT / "tests/fixtures/example-route.gpx").read_text(), encoding="utf-8")
             (project / "print.yaml").write_text("preset: standard\n", encoding="utf-8")
             output = build_ribbon(project, ROOT / "presets")
             text = output.read_text(encoding="ascii")

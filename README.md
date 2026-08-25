@@ -1,7 +1,8 @@
 # TrailPrint
 
 TrailPrint uses EmGi's TrailPrint3D Blender add-on to turn a GPX track into a
-printable terrain map for Bambu Studio. Each design lives in `prints/<slug>/`
+printable terrain map for Bambu Studio. Each design lives in
+`prints/<four-digit-id>-<slug>/`
 with its source, scratch build data, and final deliverables.
 
 ## Quick start
@@ -11,11 +12,11 @@ Python 3.9+, Blender 5.2, and an enabled TrailPrint3D add-on are required.
 ```sh
 python3 -m venv .venv
 .venv/bin/pip install .
-.venv/bin/trailprint build prints/example-trail
+.venv/bin/trailprint build prints/0001-example-trail
 ```
 
 The command launches Blender in the background and writes TrailPrint3D's STL
-files to `prints/example-trail/deliverables/`. Import them into Bambu Studio,
+files to `prints/0001-example-trail/deliverables/`. Import them into Bambu Studio,
 choose the printer and slicing settings, then save the 3MF project there.
 
 See [docs/workflow.md](docs/workflow.md) for the complete workflow.
@@ -30,8 +31,12 @@ Start the project dashboard and open <http://127.0.0.1:5000>:
 
 The interface lists existing projects, accepts GPX files by drag-and-drop, and
 can run TrailPrint3D from a project detail page. The reduced interface exposes
-shape, shape extras, plate text, terrain offsets, fixed elevation scale, and
-resolution while always enabling single-color trail mode. Projects can be
+shape, shape extras, plate text, terrain offsets, water, and resolution while
+always enabling single-color trail mode. Terrain expected to exceed 15 mm of
+printed relief is automatically limited to 15 mm. Projects can be
+sorted by their zero-padded four-digit filesystem ID; analytics retain the ID
+as an integer, and the prefix is omitted from headings and printable titles.
+Projects can be
 deleted from the dashboard after typing the exact folder
 slug; deleted folders remain recoverable in `.trailprint-trash/` for 30 days.
 Use the **Deleted projects** link on the dashboard to restore them before they
@@ -80,14 +85,22 @@ project's output folder in Finder. While Blender runs, the settings panel is
 replaced by the live build phase and progress. A running build can be cancelled;
 TrailPrint stops Blender and discards staged work while preserving prior STL,
 3MF, preview, and validation files. Cancelled and failed jobs do not create
-analytics status facts. Preview colors use green terrain,
-red trail, black plate, and white text; STL files themselves remain colorless.
+analytics status facts. Preview colors use green terrain, red trail, blue water,
+black plate, and white text; STL files themselves remain colorless. Builds include
+lakes and major rivers by default as separately printable recessed inserts; ocean
+generation is an optional experimental setting.
 
 From the validated preview, TrailPrint can also create a reviewable Bambu Studio
 3MF using the printer, process, filaments, and colors currently configured in
-Bambu Studio. Choose a filament number for each model role and TrailPrint builds
-three plates: Trail, Terrain, and a multipart Plate + Text object. The 3MF is
+Bambu Studio. Choose filament numbers for each model role and TrailPrint builds
+three plates: Trail, Terrain, and a multipart Plate + Text object. When water
+geometry exists, a fourth blue-only Water plate is added. The 3MF is
 validated before replacing an earlier export. Prime tower is disabled and every
 purge volume is set to zero, so always confirm the AMS mapping and contamination
-risk in Bambu Studio before slicing or printing. Terrain defaults to filament
-slot 1 and Plate to slot 3; Trail and Text retain color-matched defaults.
+risk in Bambu Studio before slicing or printing. Terrain defaults to configured
+filaments nearest green land, neutral-grey mountain, and white summit colors.
+Grey starts at 1,200 m and white at 2,300 m by default, with editable cutoffs in
+the project's units. Low terrain stays green, medium terrain uses green and
+grey, and sufficiently high terrain uses all three. These choices can be saved
+as local defaults. Water defaults to the closest configured blue. Plate defaults
+to slot 3; Trail and Text retain color-matched defaults.

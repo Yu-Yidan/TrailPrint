@@ -17,8 +17,10 @@ from typing import Dict, List, Optional, Tuple
 class BuildCancelled(Exception):
     """Raised after a requested Blender build cancellation is cleaned up."""
 
-from .gpx import format_trip_stats, read_gpx_trip_date, read_gpx_trip_stats
+from .gpx import (AUTO_RELIEF_LIMIT_MM, format_trip_stats, gpx_center_latitude,
+                  read_gpx_trip_date, read_gpx_trip_stats)
 from .mesh_validation import align_core_to_terrain, mesh_role, validate_stls, write_report
+from .naming import deliverable_prefix, human_name
 from .title import resolve_project_title, validate_title_fit
 
 
@@ -61,6 +63,8 @@ class BuildSettings:
     country: str = ""
     unit_system: str = "IMPERIAL"
     plate_recess_depth: float = 1.5
+    include_water: bool = True
+    include_ocean: bool = False
 
     @classmethod
     def validated(cls, shape="HEXAGON", shape_extra="NONE", resolution=8,
@@ -68,7 +72,8 @@ class BuildSettings:
                   plate_text_2="{date}", plate_text_3="{duration}",
                   plate_text_4="{country}", plate_text_5="{state}", x_offset=0, y_offset=0,
                   fixed_elevation_scale=False, city="", state="", country="",
-                  unit_system="IMPERIAL", plate_recess_depth=1.5):
+                  unit_system="IMPERIAL", plate_recess_depth=1.5,
+                  include_water=True, include_ocean=False):
         shape = str(shape).upper()
         shape_extra = str(shape_extra).upper()
         try:
@@ -108,7 +113,8 @@ class BuildSettings:
         if not has_separate_plate(shape, shape_extra):
             plate_recess_depth = 0.0
         return cls(shape, shape_extra, resolution, *text_values, x_offset, y_offset,
-                   bool(fixed_elevation_scale), *locations, unit_system, plate_recess_depth)
+                   bool(fixed_elevation_scale), *locations, unit_system, plate_recess_depth,
+                   bool(include_water), bool(include_ocean))
 
 
 def has_separate_plate(shape: str, shape_extra: str) -> bool:
@@ -152,6 +158,40 @@ def _promote_stls(staged: List[Path], deliverables: Path, build_dir: Path) -> Li
     finally:
         shutil.rmtree(backup, ignore_errors=True)
     return promoted
+
+
+def _prefix_staged_outputs(project: Path, stage: Path) -> None:
+    prefix = deliverable_prefix(project)
+    for path in list(stage.glob("*.stl")):
+        if prefix and not path.name.startswith(prefix):
+            path.rename(path.with_name(prefix + path.name))
+
+
+def _read_elevation_metadata(stage: Path, validation: dict) -> dict:
+    try:
+        value = json.loads((stage / "terrain-elevation.json").read_text(encoding="utf-8"))
+        terrain = next(item for item in validation.get("files", [])
+                       if item.get("role") == "terrain" and item.get("valid"))
+        bounds = terrain["bounds_mm"]
+        minimum = float(value["source_min_m"])
+        maximum = float(value["source_max_m"])
+        thickness = float(value["min_thickness_mm"])
+        surface_min = float(bounds[0][2]) + thickness
+        surface_max = float(bounds[1][2])
+    except (OSError, ValueError, KeyError, StopIteration, TypeError, json.JSONDecodeError):
+        return {}
+    if not all(math.isfinite(item) for item in
+               (minimum, maximum, thickness, surface_min, surface_max)):
+        return {}
+    if maximum <= minimum or surface_max <= surface_min or thickness < 0:
+        return {}
+    return {
+        "source_min_m": minimum, "source_max_m": maximum,
+        "model_surface_min_z_mm": surface_min,
+        "model_surface_max_z_mm": surface_max,
+        "min_thickness_mm": thickness,
+        "unit_system": str(value.get("unit_system", "IMPERIAL")).upper(),
+    }
 
 
 def _run_command(command, timeout: int, cancel_event=None) -> subprocess.CompletedProcess:
@@ -207,11 +247,15 @@ def _run_attempt(project: Path, settings: BuildSettings, stage: Path, blender_pa
         "plate_text_4": settings.plate_text_4, "plate_text_5": settings.plate_text_5,
         "x_offset": settings.x_offset, "y_offset": settings.y_offset,
         "fixed_elevation_scale": settings.fixed_elevation_scale,
+        "fixed_elevation_target_mm": AUTO_RELIEF_LIMIT_MM,
+        "center_latitude": gpx_center_latitude(route),
         "trip_date": read_gpx_trip_date(route), "city": settings.city,
         "state": settings.state, "country": settings.country,
         "unit_system": settings.unit_system, **trip_values,
         "plate_recess_depth": settings.plate_recess_depth,
         "plate_recess_clearance": 0.0,
+        "include_water": settings.include_water,
+        "include_ocean": settings.include_ocean,
     }), encoding="utf-8")
     worker = Path(__file__).with_name("blender_worker.py")
     command = [str(blender_path), "--background", "--python", str(worker), "--", str(config_path)]
@@ -220,6 +264,25 @@ def _run_attempt(project: Path, settings: BuildSettings, stage: Path, blender_pa
 
 def _attempt_log(label: str, result: subprocess.CompletedProcess) -> str:
     return f"\n[{label}]\nSTDOUT\n{result.stdout}\nSTDERR\n{result.stderr}\n"
+
+
+def _failure_detail(result: subprocess.CompletedProcess) -> str:
+    """Return the useful exception line instead of unrelated trailing output."""
+    stderr_lines = [line.strip() for line in result.stderr.splitlines() if line.strip()]
+    exception_line = next(
+        (line for line in reversed(stderr_lines)
+         if line.startswith(("Error:", "RuntimeError:", "ValueError:",
+                             "AttributeError:", "TypeError:", "KeyError:",
+                             "ImportError:", "ModuleNotFoundError:"))),
+        None,
+    )
+    if exception_line:
+        return exception_line
+    return next(
+        (line.strip() for line in reversed(stderr_lines + result.stdout.splitlines())
+         if line.strip()),
+        "unknown error",
+    )
 
 
 def _render_preview(stls: List[Path], project_slug: str, output: Path, config_path: Path,
@@ -240,7 +303,7 @@ def run_blender_build(project: Path, settings: BuildSettings, blender: Optional[
     route = project / "route.gpx"
     if not route.is_file():
         raise ValueError(f"missing GPX input: {route}")
-    resolved_title = resolve_project_title(settings.plate_title, project.name)
+    resolved_title = resolve_project_title(settings.plate_title, human_name(project))
     validate_title_fit(resolved_title, settings.shape, settings.shape_extra)
     settings = BuildSettings.validated(
         settings.shape, settings.shape_extra, settings.resolution,
@@ -248,7 +311,7 @@ def run_blender_build(project: Path, settings: BuildSettings, blender: Optional[
         settings.plate_text_3, settings.plate_text_4, settings.plate_text_5,
         settings.x_offset, settings.y_offset, settings.fixed_elevation_scale,
         settings.city, settings.state, settings.country, settings.unit_system,
-        settings.plate_recess_depth)
+        settings.plate_recess_depth, settings.include_water, settings.include_ocean)
     blender_path = find_blender(blender)
     build_dir = project / "build"
     build_dir.mkdir(parents=True, exist_ok=True)
@@ -276,14 +339,16 @@ def run_blender_build(project: Path, settings: BuildSettings, blender: Optional[
     if result.returncode != 0:
         log_path.write_text("".join(logs), encoding="utf-8")
         shutil.rmtree(attempt_root, ignore_errors=True)
-        detail = next((line for line in reversed((result.stderr + result.stdout).splitlines()) if line.strip()), "unknown error")
+        detail = _failure_detail(result)
         raise ValueError(f"TrailPrint3D failed: {detail}")
+    _prefix_staged_outputs(project, primary_stage)
     primary_paths = list(primary_stage.glob("*.stl"))
     primary_validation = validate_stls(primary_paths, project.name)
     final_validation = primary_validation
     fallback_validation = None
     fallback_used = False
     fallback_alignment = None
+    elevation_stage = primary_stage
     valid_roles = {item["role"] for item in primary_validation["files"] if item["valid"]}
     invalid_roles = {item["role"] for item in primary_validation["files"] if not item["valid"]}
     needs_core_fallback = not {"terrain", "trail"}.issubset(valid_roles)
@@ -310,19 +375,22 @@ def run_blender_build(project: Path, settings: BuildSettings, blender: Optional[
         else:
             logs.append(_attempt_log("no Shape Extras fallback", fallback_result))
             if fallback_result.returncode == 0:
+                _prefix_staged_outputs(project, fallback_stage)
                 fallback_paths = list(fallback_stage.glob("*.stl"))
                 fallback_validation = validate_stls(fallback_paths, project.name)
                 if fallback_validation["valid"]:
                     fallback_alignment = align_core_to_terrain(
                         fallback_paths, primary_paths, project.name)
                     for path in list(primary_stage.glob("*.stl")):
-                        if mesh_role(path, project.name) in {"terrain", "trail"}:
+                        if mesh_role(path, project.name) in {"terrain", "trail", "water"}:
                             path.unlink()
                     for path in fallback_paths:
-                        if mesh_role(path, project.name) in {"terrain", "trail"}:
+                        if mesh_role(path, project.name) in {"terrain", "trail", "water"}:
                             shutil.copy2(path, primary_stage / path.name)
                     final_validation = validate_stls(list(primary_stage.glob("*.stl")), project.name)
                     fallback_used = final_validation["valid"]
+                    if fallback_used:
+                        elevation_stage = fallback_stage
             else:
                 detail = next((line for line in reversed(
                     (fallback_result.stderr + fallback_result.stdout).splitlines()) if line.strip()),
@@ -392,6 +460,14 @@ def run_blender_build(project: Path, settings: BuildSettings, blender: Optional[
     else:
         preview_path.unlink(missing_ok=True)
     write_report(report_path, report)
+    elevation = _read_elevation_metadata(elevation_stage, final_validation)
+    elevation_path = build_dir / "elevation.json"
+    if elevation:
+        temporary_elevation = elevation_path.with_suffix(".tmp")
+        temporary_elevation.write_text(json.dumps(elevation, indent=2) + "\n", encoding="utf-8")
+        os.replace(temporary_elevation, elevation_path)
+    else:
+        elevation_path.unlink(missing_ok=True)
     log_path.write_text(f"Duration: {time.monotonic() - started:.1f}s\n" + "".join(logs), encoding="utf-8")
     shutil.rmtree(attempt_root, ignore_errors=True)
     PROGRESS_FILE.unlink(missing_ok=True)

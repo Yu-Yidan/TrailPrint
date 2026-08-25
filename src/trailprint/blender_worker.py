@@ -5,6 +5,7 @@ import json
 import os
 import sys
 import traceback
+import math
 from pathlib import Path
 
 
@@ -32,6 +33,12 @@ def with_plate_clearance(original, props, clearance):
     return wrapped
 
 
+def fixed_elevation_multiplier(target_relief_mm, center_latitude):
+    """Convert TrailPrint3D's equatorial 10 mm scale to a latitude-safe target."""
+    return (float(target_relief_mm) / 10.0) * max(
+        0.01, math.cos(math.radians(float(center_latitude))))
+
+
 def main():
     try:
         import bpy
@@ -44,6 +51,7 @@ def main():
             raise RuntimeError("TrailPrint3D add-on is not installed or enabled")
         module_root = type(props).__module__.rsplit(".", 1)[0]
         utils = importlib.import_module(module_root + ".utils")
+        elevation_utils = importlib.import_module(module_root + ".utils.elevation")
         if not hasattr(utils, "runGeneration"):
             raise RuntimeError("Installed TrailPrint3D version has no compatible generator")
 
@@ -63,21 +71,56 @@ def main():
         props.xTerrainOffset = float(config["x_offset"])
         props.yTerrainOffset = float(config["y_offset"])
         props.fixedElevationScale = bool(config["fixed_elevation_scale"])
+        if props.fixedElevationScale:
+            target_relief = float(config.get("fixed_elevation_target_mm", 15.0))
+            center_latitude = float(config.get("center_latitude", 0.0))
+            props.scaleElevation = fixed_elevation_multiplier(
+                target_relief, center_latitude)
+        else:
+            props.scaleElevation = 1.0
         props.plateInsertValue = float(config.get("plate_recess_depth", 0))
         props.singleColorMode = True
+        include_water = bool(config.get("include_water", True))
+        include_ocean = bool(config.get("include_ocean", False))
+        props.col_wPondsActive = include_water
+        props.col_wBigRiversActive = include_water
+        props.col_wSmallRiversActive = False
+        props.el_oActive = include_ocean
+        if include_water or include_ocean:
+            props.elementMode = "SINGLECOLORMODE_REMESH"
+            props.toleranceElements = 0.4
+        else:
+            props.elementMode = "PAINT"
         props.disable_auto_export = False
         props.disable_3mf_export = True
         props.exportformat = "STL"
         terrain_utils = importlib.import_module(module_root + ".utils.terrain")
         original_plate_insert = terrain_utils.plateInsert
+        original_elevation = elevation_utils.get_tile_elevation
+        elevation_values = []
+
+        def capture_elevation(*args, **kwargs):
+            values, difference = original_elevation(*args, **kwargs)
+            elevation_values.extend(float(value) for value in values
+                                    if math.isfinite(float(value)))
+            return values, difference
 
         terrain_utils.plateInsert = with_plate_clearance(
             original_plate_insert, props, config.get("plate_recess_clearance", 0))
+        elevation_utils.get_tile_elevation = capture_elevation
         try:
             utils.runGeneration(0)
         finally:
             terrain_utils.plateInsert = original_plate_insert
+            elevation_utils.get_tile_elevation = original_elevation
         export_dir = Path(config["export_path"])
+        if elevation_values:
+            (export_dir / "terrain-elevation.json").write_text(json.dumps({
+                "source_min_m": min(elevation_values),
+                "source_max_m": max(elevation_values),
+                "min_thickness_mm": float(props.minThickness),
+                "unit_system": config.get("unit_system", "IMPERIAL"),
+            }, indent=2) + "\n", encoding="utf-8")
         # TrailPrint3D chooses OBJ whenever its hidden element mode is PAINT,
         # even when no elements are active. Preserve that default generation
         # behavior, then re-export the exact generated objects as requested STL.

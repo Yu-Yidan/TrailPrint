@@ -11,15 +11,21 @@ from .bambu import BambuSettings, default_filament_mapping, discover_environment
 from .bambu_jobs import BambuJobManager
 from .analytics import AnalyticsStore, effective_status
 from .config import load_config
-from .gpx import format_trip_stats, read_gpx_trip_stats, resolve_trip_text
+from .gpx import (AUTO_RELIEF_LIMIT_MM, estimate_print_relief_mm,
+                  format_trip_stats, read_gpx_trip_stats, resolve_trip_text)
 from .jobs import BuildBusy, BuildManager
 from .location import detect_location, has_location_cache, read_location, save_location
 from .mesh_validation import mesh_role, read_report
+from .naming import canonical_3mf_name, human_name
+from .terrain_colors import (display_elevation, elevation_metadata,
+                             elevation_to_meters, load_terrain_defaults,
+                             save_terrain_preferences)
 from .projects import (FUNNEL_STAGES, create_project, list_deleted_projects, list_projects,
+                       migrate_active_project, migrate_active_projects,
                        permanently_delete_projects, purge_trash, read_upload,
                        resolve_project, restore_project,
                        trash_project, update_production_status)
-from .title import TITLE_LIMITS_MM, readable_project_name, resolve_project_title, validate_title_fit
+from .title import TITLE_LIMITS_MM, resolve_project_title, validate_title_fit
 
 
 def create_app(repo_root: Path = None, build_manager: BuildManager = None,
@@ -40,6 +46,7 @@ def create_app(repo_root: Path = None, build_manager: BuildManager = None,
     analytics = AnalyticsStore(root)
     app.extensions["trailprint_analytics"] = analytics
     analytics.run_daily(app.config["PRINTS_DIR"], app.config["TRASH_DIR"])
+    migrate_active_projects(app.config["PRINTS_DIR"])
     purge_trash(app.config["TRASH_DIR"], retention_days=30,
                 before_remove=analytics.mark_permanently_deleted)
 
@@ -102,9 +109,11 @@ def create_app(repo_root: Path = None, build_manager: BuildManager = None,
             if upload is None:
                 raise ValueError("Choose a GPX file.")
             data = read_upload(upload.stream, upload.filename or "")
+            analytics.next_project_id()
             project = create_project(
                 app.config["PRINTS_DIR"], app.config["PRESETS_DIR"], name, data)
             analytics.register_project(project, name)
+            project = migrate_active_project(project)
         except (OSError, ValueError) as exc:
             return render_template("new_project.html", error=str(exc), name=name), 400
         flash("Project created successfully.", "success")
@@ -127,6 +136,7 @@ def create_app(repo_root: Path = None, build_manager: BuildManager = None,
         job = app.extensions["trailprint_builds"].for_project(project)
         location = read_location(project)
         stats = read_gpx_trip_stats(project / "route.gpx")
+        expected_relief = estimate_print_relief_mm(project / "route.gpx")
         trip_values = {
             "IMPERIAL": format_trip_stats(stats, "IMPERIAL"),
             "METRIC": format_trip_stats(stats, "METRIC"),
@@ -134,12 +144,15 @@ def create_app(repo_root: Path = None, build_manager: BuildManager = None,
         preview_path = project / "build/preview.png"
         return render_template(
             "project.html", project=project,
+            project_title=human_name(project),
             has_gpx=(project / "route.gpx").is_file(),
             stl_files=sorted(path.name for path in deliverables.glob("*.stl")) if deliverables.is_dir() else [],
             shapes=SHAPE_LABELS, extras=SHAPE_EXTRAS, extra_labels=EXTRA_LABELS,
             job=job, location=location, has_location_cache=has_location_cache(project),
             trip_values=trip_values,
-            plate_title=readable_project_name(project.name), title_limits=TITLE_LIMITS_MM,
+            expected_relief=expected_relief,
+            relief_limit=AUTO_RELIEF_LIMIT_MM,
+            plate_title=human_name(project), title_limits=TITLE_LIMITS_MM,
             has_preview=preview_path.is_file(),
             validation=read_report(project / "build/validation.json"))
 
@@ -156,6 +169,9 @@ def create_app(repo_root: Path = None, build_manager: BuildManager = None,
     def build_project(slug):
         project = get_project(slug)
         try:
+            expected_relief = estimate_print_relief_mm(project / "route.gpx")
+            limit_elevation = (expected_relief is not None
+                               and expected_relief > AUTO_RELIEF_LIMIT_MM)
             settings = BuildSettings.validated(
                 request.form.get("shape", "HEXAGON"), request.form.get("shape_extra", "OUTER TEXT"),
                 request.form.get("resolution", 8), request.form.get("plate_title", "{name}"),
@@ -165,13 +181,15 @@ def create_app(repo_root: Path = None, build_manager: BuildManager = None,
                 request.form.get("plate_text_4", "{country}"),
                 request.form.get("plate_text_5", "{state}"),
                 request.form.get("x_offset", 0), request.form.get("y_offset", 0),
-                request.form.get("fixed_elevation_scale") == "on",
+                limit_elevation,
                 request.form.get("city", ""), request.form.get("state", ""),
                 request.form.get("country", ""),
                 "METRIC" if request.form.get("use_metric") == "on" else "IMPERIAL",
-                request.form.get("plate_recess_depth", 1.5))
+                request.form.get("plate_recess_depth", 1.5),
+                request.form.get("include_water") == "on",
+                request.form.get("include_ocean") == "on")
             stats = read_gpx_trip_stats(project / "route.gpx")
-            replacements = {"name": project.name, "city": settings.city,
+            replacements = {"name": human_name(project), "city": settings.city,
                             "state": settings.state, "country": settings.country}
             settings = replace(settings,
                 plate_title=resolve_trip_text(settings.plate_title, stats, settings.unit_system, **replacements),
@@ -180,7 +198,7 @@ def create_app(repo_root: Path = None, build_manager: BuildManager = None,
                 plate_text_3=resolve_trip_text(settings.plate_text_3, stats, settings.unit_system, **replacements),
                 plate_text_4=resolve_trip_text(settings.plate_text_4, stats, settings.unit_system, **replacements),
                 plate_text_5=resolve_trip_text(settings.plate_text_5, stats, settings.unit_system, **replacements))
-            resolved_title = resolve_project_title(settings.plate_title, project.name)
+            resolved_title = resolve_project_title(settings.plate_title, human_name(project))
             validate_title_fit(resolved_title, settings.shape, settings.shape_extra)
             settings = replace(settings, plate_title=resolved_title)
             save_location(project, settings.city, settings.state, settings.country)
@@ -266,26 +284,63 @@ def create_app(repo_root: Path = None, build_manager: BuildManager = None,
             bambu_environment = discover_environment()
             bambu_error = ""
             filament_defaults = default_filament_mapping(bambu_environment.filaments)
+            terrain_defaults = load_terrain_defaults(
+                root, project, bambu_environment.filaments)
+            filament_defaults.update(terrain_defaults)
         except ValueError as exc:
-            bambu_environment, filament_defaults, bambu_error = None, {}, str(exc)
+            bambu_environment, filament_defaults, terrain_defaults, bambu_error = None, {}, {}, str(exc)
+        elevation = elevation_metadata(project)
+        unit_system = str(elevation.get("unit_system", "IMPERIAL")).upper()
+        elevation_view = ({
+            "minimum": display_elevation(elevation["source_min_m"], unit_system),
+            "maximum": display_elevation(elevation["source_max_m"], unit_system),
+            "grey_start": display_elevation(terrain_defaults.get("grey_start_m", 1200), unit_system),
+            "white_start": display_elevation(terrain_defaults.get("white_start_m", 2300), unit_system),
+            "unit": "m" if unit_system == "METRIC" else "ft",
+            "unit_system": unit_system,
+        } if elevation else {})
         bambu_job = app.extensions["trailprint_bambu"].for_project(project)
         return render_template(
             "preview.html", project=project, files=preview_files,
+            project_title=human_name(project),
             validation=read_report(project / "build/validation.json"),
             bambu_environment=bambu_environment, bambu_defaults=filament_defaults,
             bambu_error=bambu_error, bambu_job=bambu_job,
-            bambu_missing_roles=missing_roles, bambu_ready=not missing_roles,
-            bambu_output=(project / "deliverables" / f"{project.name}.3mf").is_file())
+            elevation=elevation_view,
+            bambu_missing_roles=missing_roles,
+            bambu_ready=not missing_roles and bool(elevation),
+            bambu_output=(project / "deliverables" / canonical_3mf_name(project)).is_file())
 
     @app.post("/projects/<slug>/bambu")
     def build_bambu_project(slug):
         project = get_project(slug)
         try:
             environment = discover_environment()
+            elevation = elevation_metadata(project)
+            if not elevation:
+                raise ValueError("Rebuild the terrain before creating elevation colors.")
+            unit_system = str(elevation.get("unit_system", "IMPERIAL")).upper()
+            grey_start_m = elevation_to_meters(
+                request.form.get("grey_start"), unit_system)
+            white_start_m = elevation_to_meters(
+                request.form.get("white_start"), unit_system)
             settings = BambuSettings.validated(
                 len(environment.filaments), request.form.get("trail_filament"),
-                request.form.get("terrain_filament"), request.form.get("plate_filament"),
-                request.form.get("text_filament"))
+                request.form.get("land_filament"), request.form.get("mountain_filament"),
+                request.form.get("summit_filament"), request.form.get("plate_filament"),
+                request.form.get("text_filament"), request.form.get("water_filament", 1),
+                grey_start_m, white_start_m)
+            color_preferences = {
+                **settings.terrain_filaments(),
+                "grey_start_m": grey_start_m,
+                "white_start_m": white_start_m,
+            }
+            if any(mesh_role(path, project.name) == "water"
+                   for path in (project / "deliverables").glob("*.stl")):
+                color_preferences["water"] = settings.water_filament
+            save_terrain_preferences(
+                root, project, color_preferences,
+                save_defaults=request.form.get("save_terrain_defaults") == "on")
             job = app.extensions["trailprint_bambu"].start(project, settings)
         except (OSError, ValueError) as exc:
             flash(str(exc), "error")
@@ -306,7 +361,7 @@ def create_app(repo_root: Path = None, build_manager: BuildManager = None,
     @app.post("/projects/<slug>/open-bambu-project")
     def open_bambu_project(slug):
         project = get_project(slug)
-        output = project / "deliverables" / f"{project.name}.3mf"
+        output = project / "deliverables" / canonical_3mf_name(project)
         if not output.is_file():
             flash("Create the Bambu project before opening it.", "error")
         else:

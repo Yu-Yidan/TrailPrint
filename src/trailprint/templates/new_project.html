@@ -15,7 +15,7 @@
     </label>
     <label class="field-label" for="name">Project name</label>
     <input class="text-input" id="name" name="name" value="{{ name or '' }}" placeholder="Mount Tam loop" required>
-    <p class="path-preview">Folder: <code>prints/<span id="slug-preview">project-name</span>/</code></p>
+    <p class="path-preview">Folder: <code>prints/&lt;####&gt;-<span id="slug-preview">project-name</span>/</code></p>
     <div class="form-actions"><a class="button secondary" href="{{ url_for('dashboard') }}">Cancel</a>
     <button class="button primary" type="submit">Create project</button></div>
   </form>
