@@ -29,7 +29,8 @@ class BambuProjectTests(unittest.TestCase):
         )
         self.assertEqual(default_filament_mapping(filaments),
                          {"trail": 3, "terrain": 1, "plate": 3, "text": 2,
-                          "water": 4, "land": 4, "mountain": 4, "summit": 2})
+                          "water": 4, "land": 4, "mountain": 4, "summit": 2,
+                          "black": 1, "green": 4, "grey": 4, "white": 2})
         files = {role: Path(f"/{role}.stl") for role in ("trail", "terrain", "plate", "text")}
         manifest = assemble_manifest(files, BambuSettings(3, 4, 1, 2, 1, 2), 4)
         self.assertEqual([plate["plate_name"] for plate in manifest["plates"]],
@@ -48,6 +49,19 @@ class BambuProjectTests(unittest.TestCase):
         self.assertEqual(water["plate_name"], "Water")
         self.assertEqual([item["filaments"] for item in water["objects"]], [[4], [4]])
         self.assertEqual([item["assemble_index"] for item in water["objects"]], [[2], [2]])
+
+    def test_osm_mode_uses_lowest_band_as_terrain_base(self):
+        bands = ({"role": "black", "min_z": 2.0, "max_z": 5.0},
+                 {"role": "green", "min_z": 5.0, "max_z": 8.0})
+        settings = BambuSettings.validated(
+            4, trail=3, land=4, mountain=3, summit=2, plate=1, text=2,
+            black=1, green=4, grey=3, white=2,
+            terrain_mode="osm", automatic_bands=bands)
+        files = {role: Path(f"/{role}.stl")
+                 for role in ("trail", "terrain", "plate", "text")}
+        manifest = assemble_manifest(files, settings, 4)
+        self.assertEqual(manifest["plates"][1]["objects"][0]["filaments"], [1])
+        self.assertEqual(settings.terrain_filaments()["green"], 4)
 
     def test_validates_and_enforces_bambu_archive(self):
         with tempfile.TemporaryDirectory() as temp:

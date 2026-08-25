@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Analytics · TrailPrint{% endblock %}
+{% block content %}
+<section class="hero analytics-hero"><div><p class="eyebrow">LOCAL ANALYTICS</p><h1>Project activity</h1><p>Current workflow distribution and project creation history.</p></div><div class="analytics-total"><strong>{{ analytics_data.total_projects }}</strong><span>Total project IDs</span></div></section>
+
+<section class="panel analytics-panel" aria-labelledby="status-heading">
+  <div class="analytics-heading"><div><p class="eyebrow">CURRENT STATE</p><h2 id="status-heading">Projects by status</h2></div><span>{{ analytics_data.total_projects }} total</span></div>
+  <ul class="status-card-grid" aria-label="Project counts by status">
+  {% for item in analytics_data.status_counts %}<li class="status-count-card"><strong>{{ item.count }}</strong><span>{{ item.label }}</span></li>{% endfor %}
+  </ul>
+</section>
+
+<section class="panel analytics-panel" aria-labelledby="created-heading">
+  <div class="analytics-heading"><div><p class="eyebrow">CREATION TREND</p><h2 id="created-heading">Projects created by day</h2></div><span>Pacific time</span></div>
+  {% if analytics_data.created_daily %}<div class="line-chart" id="created-line-chart" role="group" aria-label="Daily count of projects created"></div>
+  <script id="created-chart-data" type="application/json">{{ analytics_data.created_daily|tojson }}</script>
+  <div class="analytics-table-wrap"><table class="analytics-table"><thead><tr><th>Date</th><th>Projects created</th></tr></thead><tbody>{% for item in analytics_data.created_daily %}<tr><td>{{ item.date }}</td><td>{{ item.count }}</td></tr>{% endfor %}</tbody></table></div>
+  {% else %}<div class="chart-empty"><strong>No project history yet</strong><p>Create a project to begin the timeline.</p></div>{% endif %}
+</section>
+{% if analytics_data.created_daily %}<script src="{{ url_for('static', filename='analytics.js') }}"></script>{% endif %}
+{% endblock %}

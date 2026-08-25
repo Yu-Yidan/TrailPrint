@@ -1,5 +1,9 @@
 # Workflow
 
+The Analytics link in the site header opens a read-only view of all known
+project IDs. Status counts include active, soft-deleted, and permanently deleted
+projects; the creation chart shows daily new projects using Pacific dates.
+
 1. Create a project in the local interface so it receives the next sortable ID.
 2. Confirm the uploaded `route.gpx` and record its source in the project's README.
 3. Choose Shape, Shape Extras, plate text, terrain offsets, water options, and
@@ -146,7 +150,17 @@ unsliced `deliverables/<project-name>.3mf` with this plate layout:
 3. Plate + Text as one object containing two independently assignable parts
 4. Water, when generated, as blue recessed inserts in one multipart object
 
-Terrain offers Land, Mountain, and Summit filament selectors, defaulting to the
+When OpenStreetMap land-cover evidence is reachable during the terrain build,
+the preview defaults to OSM-inspired colors. Forest and otherwise unclassified
+land are green; scree and rock are grey; glaciers are white; and only explicitly
+tagged lava fields or flows are black. TrailPrint approximates those geographic
+polygons with at most four contiguous elevation bands. The optimizer charges an
+8% mismatch penalty per additional transition, so it uses fewer colors when
+extra swaps add little value. Evidence coverage and match confidence make the
+approximation reviewable. If Overpass is unavailable, STL generation still
+succeeds and manual mode remains available.
+
+Manual mode offers Land, Mountain, and Summit filament selectors, defaulting to the
 closest configured green, neutral-grey, and white colors. Mountain begins at
 1,200 m and Summit at 2,300 m by default. Imperial projects display and accept
 cutoffs in feet; Metric projects use meters. The cutoffs and filament slots are
@@ -159,9 +173,10 @@ configured color to their preview colors. After a successful export,
 the deliverables folder opens in Finder and the browser returns to the project
 dashboard.
 
-Lakes and major rivers are enabled by default; minor waterways are omitted to
-avoid fragile pieces. Ocean/coastline generation is experimental and must be
-enabled per build. Water uses TrailPrint3D's recessed single-color geometry and
+Lakes, major rivers, and coastal sea share one water option that is enabled by
+default; minor waterways are omitted to avoid fragile pieces. Regions smaller
+than 25 mm² on the finished model are filtered before geometry and recesses are
+created. Water uses TrailPrint3D's recessed single-color geometry and
 prints alone on its plate, avoiding water-to-terrain filament swaps. If no usable
 water data is returned, the build succeeds and retains the three-plate layout.
 

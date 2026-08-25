@@ -40,7 +40,16 @@ Terrain and trail were regenerated with Shape Extras set to None; the requested 
   {% if bambu_error %}<div class="notice error">{{ bambu_error }}</div>
   {% else %}<form method="post" action="{{ url_for('build_bambu_project', slug=project.name) }}" id="bambu-form">
     <div class="bambu-profile"><span><strong>Printer</strong>{{ bambu_environment.machine }}</span><span><strong>Process</strong>{{ bambu_environment.process }}</span></div>
-    {% if elevation %}<div class="terrain-elevation" id="terrain-elevation" data-min="{{ elevation.minimum }}" data-max="{{ elevation.maximum }}">
+    {% if elevation %}<div class="terrain-mode-picker">
+      {% if osm_palette %}<label><input type="radio" name="terrain_mode" value="osm" checked> OSM-inspired</label>{% endif %}
+      <label><input type="radio" name="terrain_mode" value="manual" {% if not osm_palette %}checked{% endif %}> Manual elevation</label>
+    </div>
+    {% if osm_palette %}<div class="terrain-elevation osm-terrain-settings">
+      <strong>OpenStreetMap-inspired elevation palette</strong>
+      <p>{% for band in osm_palette.display_bands %}<span class="terrain-role {{ band.role }}">{{ band.role|title }} {{ '%.0f'|format(band.display_min) }}–{{ '%.0f'|format(band.display_max) }} {{ elevation.unit }}</span>{% if not loop.last %} → {% endif %}{% endfor %}</p>
+      <p class="fine-print">Mapped evidence covers {{ '%.0f'|format(osm_palette.mapped_coverage * 100) }}% of terrain samples; approximate band match {{ '%.0f'|format(osm_palette.confidence * 100) }}%. {{ osm_palette.attribution }}</p>
+    </div>{% endif %}
+    <div class="terrain-elevation manual-terrain-settings" id="terrain-elevation" data-min="{{ elevation.minimum }}" data-max="{{ elevation.maximum }}" {% if osm_palette %}hidden{% endif %}>
       <strong>Terrain elevation {{ '%.0f'|format(elevation.minimum) }}–{{ '%.0f'|format(elevation.maximum) }} {{ elevation.unit }}</strong>
       <div class="compact-grid">
         <label><span>Mountain starts ({{ elevation.unit }})</span><input class="text-input" id="grey-start" name="grey_start" type="number" step="any" value="{{ '%.2f'|format(elevation.grey_start) }}" required></label>
@@ -48,11 +57,17 @@ Terrain and trail were regenerated with Shape Extras set to None; the requested 
       </div><p class="fine-print" id="terrain-band-summary"></p>
     </div>{% else %}<div class="notice error"><strong>Elevation colors unavailable.</strong> Rebuild this project to capture its downloaded terrain elevation range.</div>{% endif %}
     <div class="filament-grid">
-      {% for role in ['trail', 'land', 'mountain', 'summit', 'plate', 'text'] + (['water'] if 'water' in files|map(attribute='role')|list else []) %}<label><span>{{ role|title }} filament</span>
+      {% for role in ['trail', 'plate', 'text'] + (['water'] if 'water' in files|map(attribute='role')|list else []) %}<label><span>{{ role|title }} filament</span>
         <select class="text-input" name="{{ role }}_filament">
           {% for filament in bambu_environment.filaments %}<option value="{{ filament.number }}" data-color="{{ filament.color }}" {% if bambu_defaults[role] == filament.number %}selected{% endif %}>{{ filament.number }} · {{ filament.name }}</option>{% endfor %}
         </select><i class="filament-dot" style="--filament-color:{{ bambu_environment.filaments[bambu_defaults[role]-1].color }}"></i>
       </label>{% endfor %}
+      {% for role in ['land', 'mountain', 'summit'] %}<label class="manual-terrain-settings" {% if osm_palette %}hidden{% endif %}><span>{{ role|title }} filament</span>
+        <select class="text-input" name="{{ role }}_filament">{% for filament in bambu_environment.filaments %}<option value="{{ filament.number }}" data-color="{{ filament.color }}" {% if bambu_defaults[role] == filament.number %}selected{% endif %}>{{ filament.number }} · {{ filament.name }}</option>{% endfor %}</select><i class="filament-dot" style="--filament-color:{{ bambu_environment.filaments[bambu_defaults[role]-1].color }}"></i>
+      </label>{% endfor %}
+      {% if osm_palette %}{% for role in ['black', 'green', 'grey', 'white'] %}<label class="osm-terrain-settings"><span>{{ role|title }} filament</span>
+        <select class="text-input" name="{{ role }}_filament">{% for filament in bambu_environment.filaments %}<option value="{{ filament.number }}" data-color="{{ filament.color }}" {% if bambu_defaults[role] == filament.number %}selected{% endif %}>{{ filament.number }} · {{ filament.name }}</option>{% endfor %}</select><i class="filament-dot" style="--filament-color:{{ bambu_environment.filaments[bambu_defaults[role]-1].color }}"></i>
+      </label>{% endfor %}{% endif %}
     </div>
     {% if 'water' in files|map(attribute='role')|list %}<p class="fine-print">Water uses a blue-only plate with no AMS color changes. Press the finished pieces into the matching terrain recesses.</p>{% endif %}
     <label class="save-terrain-defaults"><input type="checkbox" name="save_terrain_defaults"> Save terrain{% if 'water' in files|map(attribute='role')|list %} and water{% endif %} filaments and elevations as defaults</label>

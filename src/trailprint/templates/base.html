@@ -9,7 +9,7 @@
 <body>
   <header class="site-header">
     <a class="brand" href="{{ url_for('dashboard') }}"><span>△</span> TrailPrint</a>
-    <span class="local-pill">Local workspace</span>
+    <nav class="site-nav" aria-label="Primary"><a href="{{ url_for('dashboard') }}">Projects</a><a href="{{ url_for('analytics_dashboard') }}">Analytics</a><span class="local-pill">Local workspace</span></nav>
   </header>
   <main class="page">
     {% for category, message in get_flashed_messages(with_categories=true) %}

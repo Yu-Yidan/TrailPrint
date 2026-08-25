@@ -11,7 +11,8 @@ import trimesh
 
 from trailprint.blender_bridge import (BuildCancelled, BuildSettings, _failure_detail,
                                        _run_command, run_blender_build)
-from trailprint.blender_worker import (fixed_elevation_multiplier, resolve_text,
+from trailprint.blender_worker import (classify_osm_samples, configure_water,
+                                       fixed_elevation_multiplier, resolve_text,
                                        with_plate_clearance)
 from trailprint.gpx import read_gpx_trip_date
 
@@ -102,6 +103,48 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(seen, [0.0])
         self.assertEqual(props.tolerance, 0.2)
 
+    def test_unified_water_configures_all_large_water_sources(self):
+        class Props:
+            pass
+
+        enabled = Props()
+        configure_water(enabled, True, 25)
+        self.assertTrue(enabled.col_wPondsActive)
+        self.assertTrue(enabled.col_wBigRiversActive)
+        self.assertTrue(enabled.el_oActive)
+        self.assertFalse(enabled.col_wSmallRiversActive)
+        self.assertEqual(enabled.col_wArea, 25.0)
+        self.assertEqual(enabled.elementMode, "SINGLECOLORMODE_REMESH")
+
+        disabled = Props()
+        configure_water(disabled, False, 25)
+        self.assertFalse(disabled.col_wPondsActive)
+        self.assertFalse(disabled.col_wBigRiversActive)
+        self.assertFalse(disabled.el_oActive)
+        self.assertFalse(disabled.col_wSmallRiversActive)
+        self.assertEqual(disabled.elementMode, "PAINT")
+
+    def test_osm_evidence_priority_and_unmapped_green_default(self):
+        class Shape:
+            def __init__(self, points):
+                self.points = points
+
+            def covers(self, point):
+                return point in self.points
+
+        polygons = {
+            "green": Shape({(1, 1)}), "grey": Shape({(1, 1), (2, 2)}),
+            "black": Shape({(2, 2), (3, 3)}), "white": Shape({(3, 3)}),
+        }
+        samples = [[1, 1, 100], [2, 2, 200], [3, 3, 300], [4, 4, 400]]
+        classified, counts = classify_osm_samples(samples, polygons,
+                                                  lambda lon, lat: (lon, lat))
+        self.assertEqual([item[1] for item in classified],
+                         ["grey", "black", "white", "green"])
+        self.assertEqual([item[2] for item in classified],
+                         [True, True, True, False])
+        self.assertEqual(counts, {"grey": 1, "black": 1, "white": 1})
+
     def test_success_replaces_only_prior_stls(self):
         with tempfile.TemporaryDirectory() as temp:
             project = Path(temp) / "project"
@@ -130,7 +173,7 @@ class SettingsTests(unittest.TestCase):
                 self.assertEqual(config["plate_recess_depth"], 0.0)
                 self.assertEqual(config["plate_recess_clearance"], 0.0)
                 self.assertTrue(config["include_water"])
-                self.assertFalse(config["include_ocean"])
+                self.assertEqual(config["water_min_area_mm2"], 25.0)
                 terrain = trimesh.creation.box(extents=[100, 80, 5])
                 trail = trimesh.creation.box(extents=[60, 3, 2]).subdivide()
                 terrain.export(Path(config["export_path"], "project.stl"))

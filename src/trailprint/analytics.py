@@ -8,6 +8,7 @@ import plistlib
 import shutil
 import subprocess
 import tempfile
+from collections import Counter
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -154,6 +155,77 @@ class AnalyticsStore:
     def status_warnings(self) -> list:
         configured = {row.get("dim_status", "") for row in _read_csv(self.status_path)}
         return [name for name in STATUS_NAMES if name not in configured]
+
+    def visualization_data(self, prints_dir: Path = None, trash_dir: Path = None) -> dict:
+        """Return current status counts and Pacific-day project creation totals."""
+        metadata_status = {}
+        candidates = []
+        for root in (prints_dir, trash_dir):
+            if root and root.is_dir():
+                candidates.extend(path for path in root.iterdir()
+                                  if path.is_dir() and not path.is_symlink())
+        for project in candidates:
+            meta = self._read_meta(project)
+            if meta.get("id_project") and meta.get("latest_status") in STATUS_NAMES:
+                metadata_status[str(meta["id_project"])] = meta["latest_status"]
+
+        with self.locked():
+            projects = _read_csv(self.projects_path)
+            facts = _read_csv(self.facts_path)
+            snapshots = _read_csv(self.snapshots_path)
+
+        latest_fact = {}
+        for row in facts:
+            project_id, status = row.get("id_project", ""), row.get("status_post", "")
+            if project_id and status in STATUS_NAMES:
+                candidate = (row.get("ts", ""), row.get("id", ""), status)
+                if candidate[:2] > latest_fact.get(project_id, ("", "", ""))[:2]:
+                    latest_fact[project_id] = candidate
+        latest_snapshot = {}
+        for row in snapshots:
+            project_id, status = row.get("id_project", ""), row.get("dim_status", "")
+            if project_id and status in STATUS_NAMES:
+                candidate = (row.get("ds", ""), status)
+                if candidate[0] > latest_snapshot.get(project_id, ("", ""))[0]:
+                    latest_snapshot[project_id] = candidate
+
+        counts = Counter({status: 0 for status in STATUS_NAMES})
+        daily = Counter()
+        for project in projects:
+            project_id = str(project.get("id_project", ""))
+            if project.get("ts_permanently_deleted"):
+                status = "project permanently deleted"
+            elif project_id in latest_fact:
+                status = latest_fact[project_id][2]
+            elif project_id in metadata_status:
+                status = metadata_status[project_id]
+            elif project_id in latest_snapshot:
+                status = latest_snapshot[project_id][1]
+            else:
+                status = "project created"
+            counts[status] += 1
+            try:
+                created = datetime.fromisoformat(
+                    project["ts_created"].replace("Z", "+00:00"))
+                if created.tzinfo is None:
+                    created = created.replace(tzinfo=timezone.utc)
+                daily[created.astimezone(PACIFIC).date()] += 1
+            except (KeyError, ValueError, TypeError):
+                continue
+
+        created_daily = []
+        if daily:
+            cursor, final_date = min(daily), max(daily)
+            while cursor <= final_date:
+                created_daily.append({"date": cursor.isoformat(),
+                                      "count": daily.get(cursor, 0)})
+                cursor += timedelta(days=1)
+        status_counts = [{"id": identifier, "status": status,
+                          "label": status.title().replace("Stl", "STL").replace("3Mf", "3MF"),
+                          "count": counts[status]}
+                         for identifier, status in STATUS_ROWS]
+        return {"status_counts": status_counts, "created_daily": created_daily,
+                "total_projects": len(projects)}
 
     def register_project(self, project: Path, name: str, moment: datetime = None) -> dict:
         moment = moment or utc_now()

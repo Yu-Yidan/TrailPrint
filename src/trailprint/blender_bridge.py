@@ -21,6 +21,7 @@ from .gpx import (AUTO_RELIEF_LIMIT_MM, format_trip_stats, gpx_center_latitude,
                   read_gpx_trip_date, read_gpx_trip_stats)
 from .mesh_validation import align_core_to_terrain, mesh_role, validate_stls, write_report
 from .naming import deliverable_prefix, human_name
+from .osm_colors import analyze_project
 from .title import resolve_project_title, validate_title_fit
 
 
@@ -42,6 +43,7 @@ EXTRA_LABELS = {
 }
 DEFAULT_BLENDER = Path("/Applications/Blender.app/Contents/MacOS/Blender")
 PROGRESS_FILE = Path(tempfile.gettempdir()) / "trailprint_progress.json"
+WATER_MIN_AREA_MM2 = 25.0
 
 
 @dataclass(frozen=True)
@@ -64,7 +66,6 @@ class BuildSettings:
     unit_system: str = "IMPERIAL"
     plate_recess_depth: float = 1.5
     include_water: bool = True
-    include_ocean: bool = False
 
     @classmethod
     def validated(cls, shape="HEXAGON", shape_extra="NONE", resolution=8,
@@ -73,7 +74,7 @@ class BuildSettings:
                   plate_text_4="{country}", plate_text_5="{state}", x_offset=0, y_offset=0,
                   fixed_elevation_scale=False, city="", state="", country="",
                   unit_system="IMPERIAL", plate_recess_depth=1.5,
-                  include_water=True, include_ocean=False):
+                  include_water=True):
         shape = str(shape).upper()
         shape_extra = str(shape_extra).upper()
         try:
@@ -114,7 +115,7 @@ class BuildSettings:
             plate_recess_depth = 0.0
         return cls(shape, shape_extra, resolution, *text_values, x_offset, y_offset,
                    bool(fixed_elevation_scale), *locations, unit_system, plate_recess_depth,
-                   bool(include_water), bool(include_ocean))
+                   bool(include_water))
 
 
 def has_separate_plate(shape: str, shape_extra: str) -> bool:
@@ -255,7 +256,7 @@ def _run_attempt(project: Path, settings: BuildSettings, stage: Path, blender_pa
         "plate_recess_depth": settings.plate_recess_depth,
         "plate_recess_clearance": 0.0,
         "include_water": settings.include_water,
-        "include_ocean": settings.include_ocean,
+        "water_min_area_mm2": WATER_MIN_AREA_MM2,
     }), encoding="utf-8")
     worker = Path(__file__).with_name("blender_worker.py")
     command = [str(blender_path), "--background", "--python", str(worker), "--", str(config_path)]
@@ -311,7 +312,7 @@ def run_blender_build(project: Path, settings: BuildSettings, blender: Optional[
         settings.plate_text_3, settings.plate_text_4, settings.plate_text_5,
         settings.x_offset, settings.y_offset, settings.fixed_elevation_scale,
         settings.city, settings.state, settings.country, settings.unit_system,
-        settings.plate_recess_depth, settings.include_water, settings.include_ocean)
+        settings.plate_recess_depth, settings.include_water)
     blender_path = find_blender(blender)
     build_dir = project / "build"
     build_dir.mkdir(parents=True, exist_ok=True)
@@ -459,7 +460,6 @@ def run_blender_build(project: Path, settings: BuildSettings, blender: Optional[
         os.replace(preview_stage, preview_path)
     else:
         preview_path.unlink(missing_ok=True)
-    write_report(report_path, report)
     elevation = _read_elevation_metadata(elevation_stage, final_validation)
     elevation_path = build_dir / "elevation.json"
     if elevation:
@@ -468,6 +468,32 @@ def run_blender_build(project: Path, settings: BuildSettings, blender: Optional[
         os.replace(temporary_elevation, elevation_path)
     else:
         elevation_path.unlink(missing_ok=True)
+    samples_path = build_dir / "terrain-samples.json"
+    staged_samples = elevation_stage / "terrain-samples.json"
+    evidence_path = build_dir / "terrain-osm-evidence.json"
+    staged_evidence = elevation_stage / "terrain-osm-evidence.json"
+    (build_dir / "terrain-palette.json").unlink(missing_ok=True)
+    # Remove the thumbnail left by pre-v2 ESA builds.
+    (build_dir / "terrain-reference.png").unlink(missing_ok=True)
+    if elevation and staged_samples.is_file() and staged_evidence.is_file():
+        shutil.copy2(staged_samples, samples_path)
+        shutil.copy2(staged_evidence, evidence_path)
+        try:
+            palette = analyze_project(project)
+            report["terrain_palette"] = {
+                "available": True, "bands": len(palette["bands"]),
+                "confidence": palette["confidence"],
+                "mapped_coverage": palette["mapped_coverage"],
+            }
+        except Exception as exc:
+            report["terrain_palette"] = {"available": False, "error": str(exc)}
+    else:
+        samples_path.unlink(missing_ok=True)
+        evidence_path.unlink(missing_ok=True)
+        report["terrain_palette"] = {
+            "available": False, "error": "Terrain OSM evidence is unavailable."
+        }
+    write_report(report_path, report)
     log_path.write_text(f"Duration: {time.monotonic() - started:.1f}s\n" + "".join(logs), encoding="utf-8")
     shutil.rmtree(attempt_root, ignore_errors=True)
     PROGRESS_FILE.unlink(missing_ok=True)

@@ -109,6 +109,55 @@ class AnalyticsTests(unittest.TestCase):
         self.assertEqual(rows(self.store.status_path),
                          [{"id": "1", "dim_status": "project created"}])
 
+    def test_visualization_counts_statuses_and_pacific_creation_days(self):
+        first = make_project(self.root, "first", "First")
+        second = make_project(self.root, "second", "Second")
+        self.store.register_project(
+            first, "First", datetime(2026, 8, 24, 6, 30, tzinfo=timezone.utc))
+        self.store.register_project(
+            second, "Second", datetime(2026, 8, 25, 7, 30, tzinfo=timezone.utc))
+        (first / "deliverables/first.stl").write_bytes(b"stl")
+        self.store.sync_project(
+            first, datetime(2026, 8, 25, 8, 0, tzinfo=timezone.utc))
+        self.store.mark_permanently_deleted(
+            second, datetime(2026, 8, 25, 9, 0, tzinfo=timezone.utc))
+        shutil.rmtree(second)
+
+        data = self.store.visualization_data(
+            self.root / "prints", self.root / ".trailprint-trash")
+
+        counts = {item["status"]: item["count"] for item in data["status_counts"]}
+        self.assertEqual(len(data["status_counts"]), 7)
+        self.assertNotIn("max_status_count", data)
+        self.assertEqual(counts["stl generated"], 1)
+        self.assertEqual(counts["project permanently deleted"], 1)
+        self.assertEqual(sum(counts.values()), data["total_projects"])
+        self.assertEqual(data["created_daily"], [
+            {"date": "2026-08-23", "count": 1},
+            {"date": "2026-08-24", "count": 0},
+            {"date": "2026-08-25", "count": 1},
+        ])
+
+    def test_visualization_empty_store(self):
+        data = self.store.visualization_data(
+            self.root / "prints", self.root / ".trailprint-trash")
+        self.assertEqual(data["total_projects"], 0)
+        self.assertEqual(data["created_daily"], [])
+        self.assertEqual([item["count"] for item in data["status_counts"]], [0] * 7)
+
+    def test_visualization_ignores_malformed_creation_timestamp(self):
+        with self.store.projects_path.open("a", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=(
+                "id_project", "dim_project_name", "project_slug", "ts_created",
+                "ts_permanently_deleted"))
+            writer.writerow({"id_project": 1, "dim_project_name": "Broken Date",
+                             "project_slug": "broken-date", "ts_created": "not-a-date",
+                             "ts_permanently_deleted": ""})
+        data = self.store.visualization_data()
+        self.assertEqual(data["total_projects"], 1)
+        self.assertEqual(data["created_daily"], [])
+        self.assertEqual(data["status_counts"][0]["count"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()
