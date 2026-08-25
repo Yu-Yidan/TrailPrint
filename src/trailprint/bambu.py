@@ -44,13 +44,22 @@ class BambuSettings:
     water_filament: int = 1
     grey_start_m: float = DEFAULT_GREY_START_M
     white_start_m: float = DEFAULT_WHITE_START_M
+    black_filament: int = 1
+    green_filament: int = 1
+    grey_filament: int = 1
+    white_filament: int = 1
+    terrain_mode: str = "manual"
+    automatic_bands: tuple = ()
 
     @classmethod
     def validated(cls, filament_count, trail=1, land=1, mountain=1, summit=1,
                   plate=1, text=1, water=1, grey_start_m=DEFAULT_GREY_START_M,
-                  white_start_m=DEFAULT_WHITE_START_M):
+                  white_start_m=DEFAULT_WHITE_START_M, black=1, green=1, grey=1,
+                  white=1, terrain_mode="manual", automatic_bands=()):
         try:
-            values = [int(value) for value in (trail, land, mountain, summit, plate, text, water)]
+            values = [int(value) for value in
+                      (trail, land, mountain, summit, plate, text, water,
+                       black, green, grey, white)]
         except (TypeError, ValueError) as exc:
             raise ValueError("Choose a valid filament number for every model part.") from exc
         if not filament_count or any(value < 1 or value > filament_count for value in values):
@@ -63,15 +72,29 @@ class BambuSettings:
             raise ValueError("Terrain elevation cutoffs must be finite numbers.")
         if white_start_m <= grey_start_m:
             raise ValueError("Snow elevation must be higher than mountain elevation.")
-        return cls(*values, grey_start_m, white_start_m)
+        terrain_mode = str(terrain_mode).lower()
+        if terrain_mode not in {"manual", "osm"}:
+            raise ValueError("Terrain color mode must be manual or OSM-inspired.")
+        bands = tuple(dict(item) for item in automatic_bands) if automatic_bands else ()
+        if terrain_mode == "osm" and not bands:
+            raise ValueError("OSM-inspired terrain bands are unavailable.")
+        return cls(*values[:7], grey_start_m, white_start_m, *values[7:],
+                   terrain_mode, bands)
 
     def by_role(self) -> dict:
-        return dict(zip(ROLE_ORDER, (self.trail_filament, self.land_filament,
+        terrain = self.land_filament
+        if self.terrain_mode == "osm" and self.automatic_bands:
+            terrain = self.terrain_filaments()[self.automatic_bands[0]["role"]]
+        return dict(zip(ROLE_ORDER, (self.trail_filament, terrain,
                                      self.plate_filament, self.text_filament)))
 
     def terrain_filaments(self) -> dict:
-        return {"land": self.land_filament, "mountain": self.mountain_filament,
-                "summit": self.summit_filament}
+        values = {"land": self.land_filament, "mountain": self.mountain_filament,
+                  "summit": self.summit_filament}
+        if self.terrain_mode == "osm":
+            values.update(black=self.black_filament, green=self.green_filament,
+                          grey=self.grey_filament, white=self.white_filament)
+        return values
 
 
 def discover_environment(data_dir: Path = BAMBU_DATA, binary: Path = BAMBU_APP) -> BambuEnvironment:
@@ -413,7 +436,9 @@ def create_bambu_project(project: Path, settings: BambuSettings,
         len(environment.filaments), settings.trail_filament, settings.land_filament,
         settings.mountain_filament, settings.summit_filament,
         settings.plate_filament, settings.text_filament, settings.water_filament,
-        settings.grey_start_m, settings.white_start_m)
+        settings.grey_start_m, settings.white_start_m, settings.black_filament,
+        settings.green_filament, settings.grey_filament, settings.white_filament,
+        settings.terrain_mode, settings.automatic_bands)
     files = _role_files(project)
     build_dir = project / "build"
     build_dir.mkdir(parents=True, exist_ok=True)
@@ -432,9 +457,11 @@ def create_bambu_project(project: Path, settings: BambuSettings,
             elevation = elevation_metadata(project)
             if not elevation:
                 raise ValueError("missing elevation metadata")
-            terrain_bands = active_terrain_bands(
-                elevation, settings.grey_start_m, settings.white_start_m,
-                nominal_layer_height)
+            terrain_bands = (list(settings.automatic_bands[1:])
+                             if settings.terrain_mode == "osm"
+                             else active_terrain_bands(
+                                 elevation, settings.grey_start_m,
+                                 settings.white_start_m, nominal_layer_height))
         except (KeyError, TypeError, ValueError) as exc:
             raise ValueError("Rebuild the terrain before creating elevation colors.") from exc
         count = len(environment.filaments)

@@ -15,6 +15,10 @@ DEFAULT_TARGETS = {
     "mountain": (128, 128, 128),
     "summit": (255, 255, 255),
     "water": (20, 90, 220),
+    "black": (10, 10, 10),
+    "green": (25, 145, 45),
+    "grey": (128, 128, 128),
+    "white": (255, 255, 255),
 }
 
 
@@ -94,7 +98,11 @@ def load_terrain_defaults(repo_root: Path, project: Path, filaments) -> dict:
     count = len(filaments)
     combined = {**fallback, **_read_json(settings_path(repo_root)),
                 **_read_json(project_settings_path(project))}
-    for role in ("land", "mountain", "summit", "water"):
+    combined.setdefault("green", combined.get("land"))
+    combined.setdefault("grey", combined.get("mountain"))
+    combined.setdefault("white", combined.get("summit"))
+    for role in ("land", "mountain", "summit", "water",
+                 "black", "green", "grey", "white"):
         try:
             slot = int(combined[role])
         except (KeyError, TypeError, ValueError):
@@ -114,6 +122,9 @@ def save_terrain_preferences(repo_root: Path, project: Path, value: dict,
                              save_defaults: bool = False) -> None:
     required = ("land", "mountain", "summit", "grey_start_m", "white_start_m")
     payload = {key: value[key] for key in required}
+    for key in ("black", "green", "grey", "white"):
+        if key in value:
+            payload[key] = value[key]
     if "water" in value:
         payload["water"] = value["water"]
     else:

@@ -83,8 +83,7 @@
       <fieldset class="settings-group">
         <legend>Water</legend>
         <p class="fine-print">Water prints as separate blue inserts with matching terrain recesses, avoiding repeated AMS filament changes.</p>
-        <label class="toggle-setting"><input type="checkbox" name="include_water" checked><span><strong>Include lakes and major rivers</strong><small>Uses OpenStreetMap water data. Minor streams, canals, and ditches are excluded.</small></span></label>
-        <label class="toggle-setting"><input type="checkbox" name="include_ocean"><span><strong>Include ocean</strong><small>Experimental coastline generation for coastal terrain.</small></span></label>
+        <label class="toggle-setting"><input type="checkbox" name="include_water" checked><span><strong>Include water</strong><small>Adds applicable lakes, major rivers, and sea from OpenStreetMap. Minor waterways and water pieces smaller than 25 mm² are excluded.</small></span></label>
       </fieldset>
       <label class="locked-setting"><input type="checkbox" checked disabled><span><strong>Single-color trail</strong><small>Always enabled for TrailPrint builds</small></span><span class="lock">Locked</span></label>
       <button class="button primary build-button" {% if not has_gpx or (job and job.state in ['queued','running','cancelling']) %}disabled{% endif %}>Build with Blender</button>

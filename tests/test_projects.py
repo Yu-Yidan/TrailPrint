@@ -217,6 +217,8 @@ class WebTests(unittest.TestCase):
         self.assertIn(b"Project created", empty_page)
         self.assertIn(b"No projects at this stage", empty_page)
         self.assertIn(b"Deleted projects", empty_page)
+        self.assertIn(b'href="/analytics">Analytics</a>', empty_page)
+        self.assertNotIn(b"analytics-home-link", empty_page)
         response = self.client.post("/projects", data={
             "name": "Coastal Run", "gpx": (io.BytesIO(GPX), "coast.gpx")},
             content_type="multipart/form-data")
@@ -225,6 +227,30 @@ class WebTests(unittest.TestCase):
         self.assertEqual(response.headers["Location"], "/projects/0001-coastal-run")
         page = self.client.get(response.headers["Location"])
         self.assertIn(b"Coastal Run", page.data)
+
+    def test_analytics_page_visualizes_statuses_and_creation_history(self):
+        response = self.client.post("/projects", data={
+            "name": "Chart Route", "gpx": (io.BytesIO(GPX), "chart.gpx")},
+            content_type="multipart/form-data")
+        self.assertEqual(response.status_code, 302)
+
+        page = self.client.get("/analytics")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b"Project activity", page.data)
+        self.assertIn(b"Projects by status", page.data)
+        self.assertEqual(page.data.count(b'class="status-count-card"'), 7)
+        self.assertNotIn(b"status-bar-track", page.data)
+        self.assertIn(b"Project Created", page.data)
+        self.assertIn(b"Projects created by day", page.data)
+        self.assertIn(b'id="created-chart-data"', page.data)
+        self.assertIn(b"analytics.js", page.data)
+        self.assertIn(b"Projects created", page.data)
+        self.assertIn(b'href="/analytics"', page.data)
+
+        script = self.client.get("/static/analytics.js").data
+        self.assertIn(b"createElementNS", script)
+        self.assertIn(b"viewBox", script)
+        self.assertNotIn(b"Chart.js", script)
 
     def test_invalid_upload_has_no_partial_project(self):
         response = self.client.post("/projects", data={
@@ -241,7 +267,7 @@ class WebTests(unittest.TestCase):
             "plate_text_2": "Gain {elevation}", "plate_text_3": "{duration}",
             "plate_text_4": "Hawaii", "plate_text_5": "2026",
             "x_offset": "1.25", "y_offset": "-0.5", "fixed_elevation_scale": "on",
-            "include_water": "on", "include_ocean": "on",
+            "include_water": "on",
             "city": "Volcano", "state": "Hawaii", "country": "United States"})
         self.assertEqual(response.status_code, 302)
         settings = self.build_manager.started.settings
@@ -254,7 +280,6 @@ class WebTests(unittest.TestCase):
         self.assertEqual((settings.x_offset, settings.y_offset), (1.25, -0.5))
         self.assertFalse(settings.fixed_elevation_scale)
         self.assertTrue(settings.include_water)
-        self.assertTrue(settings.include_ocean)
         self.assertEqual(settings.plate_recess_depth, 1.5)
         self.assertEqual((settings.city, settings.state, settings.country),
                          ("Volcano", "Hawaii", "United States"))
@@ -285,7 +310,9 @@ class WebTests(unittest.TestCase):
         self.assertIn(b'id="use-metric" type="checkbox" name="use_metric"', page)
         self.assertIn(b'name="plate_recess_depth" type="number" value="1.5"', page)
         self.assertIn(b'name="include_water" checked', page)
-        self.assertIn(b'name="include_ocean"', page)
+        self.assertIn(b"lakes, major rivers, and sea", page)
+        self.assertIn(b"smaller than 25 mm", page)
+        self.assertNotIn(b'name="include_ocean"', page)
         self.assertNotIn(b'name="fixed_elevation_scale"', page)
         self.assertIn(b"Natural elevation scale retained", page)
         self.assertNotIn(b"{length}", page)
@@ -416,6 +443,50 @@ class WebTests(unittest.TestCase):
                          {"trail": 3, "terrain": 4, "plate": 1, "text": 2})
         self.assertEqual(self.bambu_manager.started.settings.terrain_filaments(),
                          {"land": 4, "mountain": 1, "summit": 2})
+
+    def test_osm_palette_is_default_and_uses_server_owned_bands(self):
+        project = create_project(self.root / "prints", self.root / "presets", "OSM Map", GPX)
+        for name in ("osm-map.stl", "osm-map_Trail.stl", "osm-map_Plate.stl",
+                     "osm-map_Text.stl"):
+            (project / "deliverables" / name).write_bytes(b"stl")
+        (project / "build/preview.png").write_bytes(b"png")
+        (project / "build/elevation.json").write_text(json.dumps({
+            "source_min_m": 0, "source_max_m": 1000,
+            "model_surface_min_z_mm": 2, "model_surface_max_z_mm": 12,
+            "min_thickness_mm": 2, "unit_system": "METRIC",
+        }), encoding="utf-8")
+        bands = [
+            {"role": "green", "min_z": 2, "max_z": 7,
+             "min_elevation_m": 0, "max_elevation_m": 500},
+            {"role": "grey", "min_z": 7, "max_z": 12,
+             "min_elevation_m": 500, "max_elevation_m": 1000},
+        ]
+        (project / "build/terrain-palette.json").write_text(json.dumps({
+            "version": 2, "available": True, "source": "OpenStreetMap",
+            "attribution": "© OpenStreetMap contributors", "mapped_coverage": .4,
+            "confidence": .8, "bands": bands,
+        }), encoding="utf-8")
+
+        page = self.client.get("/projects/osm-map/preview").data
+        self.assertIn(b'value="osm" checked', page)
+        self.assertIn(b"OpenStreetMap-inspired elevation palette", page)
+        self.assertIn(b"Mapped evidence covers 40%", page)
+        self.assertNotIn(b"Satellite", page)
+        self.assertNotIn(b"Sentinel", page)
+
+        response = self.client.post("/projects/osm-map/bambu", data={
+            "terrain_mode": "osm", "trail_filament": "3", "land_filament": "4",
+            "mountain_filament": "1", "summit_filament": "2",
+            "plate_filament": "1", "text_filament": "2",
+            "black_filament": "1", "green_filament": "4",
+            "grey_filament": "1", "white_filament": "2",
+            "grey_start": "400", "white_start": "800",
+        })
+        self.assertEqual(response.status_code, 302)
+        settings = self.bambu_manager.started.settings
+        self.assertEqual(settings.terrain_mode, "osm")
+        self.assertEqual(settings.automatic_bands, tuple(bands))
+        self.assertEqual(settings.by_role()["terrain"], 4)
 
     def test_water_build_surfaces_fourth_plate_and_blue_filament(self):
         project = create_project(self.root / "prints", self.root / "presets", "Wet Route", GPX)

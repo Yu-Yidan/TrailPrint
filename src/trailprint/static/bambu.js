@@ -31,6 +31,14 @@ document.querySelectorAll('.filament-grid select').forEach(select => {
   });
 });
 
+document.querySelectorAll('input[name="terrain_mode"]').forEach(input => {
+  input.addEventListener('change', () => {
+    const osm = document.querySelector('input[name="terrain_mode"]:checked')?.value === 'osm';
+    document.querySelectorAll('.osm-terrain-settings').forEach(item => { item.hidden = !osm; });
+    document.querySelectorAll('.manual-terrain-settings').forEach(item => { item.hidden = osm; });
+  });
+});
+
 const elevationPanel = document.querySelector('#terrain-elevation');
 if (elevationPanel) {
   const grey = document.querySelector('#grey-start');
