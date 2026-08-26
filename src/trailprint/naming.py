@@ -8,7 +8,7 @@ from pathlib import Path
 ID_WIDTH = 4
 MAX_PROJECT_ID = 10 ** ID_WIDTH - 1
 STORAGE_PATTERN = re.compile(r"^(?P<id>\d{4})-(?P<slug>[a-z0-9][a-z0-9-]*)$")
-META_FILE = "project_analytics.json"
+META_FILE = "project.json"
 
 
 def format_project_id(value) -> str:
@@ -31,7 +31,10 @@ def read_project_meta(project: Path) -> dict:
     try:
         value = json.loads((project / META_FILE).read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return {}
+        try:
+            value = json.loads((project / "project_analytics.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
     return value if isinstance(value, dict) else {}
 
 

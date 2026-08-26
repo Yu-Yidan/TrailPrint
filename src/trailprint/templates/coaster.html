@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Flat coaster · {{ project_title }} · TrailPrint{% endblock %}
+{% block content %}
+<a class="back" href="{{ url_for('project_detail', slug=project.name) }}">← Raised map settings</a>
+<section class="preview-header"><div><p class="eyebrow">FLAT COASTER</p><h1>{{ project_title }}</h1>
+  <p>100 mm hexagon · 4 mm total height · 0.4 mm multicolor map skin · separate flush trail.</p></div>
+  {% if output %}<a class="button primary" href="{{ url_for('coaster_download_file', slug=project.name, filename=project.name ~ '-coaster.3mf') }}">Download coaster 3MF</a>{% endif %}
+</section>
+
+{% set build_active = coaster_job and coaster_job.state in ['queued', 'running', 'cancelling'] %}
+<section class="coaster-layout">
+  <article class="panel">
+    <h2>Build settings</h2>
+    {% if coaster_job %}<section class="build-status {{ coaster_job.state }} coaster-job-status" data-job-id="{{ coaster_job.id }}">
+      <strong class="job-state">{{ coaster_job.state|title }}</strong><p class="job-message">{{ coaster_job.message }}</p><small class="job-elapsed"></small>
+      {% if coaster_job.state in ['queued', 'running'] %}<button class="button danger compact-button coaster-cancel" type="button">Cancel build</button>{% endif %}
+    </section>{% endif %}
+    <form method="post" action="{{ url_for('build_coaster_project', slug=project.name) }}" {% if build_active %}hidden{% endif %}>
+      <label class="field-label" for="coaster-resolution">Terrain resolution</label>
+      <input class="range-input" id="coaster-resolution" name="resolution" type="range" min="1" max="10" value="8">
+      <label class="field-label" for="snow-cutoff">Snow elevation (metres)</label>
+      <input class="text-input" id="snow-cutoff" name="snow_cutoff_m" type="number" step="any" value="{{ validation.get('settings', {}).get('snow_cutoff_m', 2300) }}" required>
+      <label class="field-label" for="contour-interval">Contour interval (metres)</label>
+      <input class="text-input" id="contour-interval" name="contour_interval_m" type="number" min="0.1" step="any" placeholder="Automatic" value="{{ validation.get('settings', {}).get('contour_interval_m') or '' }}">
+      <p class="fine-print">Leave blank to target roughly ten conventional contour levels.</p>
+      {% set contour_width = validation.get('settings', {}).get('contour_width_mm', 0.2) %}
+      <label class="field-label" for="contour-width">Contour width</label>
+      <select class="text-input" id="contour-width" name="contour_width_mm">
+        <option value="0.2" {% if contour_width == 0.2 %}selected{% endif %}>0.2 mm · 0.2 mm nozzle</option>
+        <option value="0.4" {% if contour_width == 0.4 %}selected{% endif %}>0.4 mm · 0.4 mm nozzle</option>
+      </select>
+      <button class="button primary build-button" type="submit" {% if build_active %}disabled{% endif %}>Build flat coaster</button>
+    </form>
+  </article>
+
+  <article class="panel coaster-preview-panel">
+    <h2>Top-surface preview</h2>
+    {% if preview %}<div class="coaster-preview"><img src="{{ url_for('coaster_preview_image', slug=project.name) }}" alt="Flat coaster map preview"></div>
+      <div class="coaster-facts"><span><strong>Size</strong>{{ validation.size_mm|default(100) }} mm</span><span><strong>Height</strong>{{ validation.height_mm|default(4) }} mm</span><span><strong>Contour width</strong>{{ validation.contour_width_mm|default(0.2) }} mm</span><span><strong>Contours</strong>{{ validation.contour_interval_m|default('—') }} m</span></div>
+      {% if validation.warnings %}<div class="notice error"><strong>Generated with map-data warnings</strong>{% for warning in validation.warnings %}<p>{{ warning }}</p>{% endfor %}</div>{% endif %}
+      <div class="file-list">{% for filename in stl_files %}<a href="{{ url_for('coaster_download_file', slug=project.name, filename=filename) }}">↓ {{ filename }}</a>{% endfor %}</div>
+    {% else %}<div class="chart-empty"><p>Build the coaster to see its flat map preview.</p></div>{% endif %}
+  </article>
+</section>
+
+{% if preview %}<section class="panel bambu-panel">
+  <div class="bambu-heading"><div><p class="eyebrow">BAMBU PROJECT</p><h2>Two-plate coaster setup</h2>
+    <p>Plate 1 prints the red trail flush with the terrain. Plate 2 prints one aligned terrain assembly with 0.2 mm contours raised by one 0.2 mm layer. The export forces Arachne walls; use a 0.2 mm nozzle for reliable contour printing.</p></div></div>
+  {% if bambu_job %}<section class="build-status {{ bambu_job.state }} coaster-bambu-status" data-job-id="{{ bambu_job.id }}">
+    <strong class="job-state">{{ bambu_job.state|title }}</strong><p class="job-message">{{ bambu_job.message }}</p><small class="job-elapsed"></small>
+  </section>{% endif %}
+  {% if bambu_error %}<div class="notice error">{{ bambu_error }}</div>
+  {% else %}<form method="post" action="{{ url_for('build_coaster_bambu_project', slug=project.name) }}">
+    <div class="bambu-profile"><span><strong>Printer</strong>{{ bambu_environment.machine }}</span><span><strong>Process</strong>{{ bambu_environment.process }}</span></div>
+    <div class="notice error"><strong>Five terrain colors requested.</strong> If the printer cannot switch among all five automatically, Bambu Studio will require remapping or manual filament handling.</div>
+    <div class="filament-grid">
+      {% for role in ['trail', 'black', 'green', 'grey', 'white', 'blue'] %}<label><span>{{ role|title }} filament</span>
+        <select class="text-input" name="{{ role }}_filament">
+          {% for filament in bambu_environment.filaments %}<option value="{{ filament.number }}" data-color="{{ filament.color }}" {% if bambu_defaults[role] == filament.number %}selected{% endif %}>{{ filament.number }} · {{ filament.name }}</option>{% endfor %}
+        </select><i class="filament-dot" style="--filament-color:{{ bambu_environment.filaments[bambu_defaults[role]-1].color }}"></i>
+      </label>{% endfor %}
+    </div>
+    <button class="button primary" type="submit">Create two-plate 3MF</button>
+  </form>{% endif %}
+</section>{% endif %}
+<script src="{{ url_for('static', filename='coaster.js') }}"></script>
+{% endblock %}

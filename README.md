@@ -24,6 +24,19 @@ choose the printer and slicing settings, then save the 3MF project there.
 
 See [docs/workflow.md](docs/workflow.md) for the complete workflow.
 
+## Flat coaster prototype
+
+Every GPX project also has a **Build flat coaster** action. The coaster workflow
+uses TrailPrint3D to acquire elevation and OpenStreetMap evidence, then builds a
+flat 100 mm hexagon in Python: a 4 mm body, a 0.4 mm map-color terrain skin,
+selectable 0.2 or 0.4 mm black contours raised by one layer, and a separate red
+trail insert. Crowded
+contours are locally simplified on steep slopes. The review page exposes
+the snow elevation and an optional contour interval before creating a two-plate
+Bambu Studio 3MF. Coaster exports force the Arachne wall generator; choose the
+contour width matching the intended 0.2 or 0.4 mm nozzle. Coaster files live under the project's
+`deliverables/coaster/` folder and do not replace raised-terrain outputs.
+
 ## Local interface
 
 Start the project dashboard and open <http://127.0.0.1:5000>:
@@ -55,10 +68,13 @@ folder in Finder. The first three stages follow project files automatically;
 use **Start printing**, **Mark completed**, and **Move back** for production.
 Manual production state is stored in the project's `workflow.json`.
 
-TrailPrint records project identity, status events, and Pacific end-of-day
-snapshots as atomic CSV files in `data/analytics/`. Status events are written
-immediately; the daily pipeline reconciles manually changed deliverables and
-writes the prior Pacific day's snapshot. Install the macOS schedule once with:
+TrailPrint records normalized project and product identities, scoped status
+events, and Pacific end-of-day snapshots as atomic CSV files in
+`data/analytics/`. The upload form can mark a project as a test: its complete
+history is retained, while Analytics excludes it by default unless **Include
+tests** is enabled. A formal raised-map product is created on its first build;
+the coaster stays untracked while it is a prototype. Install the macOS schedule
+once with:
 
 ```sh
 .venv/bin/trailprint analytics-install-scheduler
@@ -98,7 +114,10 @@ From the validated preview, TrailPrint can also create a reviewable Bambu Studio
 3MF using the printer, process, filaments, and colors currently configured in
 Bambu Studio. Choose filament numbers for each model role and TrailPrint builds
 three plates: Trail, Terrain, and a multipart Plate + Text object. When water
-geometry exists, a fourth blue-only Water plate is added. The 3MF is
+geometry exists, it defaults to a fourth blue-only Water plate, or it can be
+included as an aligned blue part of the Terrain assembly. Combined water exports
+show an unsliced estimate of mixed-color layers and possible manual swaps; the
+exact count depends on the final Bambu Studio slice. The 3MF is
 validated before replacing an earlier export. Prime tower is disabled and every
 purge volume is set to zero, so always confirm the AMS mapping and contamination
 risk in Bambu Studio before slicing or printing. During a build, TrailPrint uses
@@ -108,5 +127,5 @@ most four elevation bands. This keeps geographic context while requiring no more
 than three terrain filament changes. The preview shows evidence coverage, fitted
 bands, and confidence, and still offers the original manual green/grey/white
 elevation mode. An Overpass failure never blocks STL output.
-Water remains a separate blue-only plate to avoid terrain color swaps. Plate defaults
-to slot 3; Trail and Text retain color-matched defaults.
+Separate water remains the low-waste default to avoid terrain color swaps. Plate
+defaults to slot 3; Trail and Text retain color-matched defaults.

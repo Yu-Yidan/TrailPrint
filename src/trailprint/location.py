@@ -22,6 +22,15 @@ _REQUEST_LOCK = threading.Lock()
 _LAST_REQUEST = 0.0
 
 
+def display_country(value: str) -> str:
+    """Use a compact plate-friendly label for recognized United States names."""
+    country = str(value or "").strip()
+    if country.casefold() in {
+            "united states", "united states of america", "us", "u.s.", "usa", "u.s.a."}:
+        return "USA"
+    return country
+
+
 def read_location(project: Path) -> Dict[str, str]:
     path = project / LOCATION_FILE
     try:
@@ -29,7 +38,9 @@ def read_location(project: Path) -> Dict[str, str]:
         location = data.get("location", {})
         if not isinstance(location, dict):
             return dict(EMPTY_LOCATION)
-        return {key: str(location.get(key, "")) for key in EMPTY_LOCATION}
+        normalized = {key: str(location.get(key, "")) for key in EMPTY_LOCATION}
+        normalized["country"] = display_country(normalized["country"])
+        return normalized
     except (OSError, ValueError, TypeError):
         return dict(EMPTY_LOCATION)
 
@@ -66,7 +77,8 @@ def _write_metadata(project: Path, location: Dict[str, str], latitude=None, long
 
 
 def save_location(project: Path, city: str, state: str, country: str) -> Dict[str, str]:
-    location = {"city": city.strip(), "state": state.strip(), "country": country.strip()}
+    location = {"city": city.strip(), "state": state.strip(),
+                "country": display_country(country)}
     if any(len(value) > 200 for value in location.values()):
         raise ValueError("Location fields must be 200 characters or fewer.")
     _write_metadata(project, location)
@@ -103,6 +115,7 @@ def detect_location(project: Path, timeout: float = 5.0) -> Dict[str, str]:
                  if address.get(key)), "")
     state = next((address.get(key) for key in ("state", "region", "province", "state_district")
                   if address.get(key)), "")
-    location = {"city": str(city), "state": str(state), "country": str(address.get("country", ""))}
+    location = {"city": str(city), "state": str(state),
+                "country": display_country(address.get("country", ""))}
     _write_metadata(project, location, latitude, longitude, "OpenStreetMap Nominatim")
     return location

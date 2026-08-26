@@ -11,6 +11,7 @@ prints/*/build/*
 !prints/*/build/.gitkeep
 prints/*/location.json
 prints/*/project_analytics.json
+prints/*/project.json
 data/analytics/
 data/settings/
 prints/*/terrain_colors.json

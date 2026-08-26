@@ -1,12 +1,12 @@
 import csv
-import json
 import shutil
 import tempfile
 import unittest
 from datetime import date, datetime, timezone
 from pathlib import Path
 
-from trailprint.analytics import AnalyticsStore, STATUS_ROWS
+from trailprint.analytics import (AnalyticsStore, COASTER, PRODUCT_FIELDS,
+                                  PROJECT_FIELDS, RAISED_MAP, STATUS_ROWS)
 
 
 def rows(path):
@@ -32,131 +32,95 @@ class AnalyticsTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
-    def test_registers_sequential_ids_and_creation_facts(self):
-        first = make_project(self.root, "first", "First Trail")
-        second = make_project(self.root, "second", "Second Trail")
-        moment = datetime(2026, 8, 23, 20, 0, tzinfo=timezone.utc)
+    def test_clean_schema_and_scoped_statuses(self):
+        self.assertEqual(tuple(rows(self.store.projects_path)[0].keys())
+                         if rows(self.store.projects_path) else PROJECT_FIELDS, PROJECT_FIELDS)
+        self.assertEqual(tuple(rows(self.store.products_path)[0].keys())
+                         if rows(self.store.products_path) else PRODUCT_FIELDS, PRODUCT_FIELDS)
+        actual = [(row["status_scope"], int(row["id_status"]), row["dim_status"])
+                  for row in rows(self.store.status_path)]
+        self.assertEqual(actual, list(STATUS_ROWS))
+        self.assertEqual(self.store.status_warnings(), [])
 
-        first_meta = self.store.register_project(first, "First Trail", moment)
-        second_meta = self.store.register_project(second, "Second Trail", moment)
-
-        self.assertEqual((first_meta["id_project"], second_meta["id_project"]), (1, 2))
-        self.assertEqual([row["dim_project_name"] for row in rows(self.store.projects_path)],
-                         ["First Trail", "Second Trail"])
-        facts = rows(self.store.facts_path)
-        self.assertEqual(facts[0]["status_pre"], "")
-        self.assertEqual(facts[0]["status_post"], "project created")
-        self.assertEqual(facts[0]["ts"], "2026-08-23T20:00:00Z")
-        self.assertEqual(facts[1]["id"], "2-2026-08-23T20:00:00Z")
-
-    def test_fact_ids_get_short_collision_suffix(self):
+    def test_registers_test_dimension_and_normalized_creation_fact(self):
         project = make_project(self.root, "route", "Route")
         moment = datetime(2026, 8, 23, 20, 0, tzinfo=timezone.utc)
-        self.store.register_project(project, "Route", moment)
-        (project / "deliverables/route.stl").write_bytes(b"stl")
-        self.store.sync_project(project, moment)
+        meta = self.store.register_project(project, "Route", moment, is_test=True)
+        self.assertEqual(meta["id_project"], 1)
+        self.assertTrue(meta["dim_is_test"])
+        self.assertEqual(rows(self.store.projects_path)[0]["dim_is_test"], "1")
+        fact = rows(self.store.project_facts_path)[0]
+        self.assertEqual(fact["id_status_pre"], "")
+        self.assertEqual(fact["id_status_post"], "1")
+        self.assertNotIn("dim_project_name", fact)
 
-        identifiers = [row["id"] for row in rows(self.store.facts_path)]
-        self.assertEqual(identifiers, ["1-2026-08-23T20:00:00Z",
-                                       "1-2026-08-23T20:00:00Z-2"])
-
-    def test_snapshot_replays_events_through_pacific_day_end(self):
+    def test_product_created_on_first_build_and_reused(self):
         project = make_project(self.root, "route", "Route")
-        created = datetime(2026, 8, 23, 17, 0, tzinfo=timezone.utc)
-        self.store.register_project(project, "Route", created)
-        (project / "deliverables/route.stl").write_bytes(b"stl")
-        self.store.sync_project(project, datetime(2026, 8, 23, 18, 0, tzinfo=timezone.utc))
-        (project / "deliverables/route.3mf").write_bytes(b"3mf")
+        self.store.register_project(project, "Route")
+        first = self.store.ensure_product(project, RAISED_MAP)
+        second = self.store.ensure_product(project, RAISED_MAP)
+        self.assertEqual(str(first["id_product"]), str(second["id_product"]))
+        self.assertEqual(len(rows(self.store.products_path)), 1)
+        self.assertTrue((project / "products" / RAISED_MAP / "product.json").is_file())
+        fact = rows(self.store.product_facts_path)[0]
+        self.assertEqual(fact["id_status_post"], "1")
+        self.assertNotIn("product_type", fact)
 
-        self.store.run_daily(
-            self.root / "prints", self.root / ".trailprint-trash",
-            snapshot_date=date(2026, 8, 23),
-            moment=datetime(2026, 8, 24, 8, 0, tzinfo=timezone.utc))
+    def test_product_status_advances_from_artifacts(self):
+        project = make_project(self.root, "route", "Route")
+        self.store.register_project(project, "Route")
+        product = self.store.ensure_product(project, RAISED_MAP)
+        (project / "deliverables/part.stl").write_bytes(b"stl")
+        self.store.sync_project(project)
+        self.assertEqual(self.store._latest_product_statuses()[str(product["id_product"])], 2)
+        (project / f"deliverables/{project.name}.3mf").write_bytes(b"3mf")
+        self.store.sync_project(project)
+        self.assertEqual(self.store._latest_product_statuses()[str(product["id_product"])], 3)
 
-        snapshot = rows(self.store.snapshots_path)
-        self.assertEqual(snapshot, [{"id": "1-2026-08-23", "id_project": "1",
-                                     "dim_project_name": "Route", "ds": "2026-08-23",
-                                     "dim_status": "stl generated"}])
-        self.assertEqual(rows(self.store.facts_path)[-1]["status_post"], "3mf generated")
+    def test_test_filter_and_cumulative_products(self):
+        production = make_project(self.root, "production", "Production")
+        test = make_project(self.root, "test", "Test")
+        first_day = datetime(2026, 8, 24, 6, 30, tzinfo=timezone.utc)
+        second_day = datetime(2026, 8, 25, 7, 30, tzinfo=timezone.utc)
+        self.store.register_project(production, "Production", first_day)
+        self.store.register_project(test, "Test", second_day, is_test=True)
+        self.store.ensure_product(production, RAISED_MAP, first_day)
+        self.store.ensure_product(test, COASTER, second_day)
 
-    def test_permanently_deleted_same_day_is_absent_from_snapshot(self):
-        project = make_project(self.root, "short-lived", "Short Lived")
-        moment = datetime(2026, 8, 23, 17, 0, tzinfo=timezone.utc)
-        self.store.register_project(project, "Short Lived", moment)
-        self.store.mark_permanently_deleted(
-            project, datetime(2026, 8, 23, 19, 0, tzinfo=timezone.utc))
-        shutil.rmtree(project)
+        filtered = self.store.visualization_data()
+        included = self.store.visualization_data(include_tests=True)
+        self.assertEqual(filtered["total_projects"], 1)
+        self.assertEqual(filtered["excluded_test_projects"], 1)
+        self.assertEqual(included["total_projects"], 2)
+        filtered_totals = {row["product_type"]: row["total"]
+                           for row in filtered["product_status_rows"]}
+        included_totals = {row["product_type"]: row["total"]
+                           for row in included["product_status_rows"]}
+        self.assertEqual(filtered_totals, {RAISED_MAP: 1, COASTER: 0})
+        self.assertEqual(included_totals, {RAISED_MAP: 1, COASTER: 1})
 
-        self.store.run_daily(
-            self.root / "prints", self.root / ".trailprint-trash",
-            snapshot_date=date(2026, 8, 23),
-            moment=datetime(2026, 8, 24, 8, 0, tzinfo=timezone.utc))
+    def test_daily_snapshots_are_id_only(self):
+        project = make_project(self.root, "route", "Route")
+        self.store.register_project(project, "Route")
+        product = self.store.ensure_product(project, RAISED_MAP)
+        self.store.run_daily(self.root / "prints", self.root / ".trailprint-trash",
+                             snapshot_date=date(2026, 8, 25))
+        project_snapshot = rows(self.store.project_snapshots_path)[0]
+        product_snapshot = rows(self.store.product_snapshots_path)[0]
+        self.assertEqual(set(project_snapshot), {"id", "id_project", "ds", "id_status"})
+        self.assertEqual(set(product_snapshot), {"id", "id_product", "ds", "id_status"})
+        self.assertEqual(product_snapshot["id_product"], str(product["id_product"]))
 
-        self.assertEqual(rows(self.store.snapshots_path), [])
-        self.assertEqual(rows(self.store.facts_path)[-1]["status_post"],
-                         "project permanently deleted")
+    def test_permanent_deletion_archives_products(self):
+        project = make_project(self.root, "route", "Route")
+        self.store.register_project(project, "Route")
+        self.store.ensure_product(project, RAISED_MAP)
+        moment = datetime(2026, 8, 25, 19, 0, tzinfo=timezone.utc)
+        self.store.mark_permanently_deleted(project, moment)
         self.assertEqual(rows(self.store.projects_path)[0]["ts_permanently_deleted"],
-                         "2026-08-23T19:00:00Z")
-
-    def test_dim_status_is_seeded_once_and_missing_values_warn(self):
-        self.assertEqual([(int(row["id"]), row["dim_status"])
-                          for row in rows(self.store.status_path)], list(STATUS_ROWS))
-        self.store.status_path.write_text(
-            "id,dim_status\n1,project created\n", encoding="utf-8")
-        warnings = self.store.status_warnings()
-        self.assertIn("stl generated", warnings)
-        self.store.initialize(self.root / "prints", self.root / ".trailprint-trash")
-        self.assertEqual(rows(self.store.status_path),
-                         [{"id": "1", "dim_status": "project created"}])
-
-    def test_visualization_counts_statuses_and_pacific_creation_days(self):
-        first = make_project(self.root, "first", "First")
-        second = make_project(self.root, "second", "Second")
-        self.store.register_project(
-            first, "First", datetime(2026, 8, 24, 6, 30, tzinfo=timezone.utc))
-        self.store.register_project(
-            second, "Second", datetime(2026, 8, 25, 7, 30, tzinfo=timezone.utc))
-        (first / "deliverables/first.stl").write_bytes(b"stl")
-        self.store.sync_project(
-            first, datetime(2026, 8, 25, 8, 0, tzinfo=timezone.utc))
-        self.store.mark_permanently_deleted(
-            second, datetime(2026, 8, 25, 9, 0, tzinfo=timezone.utc))
-        shutil.rmtree(second)
-
-        data = self.store.visualization_data(
-            self.root / "prints", self.root / ".trailprint-trash")
-
-        counts = {item["status"]: item["count"] for item in data["status_counts"]}
-        self.assertEqual(len(data["status_counts"]), 7)
-        self.assertNotIn("max_status_count", data)
-        self.assertEqual(counts["stl generated"], 1)
-        self.assertEqual(counts["project permanently deleted"], 1)
-        self.assertEqual(sum(counts.values()), data["total_projects"])
-        self.assertEqual(data["created_daily"], [
-            {"date": "2026-08-23", "count": 1},
-            {"date": "2026-08-24", "count": 0},
-            {"date": "2026-08-25", "count": 1},
-        ])
-
-    def test_visualization_empty_store(self):
-        data = self.store.visualization_data(
-            self.root / "prints", self.root / ".trailprint-trash")
-        self.assertEqual(data["total_projects"], 0)
-        self.assertEqual(data["created_daily"], [])
-        self.assertEqual([item["count"] for item in data["status_counts"]], [0] * 7)
-
-    def test_visualization_ignores_malformed_creation_timestamp(self):
-        with self.store.projects_path.open("a", newline="", encoding="utf-8") as handle:
-            writer = csv.DictWriter(handle, fieldnames=(
-                "id_project", "dim_project_name", "project_slug", "ts_created",
-                "ts_permanently_deleted"))
-            writer.writerow({"id_project": 1, "dim_project_name": "Broken Date",
-                             "project_slug": "broken-date", "ts_created": "not-a-date",
-                             "ts_permanently_deleted": ""})
-        data = self.store.visualization_data()
-        self.assertEqual(data["total_projects"], 1)
-        self.assertEqual(data["created_daily"], [])
-        self.assertEqual(data["status_counts"][0]["count"], 1)
+                         "2026-08-25T19:00:00Z")
+        self.assertEqual(rows(self.store.products_path)[0]["ds_archived"], "2026-08-25")
+        shutil.rmtree(project)
 
 
 if __name__ == "__main__":

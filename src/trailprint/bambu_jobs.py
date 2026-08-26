@@ -1,5 +1,6 @@
 """Background coordination for Bambu Studio project exports."""
 
+import json
 import threading
 import time
 import uuid
@@ -39,13 +40,25 @@ class BambuJobManager:
         return job
 
     def _run(self, job):
-        job.state, job.message, job.started_at = "running", "Creating three-plate Bambu project", time.time()
+        job.state, job.message, job.started_at = "running", "Creating Bambu project", time.time()
         try:
             output = create_bambu_project(job.project, job.settings)
         except Exception as exc:
             job.state, job.message = "error", str(exc)
         else:
-            job.state, job.message, job.output = "success", "Validated Bambu project created.", output.name
+            message = "Validated Bambu project created."
+            try:
+                report = json.loads((job.project / "build/bambu-validation.json")
+                                    .read_text(encoding="utf-8"))
+                estimate = report.get("water_layer_estimate")
+                if estimate:
+                    count = estimate["mixed_filament_layer_count"]
+                    swaps = estimate["manual_swaps_max"]
+                    message += (f" Estimated {count} mixed-color water layer(s), "
+                                f"up to {swaps} manual swaps; exact after slicing.")
+            except (OSError, KeyError, TypeError, ValueError):
+                pass
+            job.state, job.message, job.output = "success", message, output.name
         job.finished_at = time.time()
 
     def get(self, job_id):
