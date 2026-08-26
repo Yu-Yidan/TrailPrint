@@ -19,6 +19,27 @@ projects; the creation chart shows daily new projects using Pacific dates.
 You can perform steps 1–4 through the local interface by running
 `trailprint web`, choosing **New project**, and dropping in a GPX file.
 
+### Flat coaster
+
+Open any project and choose **Build flat coaster**. The prototype fixes the
+footprint at TrailPrint3D's default 100 mm hexagon and the finished thickness at
+4 mm. Ordinary land is green; water is blue; mapped rock is grey; lava and
+contours are black; mapped glaciers and terrain above the editable snow cutoff
+are white. Map colors form a continuous 0.4 mm skin ending at 3.8 mm. The
+Selectable 0.2 or 0.4 mm-wide contours sit on that terrain and rise one 0.2 mm layer to the 4 mm
+maximum; they are locally simplified where steep slopes crowd them together.
+The red 1.2 mm trail is a separate 1 mm-deep insert, flush at 3.8 mm, with a
+matching recessed route in the terrain.
+
+Review the PNG and validation warnings, map the six color roles to the locally
+configured Bambu filaments, then create the two-plate 3MF. Plate 1 contains the
+trail and Plate 2 contains one aligned multipart terrain assembly. Five terrain
+colors require five filament definitions; a printer with fewer automatic paths
+may require remapping or manual handling. Missing OpenStreetMap categories are
+reported but do not block a simplified coaster. The generated 3MF forces the
+Arachne wall generator and thin-wall detection. Select the contour width matching
+the intended 0.2 or 0.4 mm nozzle before rebuilding the geometry and 3MF.
+
 The dashboard groups every active project into one exclusive funnel stage using
 sticky tabs with live counts. It remembers the selected tab, and each compact
 row includes a control to reveal the full project folder in Finder.
@@ -39,28 +60,28 @@ transition, so cancelled and failed jobs do not add fact-table rows.
 
 TrailPrint maintains these UTF-8 CSV files under `data/analytics/`:
 
-- `dim_project.csv`: latest project name, slug, creation time, and terminal
-  permanent-deletion time; one durable row per sequential `id_project`
-- `dim_status.csv`: manually maintained status identifiers and names
-- `dim_project_status.csv`: one Pacific end-of-day row per project that had not
-  been permanently deleted by that day-end
-- `fct_project_status.csv`: every status transition, with UTC `ts`, Pacific
-  `ds`, and the project name used when the event occurred
+- `dim_project.csv`: project identity, test flag, creation time, and terminal
+  permanent-deletion time
+- `dim_product.csv`: product identity linked to its source project
+- `dim_status.csv`: ordered statuses scoped to projects or a product type
+- `dim_project_status_snapshot.csv` and `dim_product_status_snapshot.csv`:
+  Pacific end-of-day status rows containing stable IDs only
+- `fct_project_status.csv` and `fct_product_status.csv`: normalized transitions
+  with UTC `ts`, Pacific `ds`, and status IDs
 
 New projects receive the next integer ID immediately and IDs are never reused.
 The integer is formatted with four digits only in folder and deliverable names
 (for example, ID `16` becomes `0016-ruoxi-alaska`); IDs above 9999 are rejected
 so normal alphabetical sorting remains numerically ordered.
-Existing projects are initialized once by filesystem creation time, with slug
-as a deterministic tie-breaker. No historical facts are backfilled. A project
-created and permanently deleted on the same Pacific day is absent from the
-daily snapshot, but both events remain in the fact table. Soft-deleted projects
-remain in snapshots until restored or permanently deleted.
+Products are created on their first formal build. The current formal type is
+`fridge_magnet_raised_map`; `coaster` is registered as a lifecycle scope but is
+not tracked until the prototype is promoted. Test projects receive ordinary
+project and product IDs and complete history. Dashboard queries exclude them by
+default using `dim_project.dim_is_test`, with an **Include tests** toggle.
 
-Immediate app actions write facts directly. The daily reconciliation records
-backward transitions caused by manually removed STL or 3MF files, then rebuilds
-the closed day's snapshot by replaying facts through Pacific midnight. CSV
-rewrites use a process lock and atomic replacement. The macOS LaunchAgent runs
+Immediate app actions write facts directly. Daily reconciliation synchronizes
+the active product lifecycle and writes closed-day project and product
+snapshots. CSV rewrites use a process lock and atomic replacement. The macOS LaunchAgent runs
 at 12:05 AM and app startup catches up missed closed dates. Run manually with:
 
 ```sh
@@ -148,7 +169,8 @@ unsliced `deliverables/<project-name>.3mf` with this plate layout:
 1. Trail
 2. Terrain
 3. Plate + Text as one object containing two independently assignable parts
-4. Water, when generated, as blue recessed inserts in one multipart object
+4. Water, when generated and left in the default separate mode, as blue recessed
+   inserts in one multipart object
 
 When OpenStreetMap land-cover evidence is reachable during the terrain build,
 the preview defaults to OSM-inspired colors. Forest and otherwise unclassified
@@ -179,6 +201,13 @@ than 25 mm² on the finished model are filtered before geometry and recesses are
 created. Water uses TrailPrint3D's recessed single-color geometry and
 prints alone on its plate, avoiding water-to-terrain filament swaps. If no usable
 water data is returned, the build succeeds and retains the three-plate layout.
+The Bambu export form can instead place Water in the Terrain multipart assembly.
+That produces three plates and preserves the fitted recesses, but requires AMS or
+repeated mid-layer manual swaps wherever blue water and terrain share a layer.
+TrailPrint records the estimated affected layer ranges and an upper-bound swap
+count using the selected process's initial and nominal layer heights. This is an
+unsliced estimate; variable layer height and other slicer changes can alter the
+exact result shown by Bambu Studio after slicing.
 
 TrailPrint disables the prime tower and writes zero for all purge volumes. This
 reduces waste but can cause visible color contamination at terrain transitions

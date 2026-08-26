@@ -1,0 +1,30 @@
+.test-badge {
+  display: inline-block;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: #fff0bf;
+  color: #755500;
+  font: 700 11px/1 system-ui, -apple-system, sans-serif;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  vertical-align: middle;
+}
+.analytics-summary-layout {
+  display: grid;
+  grid-template-columns: minmax(170px, 240px) minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+}
+.product-status-row { padding: 18px 0; border-top: 1px solid var(--line); }
+.product-status-row:first-child { border-top: 0; }
+.product-status-row > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.product-status-row small { color: var(--muted); }
+.chart-legend { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 8px; color: var(--muted); font-size: 13px; }
+.chart-legend span::before { content: ""; display: inline-block; width: 18px; height: 3px; margin: 0 7px 3px 0; background: #c94f28; }
+.chart-legend span:nth-child(2)::before { background: #237a45; }
+@media (max-width: 650px) { .analytics-summary-layout { grid-template-columns: 1fr; } }

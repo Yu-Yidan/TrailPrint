@@ -237,12 +237,13 @@ class WebTests(unittest.TestCase):
         page = self.client.get("/analytics")
         self.assertEqual(page.status_code, 200)
         self.assertIn(b"Project activity", page.data)
-        self.assertIn(b"Projects by status", page.data)
-        self.assertEqual(page.data.count(b'class="status-count-card"'), 7)
+        self.assertIn(b"Product line summary", page.data)
+        self.assertEqual(page.data.count(b'class="status-count-card"'), 10)
         self.assertNotIn(b"status-bar-track", page.data)
-        self.assertIn(b"Project Created", page.data)
-        self.assertIn(b"Projects created by day", page.data)
+        self.assertIn(b"fridge_magnet_raised_map", page.data)
+        self.assertIn(b"Cumulative products by product name", page.data)
         self.assertIn(b'id="created-chart-data"', page.data)
+        self.assertIn(b'name="include_tests"', page.data)
         self.assertIn(b"analytics.js", page.data)
         self.assertIn(b"Projects created", page.data)
         self.assertIn(b'href="/analytics"', page.data)
@@ -251,6 +252,20 @@ class WebTests(unittest.TestCase):
         self.assertIn(b"createElementNS", script)
         self.assertIn(b"viewBox", script)
         self.assertNotIn(b"Chart.js", script)
+
+    def test_test_project_is_recorded_and_filtered_by_default(self):
+        response = self.client.post("/projects", data={
+            "name": "Calibration", "is_test": "on",
+            "gpx": (io.BytesIO(GPX), "test.gpx")},
+            content_type="multipart/form-data")
+        self.assertEqual(response.status_code, 302)
+        page = self.client.get("/analytics")
+        self.assertIn(b"0</strong><span>Total projects", page.data)
+        self.assertIn(b"1 test project(s) recorded", page.data)
+        included = self.client.get("/analytics?include_tests=1")
+        self.assertIn(b"1</strong><span>Total projects", included.data)
+        project = self.root / "prints/0001-calibration/project.json"
+        self.assertTrue(json.loads(project.read_text())["dim_is_test"])
 
     def test_invalid_upload_has_no_partial_project(self):
         response = self.client.post("/projects", data={
@@ -293,11 +308,11 @@ class WebTests(unittest.TestCase):
                          b'name="plate_text_1" value="0.41 mi"',
                          b'name="plate_text_2" value=""',
                          b'name="plate_text_3" value=""',
-                         b'name="plate_text_4" value="United States"',
+                         b'name="plate_text_4" value="USA"',
                          b'name="plate_text_5" value="Hawaii"',
                          b'name="city" type="hidden" value="Volcano"',
                          b'name="state" type="hidden" value="Hawaii"',
-                         b'name="country" type="hidden" value="United States"',
+                         b'name="country" type="hidden" value="USA"',
                          b'name="x_offset" type="number" value="0"',
                          b'name="y_offset" type="number" value="0"'):
             self.assertIn(expected, page)
@@ -308,6 +323,7 @@ class WebTests(unittest.TestCase):
         self.assertIn(b'data-cached="true"', page)
         self.assertNotIn(b"Trail location", page)
         self.assertIn(b'id="use-metric" type="checkbox" name="use_metric"', page)
+        self.assertIn(b"Build flat coaster", page)
         self.assertIn(b'name="plate_recess_depth" type="number" value="1.5"', page)
         self.assertIn(b'name="include_water" checked', page)
         self.assertIn(b"lakes, major rivers, and sea", page)
@@ -316,6 +332,33 @@ class WebTests(unittest.TestCase):
         self.assertNotIn(b'name="fixed_elevation_scale"', page)
         self.assertIn(b"Natural elevation scale retained", page)
         self.assertNotIn(b"{length}", page)
+
+    def test_flat_coaster_page_exposes_build_and_two_plate_export(self):
+        project = create_project(
+            self.root / "prints", self.root / "presets", "Coaster Route", GPX)
+        page = self.client.get("/projects/coaster-route/coaster")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b"100 mm hexagon", page.data)
+        self.assertIn(b'name="snow_cutoff_m"', page.data)
+        self.assertIn(b'name="contour_interval_m"', page.data)
+        self.assertIn(b'name="contour_width_mm"', page.data)
+        self.assertIn(b'value="0.2" selected', page.data)
+        self.assertNotIn(b"Two-plate coaster setup", page.data)
+
+        directory = project / "deliverables/coaster"
+        directory.mkdir()
+        (directory / "preview.png").write_bytes(b"png")
+        (directory / "validation.json").write_text(json.dumps({
+            "valid": True, "size_mm": 100, "height_mm": 4,
+            "top_skin_mm": 0.4, "contour_interval_m": 25,
+            "settings": {"snow_cutoff_m": 2300, "contour_width_mm": 0.4},
+            "warnings": [],
+        }), encoding="utf-8")
+        page = self.client.get("/projects/coaster-route/coaster")
+        self.assertIn(b"Two-plate coaster setup", page.data)
+        self.assertIn(b'value="0.4" selected', page.data)
+        for role in (b"trail", b"black", b"green", b"grey", b"white", b"blue"):
+            self.assertIn(b'name="' + role + b'_filament"', page.data)
 
     def test_tall_route_is_automatically_limited(self):
         project = create_project(self.root / "prints", self.root / "presets", "Tall", GPX)
@@ -505,7 +548,52 @@ class WebTests(unittest.TestCase):
         self.assertIn(b"Four-plate print setup", page.data)
         self.assertIn(b"Plate 4: blue Water inserts", page.data)
         self.assertIn(b'name="water_filament"', page.data)
-        self.assertIn(b"blue-only plate", page.data)
+        self.assertIn(b'name="water_placement" value="separate" checked', page.data)
+        self.assertIn(b'name="water_placement" value="terrain"', page.data)
+        self.assertIn(b"Separate is the low-waste default", page.data)
+
+        response = self.client.post("/projects/wet-route/bambu", data={
+            "terrain_mode": "manual", "trail_filament": "3",
+            "land_filament": "4", "mountain_filament": "1",
+            "summit_filament": "2", "plate_filament": "1",
+            "text_filament": "2", "water_filament": "4",
+            "grey_start": "1200", "white_start": "2300",
+            "water_placement": "terrain",
+        })
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(self.bambu_manager.started.settings.water_placement, "terrain")
+
+    def test_preview_shows_saved_combined_water_layer_estimate(self):
+        project = create_project(self.root / "prints", self.root / "presets", "Mixed Water", GPX)
+        for name in ("mixed-water.stl", "mixed-water_Trail.stl",
+                     "mixed-water_Plate.stl", "mixed-water_Text.stl",
+                     "mixed-water_WATER.stl"):
+            (project / "deliverables" / name).write_bytes(b"stl")
+        (project / "deliverables/mixed-water.3mf").write_bytes(b"3mf")
+        (project / "build/preview.png").write_bytes(b"png")
+        (project / "build/elevation.json").write_text(json.dumps({
+            "source_min_m": 100, "source_max_m": 200,
+            "model_surface_min_z_mm": 2, "model_surface_max_z_mm": 8,
+            "min_thickness_mm": 2, "unit_system": "METRIC",
+        }), encoding="utf-8")
+        (project / "build/bambu-validation.json").write_text(json.dumps({
+            "water_placement": "terrain",
+            "water_layer_estimate": {
+                "mixed_filament_layer_count": 13,
+                "mixed_filament_layer_ranges": [[23, 35]],
+                "nominal_layer_height_mm": 0.2,
+                "manual_swaps_max": 26,
+            },
+        }), encoding="utf-8")
+
+        page = self.client.get("/projects/mixed-water/preview").data
+
+        self.assertIn(b"Three-plate print setup", page)
+        self.assertIn(b"Terrain + Water", page)
+        self.assertIn(b"Estimated mixed-color water layers: 13", page)
+        self.assertIn(b"23\xe2\x80\x9335", page)
+        self.assertIn(b"up to 26 manual swaps", page)
+        self.assertIn(b"Unsliced estimate", page)
 
     def test_bambu_script_opens_output_folder_after_success(self):
         script = self.client.get("/static/bambu.js").data

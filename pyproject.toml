@@ -8,7 +8,14 @@ version = "0.1.0"
 description = "Turn GPX tracks into printable 3D route models"
 readme = "README.md"
 requires-python = ">=3.9"
-dependencies = ["Flask>=3.0,<4", "numpy>=1.26,<3", "Pillow>=10,<12", "trimesh>=4,<5"]
+dependencies = [
+    "Flask>=3.0,<4",
+    "mapbox-earcut>=1.0,<2",
+    "numpy>=1.26,<3",
+    "Pillow>=10,<12",
+    "shapely>=2.0,<3",
+    "trimesh>=4,<5",
+]
 
 [project.scripts]
 trailprint = "trailprint.cli:main"

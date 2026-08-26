@@ -24,7 +24,7 @@ class LocationTests(unittest.TestCase):
                     patch("trailprint.location._LAST_REQUEST", 0.0):
                 location = detect_location(project)
             self.assertEqual(location, {"city": "Volcano", "state": "Hawaii",
-                                        "country": "United States"})
+                                        "country": "USA"})
             self.assertTrue(has_location_cache(project))
             self.assertEqual(read_location(project), location)
             metadata = json.loads((project / "location.json").read_text(encoding="utf-8"))
@@ -35,7 +35,7 @@ class LocationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             project = Path(temp)
             saved = save_location(project, " Volcano ", " Hawaii ", " US ")
-            self.assertEqual(saved, {"city": "Volcano", "state": "Hawaii", "country": "US"})
+            self.assertEqual(saved, {"city": "Volcano", "state": "Hawaii", "country": "USA"})
             (project / "location.json").write_text("bad", encoding="utf-8")
             self.assertEqual(read_location(project), {"city": "", "state": "", "country": ""})
             self.assertFalse(has_location_cache(project))

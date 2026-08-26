@@ -33,6 +33,7 @@ class ProjectSummary:
     has_stl: bool
     has_3mf: bool
     stage: str
+    is_test: bool = False
     printing_started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
 
@@ -91,6 +92,7 @@ def list_projects(prints_dir: Path) -> List[ProjectSummary]:
                 path.name, human_name(path),
                 (path / "route.gpx").is_file(),
                 has_stl, has_3mf, stage,
+                bool(read_project_meta(path).get("dim_is_test", False)),
                 _parse_timestamp(workflow.get("printing_started_at")),
                 _parse_timestamp(workflow.get("completed_at")),
             ))
