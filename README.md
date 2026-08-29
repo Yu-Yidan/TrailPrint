@@ -95,24 +95,23 @@ analytics status facts. Preview colors use green terrain, red trail, blue water,
 black plate, and white text; STL files themselves remain colorless. Builds include
 lakes, major rivers, and coastal sea by default as separately printable recessed
 inserts. Water regions smaller than 25 mm² on the model are filtered out before
-their matching recesses are made.
+their matching recesses are made. Every generated plate includes a shallow,
+two-line OpenStreetMap and Mapterhorn attribution engraving on its underside.
 
 From the validated preview, TrailPrint can also create a reviewable Bambu Studio
 3MF using the printer, process, filaments, and colors currently configured in
 Bambu Studio. Choose filament numbers for each model role and TrailPrint builds
-three plates: Trail, Terrain, and a multipart Plate + Text object. When water
-geometry exists, it defaults to a fourth blue-only Water plate, or it can be
-included as an aligned blue part of the Terrain assembly. Combined water exports
-show an unsliced estimate of mixed-color layers and possible manual swaps; the
-exact count depends on the final Bambu Studio slice. The 3MF is
-validated before replacing an earlier export. Prime tower is disabled and every
-purge volume is set to zero, so always confirm the AMS mapping and contamination
-risk in Bambu Studio before slicing or printing. During a build, TrailPrint uses
-OpenStreetMap forest, rocky-terrain, glacier, and explicit lava-field polygons as
-land-cover evidence and fits green, grey, white, and black observations into at
-most four elevation bands. This keeps geographic context while requiring no more
-than three terrain filament changes. The preview shows evidence coverage, fitted
-bands, and confidence, and still offers the original manual green/grey/white
-elevation mode. An Overpass failure never blocks STL output.
-Separate water remains the low-waste default to avoid terrain color swaps. Plate
-defaults to slot 3; Trail and Text retain color-matched defaults.
+one calibrated plate containing Trail, Terrain, and multipart Plate + Text.
+Objects print by object using the calibrated layout. Water and snow-cap projects
+are currently blocked from this one-plate export. The 3MF is validated before
+replacing an earlier export. The prime tower is disabled and the purge multiplier
+is 0.6, so always confirm the AMS mapping and contamination risk in Bambu Studio
+before slicing or printing. During a build, TrailPrint uses
+OpenStreetMap forest, rocky-terrain, glacier, and explicitly queried lava-field
+polygons as land-cover evidence and fits green, grey, white, and black
+observations into at most four elevation bands. This keeps geographic context
+while requiring no more than three terrain filament changes. The preview shows
+evidence coverage, fitted bands, and confidence, and still offers the original
+manual green/grey/white elevation mode. An Overpass failure never blocks STL
+output. Plate defaults to black filament slot 1; Trail and Text retain
+color-matched defaults.

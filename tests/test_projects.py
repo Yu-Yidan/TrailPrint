@@ -424,7 +424,7 @@ class WebTests(unittest.TestCase):
         self.assertIn(b'class="preview-sidebar panel preview-validation"', page.data)
         self.assertNotIn(b"Reset view", page.data)
         self.assertNotIn(b"preview.js", page.data)
-        self.assertIn(b"Three-plate print setup", page.data)
+        self.assertIn(b"One-plate print setup", page.data)
         self.assertIn(b"Export unavailable", page.data)
         response = self.client.get("/projects/build-me/preview-image")
         self.assertEqual(response.data, b"png preview")
@@ -517,12 +517,10 @@ class WebTests(unittest.TestCase):
 
         page = self.client.get("/projects/wet-route/preview")
 
-        self.assertIn(b"Four-plate print setup", page.data)
-        self.assertIn(b"Plate 4: blue Water inserts", page.data)
-        self.assertIn(b'name="water_filament"', page.data)
-        self.assertIn(b'name="water_placement" value="separate" checked', page.data)
-        self.assertIn(b'name="water_placement" value="terrain"', page.data)
-        self.assertIn(b"Separate is the low-waste default", page.data)
+        self.assertIn(b"One-plate print setup", page.data)
+        self.assertIn(b"One-plate export unavailable", page.data)
+        self.assertNotIn(b'name="water_filament"', page.data)
+        self.assertNotIn(b'name="water_placement"', page.data)
 
         response = self.client.post("/projects/wet-route/bambu", data={
             "terrain_mode": "manual", "trail_filament": "3",
@@ -535,7 +533,7 @@ class WebTests(unittest.TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertEqual(self.bambu_manager.started.settings.water_placement, "terrain")
 
-    def test_preview_shows_saved_combined_water_layer_estimate(self):
+    def test_preview_blocks_one_plate_export_when_water_exists(self):
         project = create_project(self.root / "prints", self.root / "presets", "Mixed Water", GPX)
         for name in ("mixed-water.stl", "mixed-water_Trail.stl",
                      "mixed-water_Plate.stl", "mixed-water_Text.stl",
@@ -560,12 +558,8 @@ class WebTests(unittest.TestCase):
 
         page = self.client.get("/projects/mixed-water/preview").data
 
-        self.assertIn(b"Three-plate print setup", page)
-        self.assertIn(b"Terrain + Water", page)
-        self.assertIn(b"Estimated mixed-color water layers: 13", page)
-        self.assertIn(b"23\xe2\x80\x9335", page)
-        self.assertIn(b"up to 26 manual swaps", page)
-        self.assertIn(b"Unsliced estimate", page)
+        self.assertIn(b"One-plate print setup", page)
+        self.assertIn(b"One-plate export unavailable", page)
 
     def test_bambu_script_opens_output_folder_after_success(self):
         script = self.client.get("/static/bambu.js").data

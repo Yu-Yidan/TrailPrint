@@ -2,7 +2,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from trailprint.terrain_colors import (active_terrain_bands, elevation_to_meters,
+from trailprint.terrain_colors import (active_terrain_bands, color_matched_defaults,
+                                       elevation_to_meters,
                                        load_terrain_defaults, save_terrain_preferences)
 
 
@@ -20,6 +21,13 @@ ELEVATION = {
 
 
 class TerrainColorTests(unittest.TestCase):
+    def test_green_defaults_to_fourth_filament(self):
+        filaments = FILAMENTS + (
+            {"number": 5, "name": "Bright Green", "color": "#19b52e"},
+        )
+        defaults = color_matched_defaults(filaments)
+        self.assertEqual(defaults["green"], 4)
+
     def test_automatic_band_counts_and_z_mapping(self):
         bands = active_terrain_bands(ELEVATION, 1200, 2300)
         self.assertEqual([item["role"] for item in bands], ["mountain", "summit"])
