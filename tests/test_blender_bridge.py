@@ -12,12 +12,25 @@ import trimesh
 from trailprint.blender_bridge import (BuildCancelled, BuildSettings, _failure_detail,
                                        _run_command, run_blender_build)
 from trailprint.blender_worker import (classify_osm_samples, configure_water,
-                                       fixed_elevation_multiplier, resolve_text,
+                                       attribution_layout, fetch_lava_osm,
+                                       fixed_elevation_multiplier, lava_osm_query, resolve_text,
                                        with_plate_clearance)
 from trailprint.gpx import read_gpx_trip_date
 
 
 class SettingsTests(unittest.TestCase):
+    def test_attribution_layout_is_centered_near_plate_bottom(self):
+        layout = attribution_layout(((-60, -52, 0), (60, 52, 5)))
+        self.assertEqual(layout["center_x"], 0)
+        self.assertEqual(layout["font_height_mm"], 3.0)
+        self.assertEqual(layout["max_width_mm"], 72.0)
+        self.assertGreater(layout["line_y"][0], layout["line_y"][1])
+        self.assertLess(layout["line_y"][0], -35)
+
+    def test_attribution_layout_rejects_tiny_plate(self):
+        with self.assertRaisesRegex(ValueError, "too small"):
+            attribution_layout(((0, 0, 0), (20, 20, 2)))
+
     def test_fixed_elevation_target_compensates_for_latitude(self):
         self.assertAlmostEqual(fixed_elevation_multiplier(15, 0), 1.5)
         self.assertAlmostEqual(fixed_elevation_multiplier(15, 60), 0.75)
@@ -145,6 +158,36 @@ class SettingsTests(unittest.TestCase):
                          [True, True, True, False])
         self.assertEqual(counts, {"grey": 1, "black": 1, "white": 1})
 
+    def test_lava_query_requests_explicit_lava_tags(self):
+        query = lava_osm_query((19.0, -156.0, 20.0, -155.0))
+        self.assertIn('"geological"~"^(volcanic_lava_field|volcanic_lava_flow)$"',
+                      query)
+        self.assertIn('"surface"="lava"', query)
+        self.assertIn('"natural"="lava"', query)
+        self.assertIn("[bbox:19.0,-156.0,20.0,-155.0]", query)
+
+    def test_lava_fetch_requires_successful_overpass_response(self):
+        class Osm:
+            @staticmethod
+            def _overpass_request(*_args, **_kwargs):
+                return None
+
+        with self.assertRaisesRegex(RuntimeError, "lava request did not complete"):
+            fetch_lava_osm(Osm, (19, -156, 20, -155))
+
+        calls = []
+
+        class SuccessfulOsm:
+            @staticmethod
+            def _overpass_request(*args, **kwargs):
+                calls.append((args, kwargs))
+                return {"elements": []}
+
+        self.assertEqual(fetch_lava_osm(
+            SuccessfulOsm, (19, -156, 20, -155)), {"elements": []})
+        self.assertEqual(calls[0][1]["method"], "POST")
+        self.assertEqual(calls[0][1]["timeout"], 120)
+
     def test_success_replaces_only_prior_stls(self):
         with tempfile.TemporaryDirectory() as temp:
             project = Path(temp) / "project"
@@ -240,6 +283,12 @@ class SettingsTests(unittest.TestCase):
                     right = left.copy(); right.apply_translation([40, 0, 0])
                     trail = trimesh.util.concatenate([left, right])
                     trimesh.creation.box(extents=[110, 90, 2]).export(output / "project_Plate.stl")
+                    (output / "plate-attribution.json").write_text(json.dumps({
+                        "applied": True,
+                        "lines": ["© OpenStreetMap contributors",
+                                  "Terrain: © Mapterhorn"],
+                        "depth_mm": 0.3,
+                    }), encoding="utf-8")
                 trail.export(output / "project_Trail.stl")
                 return subprocess.CompletedProcess(command, 0, "ok", "")
 
@@ -253,6 +302,8 @@ class SettingsTests(unittest.TestCase):
             report = json.loads((project / "build/validation.json").read_text(encoding="utf-8"))
             self.assertTrue(report["fallback_used"])
             self.assertTrue(report["valid"])
+            self.assertTrue(report["plate_attribution"]["applied"])
+            self.assertEqual(report["plate_attribution"]["depth_mm"], 0.3)
             self.assertTrue(report["preview"]["valid"])
             self.assertEqual(report["fallback_alignment"]["translation_mm"], [0.0, 0.0, 5.0])
             terrain = trimesh.load(project / "deliverables/project.stl", force="mesh")

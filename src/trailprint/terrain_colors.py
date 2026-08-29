@@ -34,13 +34,16 @@ def color_matched_defaults(filaments) -> dict:
     filaments = list(filaments)
     if not filaments:
         return {}
-    return {
+    defaults = {
         role: min(filaments, key=lambda item: sum(
             (channel - target) ** 2
             for channel, target in zip(_rgb(item.get("color")), color)
         ))["number"]
         for role, color in DEFAULT_TARGETS.items()
     }
+    if len(filaments) >= 4:
+        defaults["green"] = 4
+    return defaults
 
 
 def _read_json(path: Path) -> dict:

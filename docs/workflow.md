@@ -121,6 +121,11 @@ the trail is dominated by one connected route rather than floating fragments.
 Small non-manifold or degenerate artifacts are reported as warnings because
 they can occur in otherwise usable TrailPrint3D output.
 
+Whenever the selected layout creates a plate, TrailPrint engraves
+`© OpenStreetMap contributors` and `Terrain: © Mapterhorn` into its lower
+underside. The fixed attribution is 0.3 mm deep and oriented to read normally
+after flipping the plate left-to-right.
+
 Files with an obviously incorrect export origin are centered in X/Y and moved
 to Z=0 using the same operations as `fix_bambu_plate_boundary.py`. Centered
 files are left unchanged. If terrain or trail validation fails while a Shape
@@ -144,21 +149,19 @@ model-Z mapping; older builds must be rebuilt once before elevation colors are
 available. TrailPrint creates an
 unsliced `deliverables/<project-name>.3mf` with this plate layout:
 
-1. Trail
-2. Terrain
-3. Plate + Text as one object containing two independently assignable parts
-4. Water, when generated and left in the default separate mode, as blue recessed
-   inserts in one multipart object
+1. One calibrated plate containing Trail, Terrain, and Plate + Text as one object
+   containing two independently assignable parts
 
 When OpenStreetMap land-cover evidence is reachable during the terrain build,
 the preview defaults to OSM-inspired colors. Forest and otherwise unclassified
-land are green; scree and rock are grey; glaciers are white; and only explicitly
-tagged lava fields or flows are black. TrailPrint approximates those geographic
-polygons with at most four contiguous elevation bands. The optimizer charges an
-8% mismatch penalty per additional transition, so it uses fewer colors when
-extra swaps add little value. Evidence coverage and match confidence make the
-approximation reviewable. If Overpass is unavailable, STL generation still
-succeeds and manual mode remains available.
+land are green; scree and rock are grey; glaciers are white; and explicitly
+tagged lava fields, lava flows, or lava surfaces are black. TrailPrint requests
+lava independently so it is not lost among generic bare-rock data, then
+approximates those geographic polygons with at most four contiguous elevation
+bands. The optimizer charges an 8% mismatch penalty per additional transition,
+so it uses fewer colors when extra swaps add little value. Evidence coverage and
+match confidence make the approximation reviewable. If Overpass is unavailable,
+STL generation still succeeds and manual mode remains available.
 
 Manual mode offers Land, Mountain, and Summit filament selectors, defaulting to the
 closest configured green, neutral-grey, and white colors. Mountain begins at
@@ -167,29 +170,20 @@ cutoffs in feet; Metric projects use meters. The cutoffs and filament slots are
 editable and can be saved as local defaults. Terrain that never reaches the
 mountain cutoff remains green, terrain below the summit cutoff uses green and
 grey, and higher terrain uses all three; bands thinner than one configured
-print layer are omitted. Plate defaults to slot 3. If slot 3 is not configured,
-Plate uses the highest available slot. Trail and Text choose the closest
-configured color to their preview colors. After a successful export,
+print layer are omitted. Plate defaults to black filament slot 1. Trail and Text
+choose the closest configured color to their preview colors. After a successful export,
 the deliverables folder opens in Finder and the browser returns to the project
 dashboard.
 
-Lakes, major rivers, and coastal sea share one water option that is enabled by
-default; minor waterways are omitted to avoid fragile pieces. Regions smaller
-than 25 mm² on the finished model are filtered before geometry and recesses are
-created. Water uses TrailPrint3D's recessed single-color geometry and
-prints alone on its plate, avoiding water-to-terrain filament swaps. If no usable
-water data is returned, the build succeeds and retains the three-plate layout.
-The Bambu export form can instead place Water in the Terrain multipart assembly.
-That produces three plates and preserves the fitted recesses, but requires AMS or
-repeated mid-layer manual swaps wherever blue water and terrain share a layer.
-TrailPrint records the estimated affected layer ranges and an upper-bound swap
-count using the selected process's initial and nominal layer heights. This is an
-unsliced estimate; variable layer height and other slicer changes can alter the
-exact result shown by Bambu Studio after slicing.
+Lakes, major rivers, and coastal sea remain available in the terrain build, but
+projects containing water are not eligible for the calibrated one-plate Bambu
+export. Snow-cap bands are likewise blocked until a calibrated multi-color
+layout is available.
 
-TrailPrint disables the prime tower and writes zero for all purge volumes. This
-reduces waste but can cause visible color contamination at terrain transitions
-and on the multipart third plate. The result must be opened and reviewed in Bambu Studio;
+TrailPrint disables the prime tower, uses Bambu's configured purge matrix with a
+0.6 flush multiplier, and sets print sequence to by object. The result must be
+opened and reviewed in Bambu Studio;
 TrailPrint does not automatically slice, send, or start a printer job. A new 3MF
-only replaces the previous one after its archive, plate layout, multipart
-structure, filament assignments, prime-tower setting, and purge matrix validate.
+only replaces the previous one after its archive, calibrated layout, multipart
+structure, filament assignments, print sequence, prime-tower setting, and purge
+settings validate.
