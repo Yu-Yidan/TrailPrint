@@ -238,7 +238,7 @@ class WebTests(unittest.TestCase):
         self.assertEqual(page.status_code, 200)
         self.assertIn(b"Project activity", page.data)
         self.assertIn(b"Product line summary", page.data)
-        self.assertEqual(page.data.count(b'class="status-count-card"'), 10)
+        self.assertEqual(page.data.count(b'class="status-count-card"'), 5)
         self.assertNotIn(b"status-bar-track", page.data)
         self.assertIn(b"fridge_magnet_raised_map", page.data)
         self.assertIn(b"Cumulative products by product name", page.data)
@@ -323,7 +323,6 @@ class WebTests(unittest.TestCase):
         self.assertIn(b'data-cached="true"', page)
         self.assertNotIn(b"Trail location", page)
         self.assertIn(b'id="use-metric" type="checkbox" name="use_metric"', page)
-        self.assertIn(b"Build flat coaster", page)
         self.assertIn(b'name="plate_recess_depth" type="number" value="1.5"', page)
         self.assertIn(b'name="include_water" checked', page)
         self.assertIn(b"lakes, major rivers, and sea", page)
@@ -332,33 +331,6 @@ class WebTests(unittest.TestCase):
         self.assertNotIn(b'name="fixed_elevation_scale"', page)
         self.assertIn(b"Natural elevation scale retained", page)
         self.assertNotIn(b"{length}", page)
-
-    def test_flat_coaster_page_exposes_build_and_two_plate_export(self):
-        project = create_project(
-            self.root / "prints", self.root / "presets", "Coaster Route", GPX)
-        page = self.client.get("/projects/coaster-route/coaster")
-        self.assertEqual(page.status_code, 200)
-        self.assertIn(b"100 mm hexagon", page.data)
-        self.assertIn(b'name="snow_cutoff_m"', page.data)
-        self.assertIn(b'name="contour_interval_m"', page.data)
-        self.assertIn(b'name="contour_width_mm"', page.data)
-        self.assertIn(b'value="0.2" selected', page.data)
-        self.assertNotIn(b"Two-plate coaster setup", page.data)
-
-        directory = project / "deliverables/coaster"
-        directory.mkdir()
-        (directory / "preview.png").write_bytes(b"png")
-        (directory / "validation.json").write_text(json.dumps({
-            "valid": True, "size_mm": 100, "height_mm": 4,
-            "top_skin_mm": 0.4, "contour_interval_m": 25,
-            "settings": {"snow_cutoff_m": 2300, "contour_width_mm": 0.4},
-            "warnings": [],
-        }), encoding="utf-8")
-        page = self.client.get("/projects/coaster-route/coaster")
-        self.assertIn(b"Two-plate coaster setup", page.data)
-        self.assertIn(b'value="0.4" selected', page.data)
-        for role in (b"trail", b"black", b"green", b"grey", b"white", b"blue"):
-            self.assertIn(b'name="' + role + b'_filament"', page.data)
 
     def test_tall_route_is_automatically_limited(self):
         project = create_project(self.root / "prints", self.root / "presets", "Tall", GPX)

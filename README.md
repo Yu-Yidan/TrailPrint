@@ -24,19 +24,6 @@ choose the printer and slicing settings, then save the 3MF project there.
 
 See [docs/workflow.md](docs/workflow.md) for the complete workflow.
 
-## Flat coaster prototype
-
-Every GPX project also has a **Build flat coaster** action. The coaster workflow
-uses TrailPrint3D to acquire elevation and OpenStreetMap evidence, then builds a
-flat 100 mm hexagon in Python: a 4 mm body, a 0.4 mm map-color terrain skin,
-selectable 0.2 or 0.4 mm black contours raised by one layer, and a separate red
-trail insert. Crowded
-contours are locally simplified on steep slopes. The review page exposes
-the snow elevation and an optional contour interval before creating a two-plate
-Bambu Studio 3MF. Coaster exports force the Arachne wall generator; choose the
-contour width matching the intended 0.2 or 0.4 mm nozzle. Coaster files live under the project's
-`deliverables/coaster/` folder and do not replace raised-terrain outputs.
-
 ## Local interface
 
 Start the project dashboard and open <http://127.0.0.1:5000>:
@@ -72,8 +59,8 @@ TrailPrint records normalized project and product identities, scoped status
 events, and Pacific end-of-day snapshots as atomic CSV files in
 `data/analytics/`. The upload form can mark a project as a test: its complete
 history is retained, while Analytics excludes it by default unless **Include
-tests** is enabled. A formal raised-map product is created on its first build;
-the coaster stays untracked while it is a prototype. Install the macOS schedule
+tests** is enabled. A formal raised-map product is created on its first build.
+Install the macOS schedule
 once with:
 
 ```sh

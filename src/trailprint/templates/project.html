@@ -14,7 +14,6 @@
     {% if validation and not validation.get('valid', false) %}<div class="validation-summary error"><strong>Latest validation failed</strong>
       {% set final_validation = validation.get('final', {}) %}
       {% for error in final_validation.get('errors', [])[:3] %}<small>{{ error }}</small>{% endfor %}</div>{% endif %}
-    <a class="button secondary preview-button" href="{{ url_for('coaster_project', slug=project.name) }}">Build flat coaster</a>
   </article>
   {% set build_active = job and job.state in ['queued', 'running', 'cancelling'] %}
   <article class="panel settings-panel {{ 'building' if build_active else '' }}"><h2>TrailPrint3D settings</h2>

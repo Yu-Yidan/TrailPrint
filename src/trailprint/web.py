@@ -1,6 +1,5 @@
 """Local browser interface for TrailPrint."""
 
-import json
 import subprocess
 from dataclasses import asdict, replace
 from pathlib import Path
@@ -10,10 +9,6 @@ from flask import Flask, abort, flash, jsonify, redirect, render_template, reque
 from .blender_bridge import BuildSettings, EXTRA_LABELS, SHAPE_EXTRAS, SHAPE_LABELS
 from .bambu import BambuSettings, default_filament_mapping, discover_environment
 from .bambu_jobs import BambuJobManager
-from .coaster import CoasterSettings
-from .coaster_bambu import (CoasterBambuSettings, coaster_3mf_name,
-                            default_coaster_mapping)
-from .coaster_jobs import CoasterBambuJobManager, CoasterJobManager
 from .analytics import AnalyticsStore, RAISED_MAP
 from .config import load_config
 from .gpx import (AUTO_RELIEF_LIMIT_MM, estimate_print_relief_mm,
@@ -35,9 +30,7 @@ from .title import TITLE_LIMITS_MM, resolve_project_title, validate_title_fit
 
 
 def create_app(repo_root: Path = None, build_manager: BuildManager = None,
-               bambu_manager: BambuJobManager = None,
-               coaster_manager: CoasterJobManager = None,
-               coaster_bambu_manager: CoasterBambuJobManager = None) -> Flask:
+               bambu_manager: BambuJobManager = None) -> Flask:
     root = (repo_root or Path.cwd()).resolve()
     app = Flask(__name__)
     app.config.update(
@@ -51,8 +44,6 @@ def create_app(repo_root: Path = None, build_manager: BuildManager = None,
     )
     app.extensions["trailprint_builds"] = build_manager or BuildManager()
     app.extensions["trailprint_bambu"] = bambu_manager or BambuJobManager()
-    app.extensions["trailprint_coasters"] = coaster_manager or CoasterJobManager()
-    app.extensions["trailprint_coaster_bambu"] = coaster_bambu_manager or CoasterBambuJobManager()
     analytics = AnalyticsStore(root)
     app.extensions["trailprint_analytics"] = analytics
     analytics.run_daily(app.config["PRINTS_DIR"], app.config["TRASH_DIR"])
@@ -191,106 +182,6 @@ def create_app(repo_root: Path = None, build_manager: BuildManager = None,
             return jsonify({"status": "failed", "error": str(exc)}), 502
         return jsonify({"status": "resolved", **location})
 
-    @app.get("/projects/<slug>/coaster")
-    def coaster_project(slug):
-        project = get_project(slug)
-        directory = project / "deliverables" / "coaster"
-        try:
-            validation = json.loads((directory / "validation.json").read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            validation = {}
-        try:
-            environment = discover_environment()
-            defaults = default_coaster_mapping(environment.filaments)
-            environment_error = ""
-        except ValueError as exc:
-            environment, defaults, environment_error = None, {}, str(exc)
-        return render_template(
-            "coaster.html", project=project, project_title=human_name(project),
-            coaster_job=app.extensions["trailprint_coasters"].for_project(project),
-            bambu_job=app.extensions["trailprint_coaster_bambu"].for_project(project),
-            validation=validation, preview=(directory / "preview.png").is_file(),
-            stl_files=sorted(path.name for path in directory.glob("*.stl")),
-            output=(directory / coaster_3mf_name(project)).is_file(),
-            bambu_environment=environment, bambu_defaults=defaults,
-            bambu_error=environment_error)
-
-    @app.post("/projects/<slug>/coaster/build")
-    def build_coaster_project(slug):
-        project = get_project(slug)
-        try:
-            if app.extensions["trailprint_builds"].is_active(project):
-                raise ValueError("Wait for the raised-terrain build to finish first.")
-            settings = CoasterSettings.validated(
-                request.form.get("resolution", 8),
-                request.form.get("snow_cutoff_m", 2300),
-                request.form.get("contour_interval_m"),
-                request.form.get("contour_width_mm", 0.2))
-            job = app.extensions["trailprint_coasters"].start(project, settings)
-        except (OSError, ValueError) as exc:
-            flash(str(exc), "error")
-        else:
-            flash("Flat coaster build started.", "success")
-        return redirect(url_for("coaster_project", slug=slug,
-                                job=job.id if 'job' in locals() else None))
-
-    @app.get("/coaster-builds/<job_id>")
-    def coaster_build_status(job_id):
-        job = app.extensions["trailprint_coasters"].get(job_id)
-        if job is None:
-            abort(404)
-        return jsonify(app.extensions["trailprint_coasters"].serialize(job))
-
-    @app.post("/coaster-builds/<job_id>/cancel")
-    def cancel_coaster_build(job_id):
-        try:
-            job = app.extensions["trailprint_coasters"].cancel(job_id)
-        except ValueError as exc:
-            return jsonify({"status": "error", "error": str(exc)}), 409
-        return jsonify(app.extensions["trailprint_coasters"].serialize(job))
-
-    @app.get("/projects/<slug>/coaster/preview-image")
-    def coaster_preview_image(slug):
-        project = get_project(slug)
-        directory = project / "deliverables" / "coaster"
-        if not (directory / "preview.png").is_file():
-            abort(404)
-        return send_from_directory(directory, "preview.png", as_attachment=False)
-
-    @app.get("/projects/<slug>/coaster/files/<filename>")
-    def coaster_download_file(slug, filename):
-        project = get_project(slug)
-        if (Path(filename).name != filename
-                or Path(filename).suffix.lower() not in {".stl", ".3mf"}):
-            abort(404)
-        return send_from_directory(project / "deliverables" / "coaster", filename,
-                                   as_attachment=True)
-
-    @app.post("/projects/<slug>/coaster/bambu")
-    def build_coaster_bambu_project(slug):
-        project = get_project(slug)
-        try:
-            environment = discover_environment()
-            settings = CoasterBambuSettings.validated(
-                len(environment.filaments), request.form.get("trail_filament"),
-                request.form.get("black_filament"), request.form.get("green_filament"),
-                request.form.get("grey_filament"), request.form.get("white_filament"),
-                request.form.get("blue_filament"))
-            job = app.extensions["trailprint_coaster_bambu"].start(project, settings)
-        except (OSError, ValueError) as exc:
-            flash(str(exc), "error")
-        else:
-            flash("Coaster Bambu project export started.", "success")
-        return redirect(url_for("coaster_project", slug=slug,
-                                bambu_job=job.id if 'job' in locals() else None))
-
-    @app.get("/coaster-bambu-builds/<job_id>")
-    def coaster_bambu_build_status(job_id):
-        job = app.extensions["trailprint_coaster_bambu"].get(job_id)
-        if job is None:
-            abort(404)
-        return jsonify(app.extensions["trailprint_coaster_bambu"].serialize(job))
-
     @app.post("/projects/<slug>/build")
     def build_project(slug):
         project = get_project(slug)
@@ -345,10 +236,6 @@ def create_app(repo_root: Path = None, build_manager: BuildManager = None,
                 raise ValueError("This project is currently building. Wait for the build to finish before deleting it.")
             if app.extensions["trailprint_bambu"].is_active(project):
                 raise ValueError("This project is currently exporting. Wait for the Bambu project to finish before deleting it.")
-            if app.extensions["trailprint_coasters"].is_active(project):
-                raise ValueError("This project is currently building a coaster. Wait for it to finish before deleting it.")
-            if app.extensions["trailprint_coaster_bambu"].is_active(project):
-                raise ValueError("This project is currently exporting a coaster. Wait for it to finish before deleting it.")
             analytics.sync_project(project)
             deleted = trash_project(app.config["PRINTS_DIR"], app.config["TRASH_DIR"], slug,
                                     request.form.get("confirmation", ""))

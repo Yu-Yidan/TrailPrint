@@ -19,27 +19,6 @@ projects; the creation chart shows daily new projects using Pacific dates.
 You can perform steps 1–4 through the local interface by running
 `trailprint web`, choosing **New project**, and dropping in a GPX file.
 
-### Flat coaster
-
-Open any project and choose **Build flat coaster**. The prototype fixes the
-footprint at TrailPrint3D's default 100 mm hexagon and the finished thickness at
-4 mm. Ordinary land is green; water is blue; mapped rock is grey; lava and
-contours are black; mapped glaciers and terrain above the editable snow cutoff
-are white. Map colors form a continuous 0.4 mm skin ending at 3.8 mm. The
-Selectable 0.2 or 0.4 mm-wide contours sit on that terrain and rise one 0.2 mm layer to the 4 mm
-maximum; they are locally simplified where steep slopes crowd them together.
-The red 1.2 mm trail is a separate 1 mm-deep insert, flush at 3.8 mm, with a
-matching recessed route in the terrain.
-
-Review the PNG and validation warnings, map the six color roles to the locally
-configured Bambu filaments, then create the two-plate 3MF. Plate 1 contains the
-trail and Plate 2 contains one aligned multipart terrain assembly. Five terrain
-colors require five filament definitions; a printer with fewer automatic paths
-may require remapping or manual handling. Missing OpenStreetMap categories are
-reported but do not block a simplified coaster. The generated 3MF forces the
-Arachne wall generator and thin-wall detection. Select the contour width matching
-the intended 0.2 or 0.4 mm nozzle before rebuilding the geometry and 3MF.
-
 The dashboard groups every active project into one exclusive funnel stage using
 sticky tabs with live counts. It remembers the selected tab, and each compact
 row includes a control to reveal the full project folder in Finder.
@@ -73,9 +52,8 @@ New projects receive the next integer ID immediately and IDs are never reused.
 The integer is formatted with four digits only in folder and deliverable names
 (for example, ID `16` becomes `0016-ruoxi-alaska`); IDs above 9999 are rejected
 so normal alphabetical sorting remains numerically ordered.
-Products are created on their first formal build. The current formal type is
-`fridge_magnet_raised_map`; `coaster` is registered as a lifecycle scope but is
-not tracked until the prototype is promoted. Test projects receive ordinary
+Products are created on their first formal build. The current registered product
+type is `fridge_magnet_raised_map`. Test projects receive ordinary
 project and product IDs and complete history. Dashboard queries exclude them by
 default using `dim_project.dim_is_test`, with an **Include tests** toggle.
 
