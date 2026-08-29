@@ -5,7 +5,7 @@ import unittest
 from datetime import date, datetime, timezone
 from pathlib import Path
 
-from trailprint.analytics import (AnalyticsStore, COASTER, PRODUCT_FIELDS,
+from trailprint.analytics import (AnalyticsStore, PRODUCT_FIELDS,
                                   PROJECT_FIELDS, RAISED_MAP, STATUS_ROWS)
 
 
@@ -85,7 +85,7 @@ class AnalyticsTests(unittest.TestCase):
         self.store.register_project(production, "Production", first_day)
         self.store.register_project(test, "Test", second_day, is_test=True)
         self.store.ensure_product(production, RAISED_MAP, first_day)
-        self.store.ensure_product(test, COASTER, second_day)
+        self.store.ensure_product(test, RAISED_MAP, second_day)
 
         filtered = self.store.visualization_data()
         included = self.store.visualization_data(include_tests=True)
@@ -96,8 +96,8 @@ class AnalyticsTests(unittest.TestCase):
                            for row in filtered["product_status_rows"]}
         included_totals = {row["product_type"]: row["total"]
                            for row in included["product_status_rows"]}
-        self.assertEqual(filtered_totals, {RAISED_MAP: 1, COASTER: 0})
-        self.assertEqual(included_totals, {RAISED_MAP: 1, COASTER: 1})
+        self.assertEqual(filtered_totals, {RAISED_MAP: 1})
+        self.assertEqual(included_totals, {RAISED_MAP: 2})
 
     def test_daily_snapshots_are_id_only(self):
         project = make_project(self.root, "route", "Route")

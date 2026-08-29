@@ -20,8 +20,7 @@ from .projects import TRASH_PATTERN
 PACIFIC = ZoneInfo("America/Los_Angeles")
 PROJECT_SCOPE = "project"
 RAISED_MAP = "fridge_magnet_raised_map"
-COASTER = "coaster"
-PRODUCT_TYPES = (RAISED_MAP, COASTER)
+PRODUCT_TYPES = (RAISED_MAP,)
 STATUS_ROWS = (
     (PROJECT_SCOPE, 1, "project created"),
     (PROJECT_SCOPE, 2, "project soft deleted"),
@@ -31,11 +30,6 @@ STATUS_ROWS = (
     (RAISED_MAP, 3, "3mf generated"),
     (RAISED_MAP, 4, "print started"),
     (RAISED_MAP, 5, "print completed"),
-    (COASTER, 1, "product created"),
-    (COASTER, 2, "stl generated"),
-    (COASTER, 3, "3mf generated"),
-    (COASTER, 4, "print started"),
-    (COASTER, 5, "print completed"),
 )
 PROJECT_FIELDS = ("id_project", "dim_project_name", "project_slug", "dim_is_test",
                   "ts_created", "ts_permanently_deleted")
