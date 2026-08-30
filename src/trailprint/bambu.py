@@ -3,6 +3,7 @@
 import json
 import math
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -236,11 +237,23 @@ def _role_files(project: Path) -> dict:
     return files
 
 
-def _object(path: Path, filament: int, assembly=0, position=(0.0, 0.0)) -> dict:
+def _object(path: Path, filament: int, assembly=0, position=(0.0, 0.0),
+            position_z=0.0) -> dict:
     return {"path": str(path), "count": 1, "filaments": [filament],
             "assemble_index": [assembly], "pos_x": [position[0]],
-            "pos_y": [position[1]], "pos_z": [0],
+            "pos_y": [position[1]], "pos_z": [position_z],
             "print_params": {}}
+
+
+def _resting_z(path: Path) -> float:
+    """Return the Z translation that places an STL's lowest point on the bed."""
+    try:
+        mesh = trimesh.load(path, force="mesh", process=False)
+        if isinstance(mesh, trimesh.Trimesh) and not mesh.is_empty:
+            return -float(mesh.bounds[0][2])
+    except (OSError, ValueError, TypeError):
+        pass
+    return 0.0
 
 
 def assemble_manifest(files: dict, settings: BambuSettings, filament_count: int,
@@ -254,7 +267,9 @@ def assemble_manifest(files: dict, settings: BambuSettings, filament_count: int,
         "plate_name": "TrailPrint", "need_arrange": False,
         "filaments_count": filament_count, "plate_params": {},
         "objects": [
-            _object(files["trail"], values["trail"], position=positions["trail"]),
+            _object(files["trail"], values["trail"],
+                    position=positions["trail"],
+                    position_z=_resting_z(files["trail"])),
             _object(files["terrain"], values["terrain"],
                     position=positions["terrain"]),
             _object(files["plate"], values["plate"], 1,
@@ -282,12 +297,20 @@ def prepare_one_plate_layout(files: dict, temp_root: Path) -> tuple:
             [0, 0, 1, 0], [0, 0, 0, 1],
         ]
         mesh.apply_transform(transform)
+        # Bambu Studio may rewrite assembly Z transforms while applying
+        # --ensure-on-bed. Normalize the standalone Trail mesh itself so its
+        # lowest exported point is exactly on the print bed regardless of that
+        # rewrite. Terrain keeps its original Z reference.
+        if role == "trail":
+            mesh.apply_translation([0.0, 0.0, -float(mesh.bounds[0][2])])
         target = temp_root / f"layout-{Path(path).name}"
         mesh.export(target)
         return target, mesh.bounds
 
     rotated_bounds = {}
     for role in ("trail", "terrain", "plate", "text"):
+        if role not in files:
+            continue
         layout_role = "plate_text" if role in {"plate", "text"} else role
         target, bounds = rotate_copy(
             role, files[role], ONE_PLATE_LAYOUT[layout_role]["rotation_deg"])
@@ -496,6 +519,9 @@ def _enforce_project_settings(path: Path, environment: BambuEnvironment,
                 "flush_volumes_matrix": [str(value) for value in matrix],
                 "flush_volumes_vector": [str(value) for value in vector],
                 "print_sequence": PRINT_SEQUENCE,
+                "first_layer_print_sequence": ["0"],
+                "other_layers_print_sequence": ["0"],
+                "other_layers_print_sequence_nums": "0",
                 "filament_colour": [item["color"] for item in environment.filaments],
             })
             with zipfile.ZipFile(replacement, "w", zipfile.ZIP_DEFLATED) as target:
@@ -520,7 +546,7 @@ def _enforce_project_settings(path: Path, environment: BambuEnvironment,
                             {"name": role, "bbox": [
                                 bounds[0][0], bounds[0][1], bounds[1][0], bounds[1][1]]}
                             for role, item in layout_report.items()
-                            if "bounds_mm" in item
+                            if isinstance(item, dict) and "bounds_mm" in item
                             for bounds in [item["bounds_mm"]]
                         ],
                     }, separators=(",", ":")).encode("utf-8"))
@@ -573,6 +599,10 @@ def validate_3mf(path: Path, expected_filaments: dict, expected_bands=None,
         raise ValueError("Generated Bambu project did not preserve the 0.6 purge multiplier.")
     if project_settings.get("print_sequence") != PRINT_SEQUENCE:
         raise ValueError("Generated Bambu project is not configured to print by object.")
+    if (project_settings.get("first_layer_print_sequence") != ["0"]
+            or project_settings.get("other_layers_print_sequence") != ["0"]
+            or str(project_settings.get("other_layers_print_sequence_nums")) != "0"):
+        raise ValueError("Generated Bambu project has inconsistent object sequence settings.")
     matrix = project_settings.get("flush_volumes_matrix", [])
     vector = project_settings.get("flush_volumes_vector", [])
     filament_count = filament_count or int(round(math.sqrt(len(matrix))))
@@ -625,9 +655,21 @@ def validate_3mf(path: Path, expected_filaments: dict, expected_bands=None,
                            if obj not in {trail_object, plate_object}), None)
     if None in {trail_object, terrain_object, plate_object}:
         raise ValueError("Generated Bambu project has unexpected one-plate objects.")
-    if metadata(trail_object, "extruder") != str(expected_filaments["trail"]):
-        raise ValueError("Trail filament assignment was not preserved.")
-    if metadata(terrain_object, "extruder") != str(expected_filaments["terrain"]):
+    def object_filament(obj):
+        # Bambu Studio versions differ: extruder may be stored on the object
+        # or on its individual part metadata.
+        value = metadata(obj, "extruder")
+        if value:
+            return value
+        return next((metadata(part, "extruder") for part in obj.findall("part")
+                     if metadata(part, "extruder")), "")
+    trail_filament = object_filament(trail_object)
+    terrain_filament = object_filament(terrain_object)
+    if trail_filament != str(expected_filaments["trail"]):
+        raise ValueError("Trail filament assignment was not preserved "
+                         f"(expected {expected_filaments['trail']}, "
+                         f"got {trail_filament}).")
+    if terrain_filament != str(expected_filaments["terrain"]):
         raise ValueError("Terrain filament assignment was not preserved.")
     parts = plate_object.findall("part")
     if len(parts) != 2:
@@ -638,8 +680,9 @@ def validate_3mf(path: Path, expected_filaments: dict, expected_bands=None,
         role = "text" if "text" in source else "plate" if "plate" in source else ""
         if role:
             part_filaments[role] = metadata(part, "extruder")
-    if part_filaments != {"plate": str(expected_filaments["plate"]),
-                         "text": str(expected_filaments["text"])}:
+    expected_parts = {"plate": str(expected_filaments["plate"]),
+                      "text": str(expected_filaments["text"])}
+    if part_filaments != expected_parts:
         raise ValueError("Plate or Text filament assignment was not preserved.")
     if plate_metadata is not None:
         plate_json = plate_metadata.get("bbox_objects", [])
@@ -747,6 +790,11 @@ def create_bambu_project(project: Path, settings: BambuSettings,
                         "flush_volumes_matrix": [str(value) for value in matrix],
                         "flush_volumes_vector": [str(value) for value in vector],
                         "print_sequence": PRINT_SEQUENCE,
+                        "first_layer_print_sequence": ["0"],
+                        "other_layers_print_sequence": ["0"],
+                        "other_layers_print_sequence_nums": "0",
+                        "prime_tower_enable_framework": "0",
+                        "enable_tower_interface_features": "0",
                         "filament_colour": colors})
         machine_path, process_path = temp_root / "machine.json", temp_root / "process.json"
         _write_json(machine_path, machine); _write_json(process_path, process)

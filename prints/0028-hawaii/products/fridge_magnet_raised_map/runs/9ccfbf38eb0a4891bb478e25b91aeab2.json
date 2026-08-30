@@ -1,0 +1,588 @@
+{
+  "schema_version": 1,
+  "id_build": "9ccfbf38eb0a4891bb478e25b91aeab2",
+  "id_product": 26,
+  "product_type": "fridge_magnet_raised_map",
+  "state": "success",
+  "ts_requested": "2026-08-30T06:39:01Z",
+  "settings": {
+    "shape": "HEXAGON",
+    "shape_extra": "OUTER TEXT",
+    "resolution": 8,
+    "plate_title": "hawaii",
+    "plate_text_1": "4.93 mi",
+    "plate_text_2": "2025.10.08",
+    "plate_text_3": "3h 18m",
+    "plate_text_4": "USA",
+    "plate_text_5": "Hawaii",
+    "x_offset": 0.0,
+    "y_offset": 0.0,
+    "fixed_elevation_scale": false,
+    "city": "Volcano",
+    "state": "Hawaii",
+    "country": "USA",
+    "unit_system": "IMPERIAL",
+    "plate_recess_depth": 1.5,
+    "include_water": true,
+    "registration_design": "SIDE_KEYS_ROUND"
+  },
+  "message": "Generated 5 validated STL file(s) using an automatic no-Shape-Extras recovery.",
+  "outputs": [
+    "0028-hawaii_Text.stl",
+    "0028-hawaii_Plate.stl",
+    "0028-TrailPrint_Attribution.stl",
+    "0028-hawaii_Trail.stl",
+    "0028-hawaii.stl"
+  ],
+  "validation": {
+    "valid": true,
+    "fallback_used": true,
+    "primary": {
+      "valid": false,
+      "files": [
+        {
+          "filename": "0028-hawaii.stl",
+          "role": "terrain",
+          "valid": true,
+          "errors": [],
+          "warnings": [],
+          "bytes": 19777184,
+          "triangles": 395542,
+          "vertices": 197773,
+          "dimensions_mm": [
+            100.0,
+            86.6025,
+            7.2292
+          ],
+          "bounds_mm": [
+            [
+              -50.0,
+              -43.3013,
+              3.5
+            ],
+            [
+              50.0,
+              43.3013,
+              10.7292
+            ]
+          ],
+          "center_mm": [
+            0.0,
+            0.0,
+            7.1146
+          ],
+          "components": 1,
+          "largest_component_triangles": 395542,
+          "degenerate_triangles": 0,
+          "watertight": true
+        },
+        {
+          "filename": "0028-hawaii_Plate.stl",
+          "role": "plate",
+          "valid": true,
+          "errors": [],
+          "warnings": [
+            "Contains 8 degenerate triangle(s).",
+            "Mesh is not fully watertight."
+          ],
+          "bytes": 308784,
+          "triangles": 6174,
+          "vertices": 3085,
+          "dimensions_mm": [
+            120.0,
+            103.923,
+            5.0
+          ],
+          "bounds_mm": [
+            [
+              -60.0,
+              -51.9615,
+              0.0
+            ],
+            [
+              60.0,
+              51.9615,
+              5.0
+            ]
+          ],
+          "center_mm": [
+            0.0,
+            0.0,
+            2.5
+          ],
+          "components": 5,
+          "largest_component_triangles": 6166,
+          "degenerate_triangles": 8,
+          "watertight": false
+        },
+        {
+          "filename": "0028-hawaii_Text.stl",
+          "role": "text",
+          "valid": true,
+          "errors": [],
+          "warnings": [],
+          "bytes": 1241284,
+          "triangles": 24824,
+          "vertices": 12466,
+          "dimensions_mm": [
+            96.7362,
+            99.362,
+            0.8
+          ],
+          "bounds_mm": [
+            [
+              -48.095,
+              -49.9269,
+              5.0
+            ],
+            [
+              48.6412,
+              49.4351,
+              5.8
+            ]
+          ],
+          "center_mm": [
+            0.2731,
+            -0.2459,
+            5.4
+          ],
+          "components": 41,
+          "largest_component_triangles": 1684,
+          "degenerate_triangles": 0,
+          "watertight": true
+        },
+        {
+          "filename": "0028-hawaii_Trail.stl",
+          "role": "trail",
+          "valid": false,
+          "errors": [
+            "Trail is fragmented into 84 disconnected components."
+          ],
+          "warnings": [
+            "Contains 129 degenerate triangle(s).",
+            "Mesh is not fully watertight."
+          ],
+          "bytes": 1522184,
+          "triangles": 30442,
+          "vertices": 15224,
+          "dimensions_mm": [
+            69.6875,
+            43.9453,
+            6.4942
+          ],
+          "bounds_mm": [
+            [
+              -35.3125,
+              -21.9219,
+              3.6725
+            ],
+            [
+              34.375,
+              22.0234,
+              10.1667
+            ]
+          ],
+          "center_mm": [
+            -0.4688,
+            0.0508,
+            6.9196
+          ],
+          "components": 84,
+          "largest_component_triangles": 29904,
+          "degenerate_triangles": 129,
+          "watertight": false,
+          "largest_component_share": 0.982327,
+          "significant_components": 4
+        },
+        {
+          "filename": "0028-TrailPrint_Attribution.stl",
+          "role": "attribution",
+          "valid": true,
+          "errors": [],
+          "warnings": [],
+          "bytes": 1467284,
+          "triangles": 29344,
+          "vertices": 14740,
+          "dimensions_mm": [
+            84.0,
+            7.7406,
+            0.3
+          ],
+          "bounds_mm": [
+            [
+              -41.9688,
+              -45.6666,
+              -0.1
+            ],
+            [
+              42.0312,
+              -37.926,
+              0.2
+            ]
+          ],
+          "center_mm": [
+            0.0312,
+            -41.7963,
+            0.05
+          ],
+          "components": 52,
+          "largest_component_triangles": 1552,
+          "degenerate_triangles": 0,
+          "watertight": true
+        }
+      ],
+      "corrections": [],
+      "errors": [
+        "No valid trail STL was generated.",
+        "0028-hawaii_Trail.stl: Trail is fragmented into 84 disconnected components."
+      ]
+    },
+    "fallback": {
+      "valid": true,
+      "files": [
+        {
+          "filename": "0028-hawaii.stl",
+          "role": "terrain",
+          "valid": true,
+          "errors": [],
+          "warnings": [
+            "Contains 356 degenerate triangle(s).",
+            "Mesh is not fully watertight."
+          ],
+          "bytes": 19757184,
+          "triangles": 395142,
+          "vertices": 197569,
+          "dimensions_mm": [
+            100.0,
+            86.6094,
+            7.2292
+          ],
+          "bounds_mm": [
+            [
+              -50.0,
+              -43.3047,
+              0.0
+            ],
+            [
+              50.0,
+              43.3047,
+              7.2292
+            ]
+          ],
+          "center_mm": [
+            -0.0,
+            -0.0,
+            3.6146
+          ],
+          "components": 5,
+          "largest_component_triangles": 395134,
+          "degenerate_triangles": 356,
+          "watertight": false
+        },
+        {
+          "filename": "0028-hawaii_Trail.stl",
+          "role": "trail",
+          "valid": true,
+          "errors": [],
+          "warnings": [
+            "Contains 130 degenerate triangle(s).",
+            "Mesh is not fully watertight."
+          ],
+          "bytes": 1504084,
+          "triangles": 30080,
+          "vertices": 15038,
+          "dimensions_mm": [
+            68.6875,
+            43.8438,
+            5.4942
+          ],
+          "bounds_mm": [
+            [
+              -34.3125,
+              -21.9219,
+              1.1725
+            ],
+            [
+              34.375,
+              21.9219,
+              6.6667
+            ]
+          ],
+          "center_mm": [
+            0.0312,
+            -0.0,
+            3.9196
+          ],
+          "components": 78,
+          "largest_component_triangles": 29920,
+          "degenerate_triangles": 130,
+          "watertight": false,
+          "largest_component_share": 0.994681,
+          "significant_components": 1
+        }
+      ],
+      "corrections": [
+        {
+          "type": "assembly",
+          "reference": "0028-hawaii.stl",
+          "files": [
+            "0028-hawaii.stl",
+            "0028-hawaii_Trail.stl"
+          ],
+          "translation_mm": [
+            524187.2812,
+            -66852.6797,
+            -0.0
+          ]
+        }
+      ],
+      "errors": []
+    },
+    "fallback_alignment": {
+      "files": [
+        "0028-hawaii_Trail.stl",
+        "0028-hawaii.stl"
+      ],
+      "translation_mm": [
+        0.0,
+        0.0,
+        3.5
+      ]
+    },
+    "final": {
+      "valid": true,
+      "files": [
+        {
+          "filename": "0028-hawaii.stl",
+          "role": "terrain",
+          "valid": true,
+          "errors": [],
+          "warnings": [
+            "Contains 357 degenerate triangle(s).",
+            "Mesh is not fully watertight."
+          ],
+          "bytes": 19757184,
+          "triangles": 395142,
+          "vertices": 197568,
+          "dimensions_mm": [
+            100.0,
+            86.6094,
+            7.2292
+          ],
+          "bounds_mm": [
+            [
+              -50.0,
+              -43.3047,
+              3.5
+            ],
+            [
+              50.0,
+              43.3047,
+              10.7292
+            ]
+          ],
+          "center_mm": [
+            0.0,
+            0.0,
+            7.1146
+          ],
+          "components": 6,
+          "largest_component_triangles": 395132,
+          "degenerate_triangles": 357,
+          "watertight": false
+        },
+        {
+          "filename": "0028-hawaii_Plate.stl",
+          "role": "plate",
+          "valid": true,
+          "errors": [],
+          "warnings": [
+            "Contains 8 degenerate triangle(s).",
+            "Mesh is not fully watertight."
+          ],
+          "bytes": 308784,
+          "triangles": 6174,
+          "vertices": 3085,
+          "dimensions_mm": [
+            120.0,
+            103.923,
+            5.0
+          ],
+          "bounds_mm": [
+            [
+              -60.0,
+              -51.9615,
+              0.0
+            ],
+            [
+              60.0,
+              51.9615,
+              5.0
+            ]
+          ],
+          "center_mm": [
+            0.0,
+            0.0,
+            2.5
+          ],
+          "components": 5,
+          "largest_component_triangles": 6166,
+          "degenerate_triangles": 8,
+          "watertight": false
+        },
+        {
+          "filename": "0028-hawaii_Text.stl",
+          "role": "text",
+          "valid": true,
+          "errors": [],
+          "warnings": [],
+          "bytes": 1241284,
+          "triangles": 24824,
+          "vertices": 12466,
+          "dimensions_mm": [
+            96.7362,
+            99.362,
+            0.8
+          ],
+          "bounds_mm": [
+            [
+              -48.095,
+              -49.9269,
+              5.0
+            ],
+            [
+              48.6412,
+              49.4351,
+              5.8
+            ]
+          ],
+          "center_mm": [
+            0.2731,
+            -0.2459,
+            5.4
+          ],
+          "components": 41,
+          "largest_component_triangles": 1684,
+          "degenerate_triangles": 0,
+          "watertight": true
+        },
+        {
+          "filename": "0028-hawaii_Trail.stl",
+          "role": "trail",
+          "valid": true,
+          "errors": [],
+          "warnings": [
+            "Contains 130 degenerate triangle(s).",
+            "Mesh is not fully watertight."
+          ],
+          "bytes": 1504084,
+          "triangles": 30080,
+          "vertices": 15038,
+          "dimensions_mm": [
+            68.6875,
+            43.8438,
+            5.4942
+          ],
+          "bounds_mm": [
+            [
+              -34.3125,
+              -21.9219,
+              4.6725
+            ],
+            [
+              34.375,
+              21.9219,
+              10.1667
+            ]
+          ],
+          "center_mm": [
+            0.0312,
+            -0.0,
+            7.4196
+          ],
+          "components": 78,
+          "largest_component_triangles": 29920,
+          "degenerate_triangles": 130,
+          "watertight": false,
+          "largest_component_share": 0.994681,
+          "significant_components": 1
+        },
+        {
+          "filename": "0028-TrailPrint_Attribution.stl",
+          "role": "attribution",
+          "valid": true,
+          "errors": [],
+          "warnings": [],
+          "bytes": 1467284,
+          "triangles": 29344,
+          "vertices": 14740,
+          "dimensions_mm": [
+            84.0,
+            7.7406,
+            0.3
+          ],
+          "bounds_mm": [
+            [
+              -41.9688,
+              -45.6666,
+              -0.1
+            ],
+            [
+              42.0312,
+              -37.926,
+              0.2
+            ]
+          ],
+          "center_mm": [
+            0.0312,
+            -41.7963,
+            0.05
+          ],
+          "components": 52,
+          "largest_component_triangles": 1552,
+          "degenerate_triangles": 0,
+          "watertight": true
+        }
+      ],
+      "corrections": [],
+      "errors": []
+    },
+    "plate_attribution": {
+      "applied": false,
+      "recess_applied": false,
+      "mode": "insert",
+      "lines": [
+        "\u00a9 OpenStreetMap contributors",
+        "Terrain: \u00a9 Mapterhorn"
+      ],
+      "depth_mm": 0.2,
+      "font_height_mm": 4.0,
+      "edge_margin_mm": 6.0,
+      "centered_fallback": false,
+      "placement": "text_2_edge",
+      "orientation": "upright_after_side_flip"
+    },
+    "registration_features": {
+      "design": "SIDE_KEYS_ROUND",
+      "features": 3,
+      "key_width_mm": 1.0,
+      "key_height_mm": 1.0,
+      "engagement_mm": 1.0,
+      "trail_object": "0028-hawaii_Trail",
+      "terrain_object": "0028-hawaii"
+    },
+    "preview": {
+      "valid": true,
+      "filename": "preview.png"
+    },
+    "duration_seconds": 65.9,
+    "terrain_palette": {
+      "available": true,
+      "bands": 2,
+      "confidence": 0.949,
+      "mapped_coverage": 0.931
+    }
+  },
+  "ts_started": "2026-08-30T06:39:01Z",
+  "ts_finished": "2026-08-30T06:40:07Z"
+}

@@ -96,7 +96,6 @@ black plate, and white text; STL files themselves remain colorless. Builds inclu
 lakes, major rivers, and coastal sea by default as separately printable recessed
 inserts. Water regions smaller than 25 mm² on the model are filtered out before
 their matching recesses are made. Every generated plate includes a shallow,
-two-line OpenStreetMap and Mapterhorn attribution engraving on its underside.
 
 From the validated preview, TrailPrint can also create a reviewable Bambu Studio
 3MF using the printer, process, filaments, and colors currently configured in
