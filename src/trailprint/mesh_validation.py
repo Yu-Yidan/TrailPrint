@@ -14,8 +14,6 @@ import trimesh
 def mesh_role(path: Path, project_slug: str) -> str:
     stem = path.stem.lower()
     slug = project_slug.lower()
-    if "water" in stem or "ocean" in stem:
-        return "water"
     if stem == slug:
         return "terrain"
     if "_trail" in stem or stem.endswith("trail"):
@@ -24,6 +22,8 @@ def mesh_role(path: Path, project_slug: str) -> str:
         return "plate"
     if "text" in stem or stem.startswith("t_"):
         return "text"
+    if stem.endswith("_water") or stem == "water" or stem.endswith("ocean"):
+        return "water"
     return "other"
 
 

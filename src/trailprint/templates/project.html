@@ -80,11 +80,6 @@
           {% else %}<strong>Expected relief: {{ '%.1f'|format(expected_relief) }} mm · Natural elevation scale retained</strong><p class="fine-print">Approximately {{ '%.1f'|format(expected_relief + 2) }} mm total terrain thickness including the standard 2 mm base.</p>{% endif %}
         </div>
       </fieldset>
-      <fieldset class="settings-group">
-        <legend>Water</legend>
-        <p class="fine-print">Water prints as separate blue inserts with matching terrain recesses, avoiding repeated AMS filament changes.</p>
-        <label class="toggle-setting"><input type="checkbox" name="include_water" checked><span><strong>Include water</strong><small>Adds applicable lakes, major rivers, and sea from OpenStreetMap. Minor waterways and water pieces smaller than 25 mm² are excluded.</small></span></label>
-      </fieldset>
       <label class="locked-setting"><input type="checkbox" checked disabled><span><strong>Single-color trail</strong><small>Always enabled for TrailPrint builds</small></span><span class="lock">Locked</span></label>
       <button class="button primary build-button" {% if not has_gpx or (job and job.state in ['queued','running','cancelling']) %}disabled{% endif %}>Build with Blender</button>
     </form>

@@ -203,7 +203,7 @@ class SettingsTests(unittest.TestCase):
                 self.assertAlmostEqual(config["center_latitude"], 0.0)
                 self.assertEqual(config["plate_recess_depth"], 0.0)
                 self.assertEqual(config["plate_recess_clearance"], 0.0)
-                self.assertTrue(config["include_water"])
+                self.assertNotIn("include_water", config)
                 self.assertEqual(config["water_min_area_mm2"], 25.0)
                 terrain = trimesh.creation.box(extents=[100, 80, 5])
                 trail = trimesh.creation.box(extents=[60, 3, 2]).subdivide()

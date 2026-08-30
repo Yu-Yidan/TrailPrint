@@ -202,8 +202,7 @@ def create_app(repo_root: Path = None, build_manager: BuildManager = None,
                 request.form.get("city", ""), request.form.get("state", ""),
                 request.form.get("country", ""),
                 "METRIC" if request.form.get("use_metric") == "on" else "IMPERIAL",
-                request.form.get("plate_recess_depth", 1.5),
-                request.form.get("include_water") == "on")
+                request.form.get("plate_recess_depth", 1.5))
             stats = read_gpx_trip_stats(project / "route.gpx")
             replacements = {"name": human_name(project), "city": settings.city,
                             "state": settings.state, "country": settings.country}
@@ -369,8 +368,7 @@ def create_app(repo_root: Path = None, build_manager: BuildManager = None,
                 request.form.get("green_filament", request.form.get("land_filament", 1)),
                 request.form.get("grey_filament", request.form.get("mountain_filament", 1)),
                 request.form.get("white_filament", request.form.get("summit_filament", 1)),
-                terrain_mode, palette.get("bands", ()),
-                request.form.get("water_placement", "separate"))
+                terrain_mode, palette.get("bands", ()))
             color_preferences = {
                 **settings.terrain_filaments(),
                 "grey_start_m": grey_start_m,

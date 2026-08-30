@@ -421,9 +421,7 @@ def main():
             props.scaleElevation = 1.0
         props.plateInsertValue = float(config.get("plate_recess_depth", 0))
         props.singleColorMode = True
-        include_water = bool(config.get("include_water", True))
-        configure_water(props, include_water,
-                        config.get("water_min_area_mm2", 25.0))
+        configure_water(props, True, config.get("water_min_area_mm2", 25.0))
         props.disable_auto_export = False
         props.disable_3mf_export = True
         props.exportformat = "STL"

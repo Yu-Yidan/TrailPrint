@@ -40,27 +40,21 @@ class BambuProjectTests(unittest.TestCase):
         self.assertEqual([item["assemble_index"] for item in manifest["plates"][0]["objects"]],
                          [[0], [0], [1], [1]])
 
-    def test_water_files_block_one_plate_export(self):
+    def test_water_is_always_combined_with_terrain_on_one_plate(self):
         files = {role: Path(f"/{role}.stl")
                  for role in ("trail", "terrain", "plate", "text")}
         files["water"] = [Path("/route_WATER.stl"), Path("/Ocean.stl")]
         settings = BambuSettings(3, 4, 1, 2, 1, 2, water_filament=4)
-        with self.assertRaisesRegex(ValueError, "unavailable when water exists"):
-            assemble_manifest(files, settings, 4)
-
-    def test_combined_water_also_blocks_one_plate_export(self):
-        files = {role: Path(f"/{role}.stl")
-                 for role in ("trail", "terrain", "plate", "text")}
-        files["water"] = [Path("/route_WATER.stl"), Path("/Ocean.stl")]
-        settings = BambuSettings(3, 4, 1, 2, 1, 2, water_filament=2,
-                                 water_placement="terrain")
-
-        with self.assertRaisesRegex(ValueError, "unavailable when water exists"):
-            assemble_manifest(files, settings, 4)
+        manifest = assemble_manifest(files, settings, 4)
+        objects = manifest["plates"][0]["objects"]
+        self.assertEqual(len(manifest["plates"]), 1)
+        self.assertEqual([item["filaments"] for item in objects],
+                         [[3], [4], [4], [4], [1], [2]])
+        self.assertEqual([item["assemble_index"] for item in objects],
+                         [[0], [2], [2], [2], [1], [1]])
 
     def test_estimates_mixed_water_layers_and_manual_swaps(self):
-        settings = BambuSettings(3, 4, 1, 2, 1, 2, water_filament=2,
-                                 water_placement="terrain")
+        settings = BambuSettings(3, 4, 1, 2, 1, 2, water_filament=2)
         estimate = estimate_water_layer_changes(
             [(0.15, 0.55), (0.45, 0.75)], 0, 0.2, 0.2, settings, [])
 
@@ -70,8 +64,7 @@ class BambuProjectTests(unittest.TestCase):
         self.assertFalse(estimate["is_exact"])
 
     def test_matching_water_and_terrain_filaments_need_no_swaps(self):
-        settings = BambuSettings(3, 4, 1, 2, 1, 2, water_filament=4,
-                                 water_placement="terrain")
+        settings = BambuSettings(3, 4, 1, 2, 1, 2, water_filament=4)
         estimate = estimate_water_layer_changes(
             [(0.2, 0.6)], 0, 0.2, 0.3, settings, [])
         self.assertEqual(estimate["water_layer_count"], 3)
@@ -97,7 +90,7 @@ class BambuProjectTests(unittest.TestCase):
             settings = {"enable_prime_tower": "1", "flush_volumes_matrix": ["12"]}
             model = '''<config>
               <object id="2"><metadata key="extruder" value="3"/><part><metadata key="source_file" value="model_Trail.stl"/><metadata key="source_object_id" value="0"/></part></object>
-              <object id="4"><metadata key="extruder" value="4"/><part><metadata key="source_file" value="model.stl"/><metadata key="source_object_id" value="1"/></part></object>
+              <object id="4"><part><metadata key="source_file" value="model.stl"/><metadata key="source_object_id" value="1"/><metadata key="extruder" value="4"/></part><part><metadata key="source_file" value="model_WATER.stl"/><metadata key="source_object_id" value="2"/><metadata key="extruder" value="2"/></part></object>
               <object id="7"><part id="1"><metadata key="source_file" value="model_Plate.stl"/><metadata key="source_object_id" value="2"/><metadata key="extruder" value="1"/></part><part id="2"><metadata key="source_file" value="model_Text.stl"/><metadata key="source_object_id" value="3"/><metadata key="extruder" value="2"/></part></object>
               <plate><metadata key="plater_name" value="TrailPrint"/><model_instance><metadata key="object_id" value="2"/></model_instance><model_instance><metadata key="object_id" value="4"/></model_instance><model_instance><metadata key="object_id" value="7"/></model_instance></plate>
             </config>'''
@@ -125,7 +118,7 @@ class BambuProjectTests(unittest.TestCase):
             _enforce_project_settings(output, environment, bands, terrain_filaments)
             report = validate_3mf(
                 output, {"trail": 3, "terrain": 4, "plate": 1, "text": 2},
-                bands, terrain_filaments, filament_count=4)
+                bands, terrain_filaments, water_filament=2, filament_count=4)
 
             self.assertTrue(report["valid"])
             with zipfile.ZipFile(output) as archive:
@@ -145,6 +138,7 @@ class BambuProjectTests(unittest.TestCase):
             self.assertEqual([item["filament"] for item in report["terrain_bands"]], [1, 2])
             self.assertEqual([item["layer_height"] for item in report["terrain_bands"]],
                              [0.2, 0.2])
+            self.assertEqual(report["water_filament"], 2)
             self.assertEqual(ranges.find("object").attrib["id"], "2")
 
     def test_layout_constants_are_independent_calibration_parameters(self):
@@ -155,10 +149,6 @@ class BambuProjectTests(unittest.TestCase):
     def test_filament_numbers_are_bounded(self):
         with self.assertRaisesRegex(ValueError, "from 1 to 4"):
             BambuSettings.validated(4, 1, 2, 3, 5)
-
-    def test_water_placement_is_validated(self):
-        with self.assertRaisesRegex(ValueError, "separate or with terrain"):
-            BambuSettings.validated(4, water_placement="somewhere")
 
     def test_plate_defaults_to_slot_one(self):
         filaments = (
