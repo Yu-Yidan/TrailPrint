@@ -3,24 +3,26 @@
 import json
 import math
 import os
-import re
 import shutil
 import subprocess
 import tempfile
-import zipfile
 import xml.etree.ElementTree as ET
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable, List
+from typing import Dict, Iterable
 
 import trimesh
 
 from .mesh_validation import mesh_role
 from .naming import canonical_3mf_name
-from .terrain_colors import (DEFAULT_GREY_START_M, DEFAULT_WHITE_START_M,
-                             active_terrain_bands, color_matched_defaults,
-                             elevation_metadata)
-
+from .terrain_colors import (
+    DEFAULT_GREY_START_M,
+    DEFAULT_WHITE_START_M,
+    active_terrain_bands,
+    color_matched_defaults,
+    elevation_metadata,
+)
 
 BAMBU_APP = Path("/Applications/BambuStudio.app/Contents/MacOS/BambuStudio")
 BAMBU_DATA = Path.home() / "Library/Application Support/BambuStudio"
@@ -101,8 +103,15 @@ class BambuSettings:
         bands = tuple(dict(item) for item in automatic_bands) if automatic_bands else ()
         if terrain_mode == "osm" and not bands:
             raise ValueError("OSM-inspired terrain bands are unavailable.")
-        return cls(*values[:7], grey_start_m, white_start_m, *values[7:],
-                   terrain_mode, bands)
+        return cls(
+            trail_filament=values[0], land_filament=values[1],
+            mountain_filament=values[2], summit_filament=values[3],
+            plate_filament=values[4], text_filament=values[5],
+            water_filament=values[6], grey_start_m=grey_start_m,
+            white_start_m=white_start_m, black_filament=values[7],
+            green_filament=values[8], grey_filament=values[9],
+            white_filament=values[10], terrain_mode=terrain_mode,
+            automatic_bands=bands)
 
     def by_role(self) -> dict:
         terrain = self.land_filament
@@ -130,7 +139,6 @@ def discover_environment(data_dir: Path = BAMBU_DATA, binary: Path = BAMBU_APP) 
         machine = str(presets["machine"])
         process = str(presets["process"])
         names = list(presets["filaments"])
-        app_settings = config.get("app", {})
     except (OSError, KeyError, TypeError, ValueError) as exc:
         raise ValueError("Bambu Studio's current printer and filament presets could not be read.") from exc
     colors = str(presets.get("filament_colors", "")).split(",")
@@ -760,12 +768,15 @@ def create_bambu_project(project: Path, settings: BambuSettings,
     project = project.resolve()
     environment = environment or discover_environment()
     settings = BambuSettings.validated(
-        len(environment.filaments), settings.trail_filament, settings.land_filament,
-        settings.mountain_filament, settings.summit_filament,
-        settings.plate_filament, settings.text_filament, settings.water_filament,
-        settings.grey_start_m, settings.white_start_m, settings.black_filament,
-        settings.green_filament, settings.grey_filament, settings.white_filament,
-        settings.terrain_mode, settings.automatic_bands)
+        len(environment.filaments), trail=settings.trail_filament,
+        land=settings.land_filament, mountain=settings.mountain_filament,
+        summit=settings.summit_filament, plate=settings.plate_filament,
+        text=settings.text_filament, water=settings.water_filament,
+        grey_start_m=settings.grey_start_m,
+        white_start_m=settings.white_start_m, black=settings.black_filament,
+        green=settings.green_filament, grey=settings.grey_filament,
+        white=settings.white_filament, terrain_mode=settings.terrain_mode,
+        automatic_bands=settings.automatic_bands)
     files = _role_files(project)
     build_dir = project / "build"
     build_dir.mkdir(parents=True, exist_ok=True)
@@ -819,12 +830,14 @@ def create_bambu_project(project: Path, settings: BambuSettings,
                         "enable_tower_interface_features": "0",
                         "filament_colour": colors})
         machine_path, process_path = temp_root / "machine.json", temp_root / "process.json"
-        _write_json(machine_path, machine); _write_json(process_path, process)
+        _write_json(machine_path, machine)
+        _write_json(process_path, process)
         filament_paths = []
         for index_number, filament in enumerate(environment.filaments, 1):
             value = _flatten_profile(filament["name"], profile_root, index)
             target = temp_root / f"filament-{index_number}.json"
-            _write_json(target, value); filament_paths.append(target)
+            _write_json(target, value)
+            filament_paths.append(target)
         layout_files, positions, layout_report = prepare_one_plate_layout(files, temp_root)
         manifest_path = temp_root / "assemble.json"
         _write_json(manifest_path, assemble_manifest(

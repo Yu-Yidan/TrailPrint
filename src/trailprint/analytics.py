@@ -16,7 +16,6 @@ from zoneinfo import ZoneInfo
 from .naming import human_name, logical_slug, read_project_meta
 from .projects import TRASH_PATTERN
 
-
 PACIFIC = ZoneInfo("America/Los_Angeles")
 PROJECT_SCOPE = "project"
 RAISED_MAP = "fridge_magnet_raised_map"

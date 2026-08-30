@@ -15,6 +15,12 @@ dependencies = [
     "trimesh>=4,<5",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "pytest>=8,<9",
+    "ruff>=0.12,<1",
+]
+
 [project.scripts]
 trailprint = "trailprint.cli:main"
 
@@ -23,3 +29,15 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 trailprint = ["templates/*.html", "static/*.css", "static/*.js"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["error"]
+
+[tool.ruff]
+target-version = "py39"
+line-length = 100
+exclude = ["prints"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]

@@ -9,12 +9,22 @@ from unittest.mock import patch
 
 import trimesh
 
-from trailprint.blender_bridge import (BuildCancelled, BuildSettings, _failure_detail,
-                                       _run_command, run_blender_build)
-from trailprint.blender_worker import (classify_osm_samples, configure_water,
-                                       fetch_lava_osm,
-                                       fixed_elevation_multiplier, lava_osm_query, resolve_text,
-                                       with_plate_clearance)
+from trailprint.blender_bridge import (
+    BuildCancelled,
+    BuildSettings,
+    _failure_detail,
+    _run_command,
+    run_blender_build,
+)
+from trailprint.blender_worker import (
+    classify_osm_samples,
+    configure_water,
+    fetch_lava_osm,
+    fixed_elevation_multiplier,
+    lava_osm_query,
+    resolve_text,
+    with_plate_clearance,
+)
 from trailprint.gpx import read_gpx_trip_date
 
 
@@ -45,8 +55,10 @@ class SettingsTests(unittest.TestCase):
             }
             for path, data in previous.items():
                 path.write_bytes(data)
-            blender = Path(temp) / "blender"; blender.touch()
-            cancelled = threading.Event(); cancelled.set()
+            blender = Path(temp) / "blender"
+            blender.touch()
+            cancelled = threading.Event()
+            cancelled.set()
 
             with self.assertRaises(BuildCancelled):
                 run_blender_build(project, BuildSettings(), blender=blender,
@@ -270,7 +282,8 @@ class SettingsTests(unittest.TestCase):
                     trail = trimesh.creation.box(extents=[60, 3, 2]).subdivide()
                 else:
                     left = trimesh.creation.box(extents=[20, 3, 2])
-                    right = left.copy(); right.apply_translation([40, 0, 0])
+                    right = left.copy()
+                    right.apply_translation([40, 0, 0])
                     trail = trimesh.util.concatenate([left, right])
                     trimesh.creation.box(extents=[110, 90, 2]).export(output / "project_Plate.stl")
                 trail.export(output / "project_Trail.stl")
@@ -300,7 +313,8 @@ class SettingsTests(unittest.TestCase):
             (project / "build").mkdir()
             (project / "build/preview.png").write_bytes(b"old preview")
             (project / "route.gpx").write_text("<gpx/>", encoding="utf-8")
-            blender = Path(temp) / "blender"; blender.touch()
+            blender = Path(temp) / "blender"
+            blender.touch()
 
             def fake_run(command, **_kwargs):
                 config = json.loads(Path(command[-1]).read_text(encoding="utf-8"))
@@ -327,14 +341,16 @@ class SettingsTests(unittest.TestCase):
             (project / "route.gpx").write_text("<gpx/>", encoding="utf-8")
             previous = project / "deliverables/previous.stl"
             previous.write_text("old", encoding="ascii")
-            blender = Path(temp) / "blender"; blender.touch()
+            blender = Path(temp) / "blender"
+            blender.touch()
 
             def fake_run(command, **_kwargs):
                 config = json.loads(Path(command[-1]).read_text(encoding="utf-8"))
                 output = Path(config["export_path"])
                 trimesh.creation.box(extents=[100, 80, 5]).export(output / "project.stl")
                 first = trimesh.creation.box(extents=[20, 3, 2])
-                second = first.copy(); second.apply_translation([40, 0, 0])
+                second = first.copy()
+                second.apply_translation([40, 0, 0])
                 trimesh.util.concatenate([first, second]).export(output / "project_Trail.stl")
                 return subprocess.CompletedProcess(command, 0, "ok", "")
 

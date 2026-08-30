@@ -2,10 +2,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from trailprint.terrain_colors import (active_terrain_bands, color_matched_defaults,
-                                       elevation_to_meters,
-                                       load_terrain_defaults, save_terrain_preferences)
-
+from trailprint.terrain_colors import (
+    active_terrain_bands,
+    color_matched_defaults,
+    elevation_to_meters,
+    load_terrain_defaults,
+    save_terrain_preferences,
+)
 
 FILAMENTS = (
     {"number": 1, "name": "Black", "color": "#000000"},

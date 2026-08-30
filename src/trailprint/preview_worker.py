@@ -5,7 +5,6 @@ import sys
 import traceback
 from pathlib import Path
 
-
 COLORS = {
     "terrain": (0.12, 0.50, 0.18, 1.0),
     "trail": (0.80, 0.03, 0.02, 1.0),

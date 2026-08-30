@@ -6,8 +6,8 @@ projects; the creation chart shows daily new projects using Pacific dates.
 
 1. Create a project in the local interface so it receives the next sortable ID.
 2. Confirm the uploaded `route.gpx` and record its source in the project's README.
-3. Choose Shape, Shape Extras, plate text, terrain offsets, water options, and
-   Resolution on the project page. Elevation scaling is selected automatically.
+3. Choose Shape, Shape Extras, plate text, terrain offsets, and Resolution on
+   the project page. Water and elevation scaling are selected automatically.
 4. Click **Build with Blender**, or run
    `trailprint build prints/<four-digit-id>-<project-name>`.
 5. Inspect the validated STL set in the browser preview.
@@ -120,10 +120,6 @@ Generated STL files are staged and parsed before they replace anything in
 the trail is dominated by one connected route rather than floating fragments.
 Small non-manifold or degenerate artifacts are reported as warnings because
 they can occur in otherwise usable TrailPrint3D output.
-
-Whenever the selected layout creates a plate, TrailPrint adds a one-layer grey
-`© OpenStreetMap contributors` and `Terrain: © Mapterhorn` into its lower
-after flipping the plate left-to-right.
 
 Files with an obviously incorrect export origin are centered in X/Y and moved
 to Z=0 using the same operations as `fix_bambu_plate_boundary.py`. Centered

@@ -2,220 +2,14 @@
 
 import importlib
 import json
+import math
 import os
 import sys
 import traceback
-import math
 from collections import Counter
 from pathlib import Path
+
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-
-
-def attribution_layout(bounds):
-    """Deprecated compatibility helper; attribution generation is removed."""
-    minimum, maximum = bounds
-    width = float(maximum[0]) - float(minimum[0])
-    height = float(maximum[1]) - float(minimum[1])
-    if width <= 0 or height <= 0:
-        raise ValueError("Plate bounds are invalid for attribution text.")
-    font_height = min(ATTRIBUTION_FONT_HEIGHT_MM, height * 0.04)
-    if font_height < 1.8:
-        raise ValueError("Plate is too small for legible attribution text.")
-    line_spacing = font_height * 1.27
-    edge_margin = max(4.0, min(6.0, height * 0.06))
-    center_x = (float(minimum[0]) + float(maximum[0])) / 2.0
-    # Text 2 is the canonical bottom edge in the physical plate layout. The
-    # plate is viewed from its back when this insert is printed, so native
-    # minimum-Y maps to the opposite/front edge. Use maximum-Y here to keep the
-    # attribution on the actual Text 2 edge after the calibrated rotation.
-    second_y = float(maximum[1]) - edge_margin - font_height / 2.0
-    return {
-        "center_x": center_x,
-        "line_y": (second_y + line_spacing, second_y),
-        "font_height_mm": font_height,
-        "max_width_mm": width * 0.7,
-        "edge_margin_mm": edge_margin,
-    }
-
-
-def _create_attribution_insert(bpy, plate):
-    """Create the separate one-layer grey attribution insert."""
-    import bmesh
-    from mathutils import Matrix, Vector
-
-    def recalculate_normals(obj):
-        mesh = obj.data
-        edit = bmesh.new()
-        edit.from_mesh(mesh)
-        bmesh.ops.recalc_face_normals(edit, faces=list(edit.faces))
-        edit.to_mesh(mesh)
-        edit.free()
-        mesh.update()
-
-    def mesh_volume(obj):
-        edit = bmesh.new()
-        edit.from_mesh(obj.data)
-        volume = abs(float(edit.calc_volume(signed=True)))
-        edit.free()
-        return volume
-
-    # TrailPrint3D may leave mesh coordinates millions of millimetres from the
-    # origin. Rebase the mesh under an equivalent object transform so Blender's
-    # boolean operates with printable-scale floating-point values.
-    local_bounds = [Vector(corner) for corner in plate.bound_box]
-    local_anchor = Vector(tuple(
-        (min(point[index] for point in local_bounds)
-         + max(point[index] for point in local_bounds)) / 2.0
-        for index in range(3)))
-    world_offset = plate.matrix_world.to_3x3() @ local_anchor
-    plate.data.transform(Matrix.Translation(-local_anchor))
-    plate.location += world_offset
-    plate.data.update()
-    bpy.context.view_layer.update()
-    world_bounds = [plate.matrix_world @ Vector(corner) for corner in plate.bound_box]
-    minimum = [min(point[index] for point in world_bounds) for index in range(3)]
-    maximum = [max(point[index] for point in world_bounds) for index in range(3)]
-    layout = attribution_layout((minimum, maximum))
-    cutters = []
-    cutter_names = []
-    try:
-        if not os.path.isfile(ATTRIBUTION_FONT_PATH):
-            raise RuntimeError(f"Attribution font was not found: {ATTRIBUTION_FONT_PATH}")
-        attribution_font = bpy.data.fonts.load(ATTRIBUTION_FONT_PATH)
-        for index, (body, y_position) in enumerate(zip(
-                ATTRIBUTION_LINES, layout["line_y"]), 1):
-            curve = bpy.data.curves.new(f"TrailPrint Attribution {index}", type="FONT")
-            curve.font = attribution_font
-            curve.body = body
-            curve.align_x = "CENTER"
-            curve.align_y = "CENTER"
-            curve.dimensions = "2D"
-            curve.fill_mode = "BOTH"
-            curve.size = layout["font_height_mm"]
-            curve.extrude = ATTRIBUTION_DEPTH_MM
-            text = bpy.data.objects.new(f"TrailPrint Attribution {index}", curve)
-            bpy.context.scene.collection.objects.link(text)
-            cutter_names.append(text.name)
-            # Mirror X so it reads normally from below after a left-to-right flip.
-            text.scale.x = -1.0
-            text.location = (layout["center_x"], y_position,
-                             minimum[2] + ATTRIBUTION_DEPTH_MM / 2.0)
-            cutters.append(text)
-        bpy.context.view_layer.update()
-        widest = max(abs(text.dimensions.x) for text in cutters)
-        fit_scale = min(1.0, layout["max_width_mm"] / widest) if widest else 1.0
-        if layout["font_height_mm"] * fit_scale < 1.8:
-            raise RuntimeError("Plate attribution would be too small to print legibly.")
-        centered_fallback = fit_scale < 1.0
-        if centered_fallback:
-            center_y = (minimum[1] + maximum[1]) / 2.0
-            centered_lines = (center_y - layout["font_height_mm"] * 1.27 / 2.0,
-                              center_y + layout["font_height_mm"] * 1.27 / 2.0)
-            for text, y_position in zip(cutters, centered_lines):
-                text.location.y = y_position
-        for text in cutters:
-            text.scale.x *= fit_scale
-            text.scale.y *= fit_scale
-            bpy.ops.object.select_all(action="DESELECT")
-            text.select_set(True)
-            bpy.context.view_layer.objects.active = text
-            bpy.ops.object.convert(target="MESH")
-            bpy.context.view_layer.update()
-            cutter_height = abs(text.dimensions.z)
-            if cutter_height <= 0:
-                raise RuntimeError("Plate attribution produced empty cutter geometry.")
-            target_height = ATTRIBUTION_DEPTH_MM + 0.1
-            text.scale.z *= target_height / cutter_height
-            bpy.context.view_layer.update()
-            text_bounds = [text.matrix_world @ Vector(corner) for corner in text.bound_box]
-            text.location.z += minimum[2] - 0.1 - min(point.z for point in text_bounds)
-
-        for index, y_position in enumerate(layout["line_y"], 1):
-            bpy.ops.mesh.primitive_cube_add(
-                location=(layout["center_x"], y_position, minimum[2] + 0.05))
-            carrier = bpy.context.object
-            carrier.name = f"TrailPrint Attribution Carrier {index}"
-            carrier.dimensions = (layout["max_width_mm"] * fit_scale, 0.45, 0.3)
-            bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
-            cutters.append(carrier)
-            cutter_names.append(carrier.name)
-
-        bpy.ops.object.select_all(action="DESELECT")
-        for cutter in cutters:
-            cutter.select_set(True)
-        bpy.context.view_layer.objects.active = cutters[0]
-        bpy.ops.object.join()
-        cutter = cutters[0]
-        recalculate_normals(cutter)
-        plate_backup = plate.data.copy()
-        original_mesh = plate.data.copy()
-        before_faces = len(original_mesh.polygons)
-        before_dimensions = tuple(float(value) for value in plate.dimensions)
-        before_volume = mesh_volume(plate)
-
-        def apply_difference(reverse_normals=False):
-            prior = plate.data
-            plate.data = original_mesh.copy()
-            if prior != original_mesh:
-                bpy.data.meshes.remove(prior)
-            if reverse_normals:
-                edit = bmesh.new()
-                edit.from_mesh(plate.data)
-                bmesh.ops.reverse_faces(edit, faces=list(edit.faces))
-                edit.to_mesh(plate.data)
-                edit.free()
-                plate.data.update()
-            modifier = plate.modifiers.new(name="TrailPrint Attribution", type="BOOLEAN")
-            modifier.operation = "DIFFERENCE"
-            modifier.solver = "EXACT"
-            modifier.object = cutter
-            bpy.ops.object.select_all(action="DESELECT")
-            plate.select_set(True)
-            bpy.context.view_layer.objects.active = plate
-            bpy.ops.object.modifier_apply(modifier=modifier.name)
-            bpy.context.view_layer.update()
-            after_dimensions = tuple(float(value) for value in plate.dimensions)
-            after_volume = mesh_volume(plate)
-            return (len(plate.data.polygons) > before_faces
-                    and after_volume < before_volume
-                    and all(after >= before * 0.99 for after, before in zip(
-                        after_dimensions, before_dimensions)))
-
-        applied = apply_difference()
-        if not applied:
-            applied = apply_difference(reverse_normals=True)
-        if not applied:
-            # A failed Boolean can remove the working mesh. Restore a backup
-            # before exporting the separate grey insert.
-            plate.data = plate_backup
-        else:
-            recalculate_normals(plate)
-        result = {
-            "applied": bool(applied), "recess_applied": bool(applied),
-            "mode": "insert",
-            "lines": list(ATTRIBUTION_LINES),
-            "depth_mm": ATTRIBUTION_DEPTH_MM,
-            "font_height_mm": round(layout["font_height_mm"] * fit_scale, 3),
-            "edge_margin_mm": round(layout["edge_margin_mm"], 3),
-            "centered_fallback": centered_fallback,
-            "placement": "text_2_edge",
-            "orientation": "upright_after_side_flip",
-            "_normalization_translation": [
-                -((minimum[0] + maximum[0]) / 2.0),
-                -((minimum[1] + maximum[1]) / 2.0),
-                -minimum[2],
-            ],
-        }
-        cutter.name = "TrailPrint_Attribution"
-        cutter_names.clear()
-        result["_insert_object"] = cutter
-        cutters = []
-        return result
-    finally:
-        for name in cutter_names:
-            cutter = bpy.data.objects.get(name)
-            if cutter is not None:
-                bpy.data.objects.remove(cutter, do_unlink=True)
 
 
 def resolve_text(value, config):
@@ -261,26 +55,6 @@ def configure_water(props, enabled, min_area_mm2=25.0):
         props.toleranceElements = 0.4
     else:
         props.elementMode = "PAINT"
-
-
-def _feature_subset(data, predicate):
-    """Keep tagged OSM features plus the ways/nodes needed for their geometry."""
-    elements = data.get("elements", [])
-    ways = {item.get("id"): item for item in elements if item.get("type") == "way"}
-    nodes = {item.get("id"): item for item in elements if item.get("type") == "node"}
-    selected = [item for item in elements
-                if item.get("type") in {"way", "relation"}
-                and predicate(item.get("tags", {}))]
-    selected_ways = {item.get("id"): item for item in selected if item.get("type") == "way"}
-    for relation in (item for item in selected if item.get("type") == "relation"):
-        for member in relation.get("members", []):
-            if member.get("type") == "way" and member.get("ref") in ways:
-                selected_ways[member["ref"]] = ways[member["ref"]]
-    node_ids = {node_id for way in selected_ways.values()
-                for node_id in way.get("nodes", [])}
-    return {"elements": ([nodes[node_id] for node_id in node_ids if node_id in nodes]
-                          + list(selected_ways.values())
-                          + [item for item in selected if item.get("type") == "relation"])}
 
 
 def lava_osm_query(bounds):
@@ -498,8 +272,8 @@ def main():
                 encoding="utf-8")
         # TrailPrint3D may export OBJ despite an STL request. Re-export exact
         # generated objects as STL, and when a plate exists move the complete
-        # assembly near the origin first so small attribution features survive
-        # binary STL's float precision.
+        # assembly near the origin first so the binary STL retains printable-
+        # scale floating-point precision.
         obj_exports = list(export_dir.glob("*.obj"))
         source_exports = (obj_exports + list(export_dir.glob("*.stl"))
                           if normalization_translation is not None else obj_exports)

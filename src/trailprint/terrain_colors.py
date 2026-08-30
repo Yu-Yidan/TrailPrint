@@ -6,7 +6,6 @@ import os
 import tempfile
 from pathlib import Path
 
-
 METERS_PER_FOOT = 0.3048
 DEFAULT_GREY_START_M = 1200.0
 DEFAULT_WHITE_START_M = 2300.0

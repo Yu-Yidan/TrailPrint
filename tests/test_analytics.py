@@ -5,8 +5,13 @@ import unittest
 from datetime import date, datetime, timezone
 from pathlib import Path
 
-from trailprint.analytics import (AnalyticsStore, PRODUCT_FIELDS,
-                                  PROJECT_FIELDS, RAISED_MAP, STATUS_ROWS)
+from trailprint.analytics import (
+    PRODUCT_FIELDS,
+    PROJECT_FIELDS,
+    RAISED_MAP,
+    STATUS_ROWS,
+    AnalyticsStore,
+)
 
 
 def rows(path):

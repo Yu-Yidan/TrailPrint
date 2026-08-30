@@ -1,7 +1,12 @@
 import unittest
 
-from trailprint.title import (measure_title_width_mm, readable_project_name,
-                              resolve_project_title, title_limit_mm, validate_title_fit)
+from trailprint.title import (
+    measure_title_width_mm,
+    readable_project_name,
+    resolve_project_title,
+    title_limit_mm,
+    validate_title_fit,
+)
 
 
 class TitleTests(unittest.TestCase):

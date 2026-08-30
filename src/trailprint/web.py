@@ -4,28 +4,56 @@ import subprocess
 from dataclasses import asdict, replace
 from pathlib import Path
 
-from flask import Flask, abort, flash, jsonify, redirect, render_template, request, send_from_directory, url_for
+from flask import (
+    Flask,
+    abort,
+    flash,
+    jsonify,
+    redirect,
+    render_template,
+    request,
+    send_from_directory,
+    url_for,
+)
 
-from .blender_bridge import BuildSettings, EXTRA_LABELS, SHAPE_EXTRAS, SHAPE_LABELS
+from .analytics import RAISED_MAP, AnalyticsStore
 from .bambu import BambuSettings, default_filament_mapping, discover_environment
 from .bambu_jobs import BambuJobManager
-from .analytics import AnalyticsStore, RAISED_MAP
-from .config import load_config
-from .gpx import (AUTO_RELIEF_LIMIT_MM, estimate_print_relief_mm,
-                  format_trip_stats, read_gpx_trip_stats, resolve_trip_text)
+from .blender_bridge import EXTRA_LABELS, SHAPE_EXTRAS, SHAPE_LABELS, BuildSettings
+from .gpx import (
+    AUTO_RELIEF_LIMIT_MM,
+    estimate_print_relief_mm,
+    format_trip_stats,
+    read_gpx_trip_stats,
+    resolve_trip_text,
+)
 from .jobs import BuildBusy, BuildManager
 from .location import detect_location, has_location_cache, read_location, save_location
 from .mesh_validation import mesh_role, read_report
 from .naming import canonical_3mf_name, human_name, read_project_meta
-from .terrain_colors import (display_elevation, elevation_metadata,
-                             elevation_to_meters, load_terrain_defaults,
-                             save_terrain_preferences)
 from .osm_colors import load_palette
-from .projects import (FUNNEL_STAGES, create_project, list_deleted_projects, list_projects,
-                       migrate_active_project, migrate_active_projects,
-                       permanently_delete_projects, purge_trash, read_upload,
-                       resolve_project, restore_project,
-                       trash_project, update_production_status)
+from .projects import (
+    FUNNEL_STAGES,
+    create_project,
+    list_deleted_projects,
+    list_projects,
+    migrate_active_project,
+    migrate_active_projects,
+    permanently_delete_projects,
+    purge_trash,
+    read_upload,
+    resolve_project,
+    restore_project,
+    trash_project,
+    update_production_status,
+)
+from .terrain_colors import (
+    display_elevation,
+    elevation_metadata,
+    elevation_to_meters,
+    load_terrain_defaults,
+    save_terrain_preferences,
+)
 from .title import TITLE_LIMITS_MM, resolve_project_title, validate_title_fit
 
 
@@ -38,7 +66,6 @@ def create_app(repo_root: Path = None, build_manager: BuildManager = None,
         MAX_CONTENT_LENGTH=10 * 1024 * 1024 + 64 * 1024,
         REPO_ROOT=root,
         PRINTS_DIR=root / "prints",
-        PRESETS_DIR=root / "presets",
         TRASH_DIR=root / ".trailprint-trash",
         ANALYTICS_DIR=root / "data/analytics",
     )
@@ -123,8 +150,7 @@ def create_app(repo_root: Path = None, build_manager: BuildManager = None,
                 raise ValueError("Choose a GPX file.")
             data = read_upload(upload.stream, upload.filename or "")
             analytics.next_project_id()
-            project = create_project(
-                app.config["PRINTS_DIR"], app.config["PRESETS_DIR"], name, data)
+            project = create_project(app.config["PRINTS_DIR"], name, data)
             analytics.register_project(
                 project, name, is_test=request.form.get("is_test") == "on")
             project = migrate_active_project(project)
@@ -190,19 +216,24 @@ def create_app(repo_root: Path = None, build_manager: BuildManager = None,
             limit_elevation = (expected_relief is not None
                                and expected_relief > AUTO_RELIEF_LIMIT_MM)
             settings = BuildSettings.validated(
-                request.form.get("shape", "HEXAGON"), request.form.get("shape_extra", "OUTER TEXT"),
-                request.form.get("resolution", 8), request.form.get("plate_title", "{name}"),
-                request.form.get("plate_text_1", "{length}"),
-                request.form.get("plate_text_2", "{date}"),
-                request.form.get("plate_text_3", "{duration}"),
-                request.form.get("plate_text_4", "{country}"),
-                request.form.get("plate_text_5", "{state}"),
-                request.form.get("x_offset", 0), request.form.get("y_offset", 0),
-                limit_elevation,
-                request.form.get("city", ""), request.form.get("state", ""),
-                request.form.get("country", ""),
-                "METRIC" if request.form.get("use_metric") == "on" else "IMPERIAL",
-                request.form.get("plate_recess_depth", 1.5))
+                shape=request.form.get("shape", "HEXAGON"),
+                shape_extra=request.form.get("shape_extra", "OUTER TEXT"),
+                resolution=request.form.get("resolution", 8),
+                plate_title=request.form.get("plate_title", "{name}"),
+                plate_text_1=request.form.get("plate_text_1", "{length}"),
+                plate_text_2=request.form.get("plate_text_2", "{date}"),
+                plate_text_3=request.form.get("plate_text_3", "{duration}"),
+                plate_text_4=request.form.get("plate_text_4", "{country}"),
+                plate_text_5=request.form.get("plate_text_5", "{state}"),
+                x_offset=request.form.get("x_offset", 0),
+                y_offset=request.form.get("y_offset", 0),
+                fixed_elevation_scale=limit_elevation,
+                city=request.form.get("city", ""),
+                state=request.form.get("state", ""),
+                country=request.form.get("country", ""),
+                unit_system=("METRIC" if request.form.get("use_metric") == "on"
+                             else "IMPERIAL"),
+                plate_recess_depth=request.form.get("plate_recess_depth", 1.5))
             stats = read_gpx_trip_stats(project / "route.gpx")
             replacements = {"name": human_name(project), "city": settings.city,
                             "state": settings.state, "country": settings.country}
@@ -359,16 +390,24 @@ def create_app(repo_root: Path = None, build_manager: BuildManager = None,
             terrain_mode = request.form.get("terrain_mode", "manual")
             palette = load_palette(project) if terrain_mode == "osm" else {}
             settings = BambuSettings.validated(
-                len(environment.filaments), request.form.get("trail_filament"),
-                request.form.get("land_filament"), request.form.get("mountain_filament"),
-                request.form.get("summit_filament"), request.form.get("plate_filament"),
-                request.form.get("text_filament"), request.form.get("water_filament", 1),
-                grey_start_m, white_start_m,
-                request.form.get("black_filament", 1),
-                request.form.get("green_filament", request.form.get("land_filament", 1)),
-                request.form.get("grey_filament", request.form.get("mountain_filament", 1)),
-                request.form.get("white_filament", request.form.get("summit_filament", 1)),
-                terrain_mode, palette.get("bands", ()))
+                len(environment.filaments),
+                trail=request.form.get("trail_filament"),
+                land=request.form.get("land_filament"),
+                mountain=request.form.get("mountain_filament"),
+                summit=request.form.get("summit_filament"),
+                plate=request.form.get("plate_filament"),
+                text=request.form.get("text_filament"),
+                water=request.form.get("water_filament", 1),
+                grey_start_m=grey_start_m, white_start_m=white_start_m,
+                black=request.form.get("black_filament", 1),
+                green=request.form.get(
+                    "green_filament", request.form.get("land_filament", 1)),
+                grey=request.form.get(
+                    "grey_filament", request.form.get("mountain_filament", 1)),
+                white=request.form.get(
+                    "white_filament", request.form.get("summit_filament", 1)),
+                terrain_mode=terrain_mode,
+                automatic_bands=palette.get("bands", ()))
             color_preferences = {
                 **settings.terrain_filaments(),
                 "grey_start_m": grey_start_m,

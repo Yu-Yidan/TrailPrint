@@ -13,7 +13,6 @@ from typing import Dict
 
 from .gpx import read_gpx
 
-
 LOCATION_FILE = "location.json"
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/reverse"
 USER_AGENT = "TrailPrint/0.1 (https://github.com/Yu-Yidan/TrailPrint)"

@@ -7,7 +7,6 @@ import tempfile
 from collections import Counter
 from pathlib import Path
 
-
 MAX_TRANSITIONS = 3
 TRANSITION_PENALTY = 0.08
 TERRAIN_ROLES = ("black", "grey", "green", "white")

@@ -2,11 +2,24 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from trailprint.gpx import (estimate_print_relief_mm, format_trip_stats,
-                            read_gpx_trip_stats)
+from trailprint.gpx import (
+    estimate_print_relief_mm,
+    format_trip_stats,
+    read_gpx,
+    read_gpx_trip_stats,
+)
 
 
 class GpxStatsTests(unittest.TestCase):
+    def test_gpx_requires_two_points(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "short.gpx"
+            path.write_text(
+                '<gpx><trk><trkseg><trkpt lat="1" lon="2"/></trkseg></trk></gpx>',
+                encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "at least two"):
+                read_gpx(path)
+
     def test_print_relief_estimate_uses_terrain_scale(self):
         with tempfile.TemporaryDirectory() as temp:
             route = Path(temp) / "route.gpx"
