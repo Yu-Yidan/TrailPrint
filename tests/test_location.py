@@ -6,7 +6,6 @@ from unittest.mock import patch
 
 from trailprint.location import detect_location, has_location_cache, read_location, save_location
 
-
 GPX = b'''<gpx><trk><trkseg>
 <trkpt lat="19.4200" lon="-155.2880"><ele>1000</ele></trkpt>
 <trkpt lat="19.4210" lon="-155.2870"><ele>1001</ele></trkpt>

@@ -1,14 +1,21 @@
 import json
 import tempfile
 import unittest
-import zipfile
 import xml.etree.ElementTree as ET
+import zipfile
 from pathlib import Path
 
-from trailprint.bambu import (BambuEnvironment, BambuSettings, _enforce_project_settings,
-                              ONE_PLATE_LAYOUT, _terrain_model_index, assemble_manifest,
-                              default_filament_mapping, estimate_water_layer_changes,
-                              validate_3mf)
+from trailprint.bambu import (
+    ONE_PLATE_LAYOUT,
+    BambuEnvironment,
+    BambuSettings,
+    _enforce_project_settings,
+    _terrain_model_index,
+    assemble_manifest,
+    default_filament_mapping,
+    estimate_water_layer_changes,
+    validate_3mf,
+)
 
 
 class BambuProjectTests(unittest.TestCase):

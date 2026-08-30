@@ -34,8 +34,8 @@ Start the project dashboard and open <http://127.0.0.1:5000>:
 
 The interface lists existing projects, accepts GPX files by drag-and-drop, and
 can run TrailPrint3D from a project detail page. The reduced interface exposes
-shape, shape extras, plate text, terrain offsets, water, and resolution while
-always enabling single-color trail mode. Terrain expected to exceed 15 mm of
+shape, shape extras, plate text, terrain offsets, and resolution while always
+enabling water and single-color trail mode. Terrain expected to exceed 15 mm of
 printed relief is automatically limited to 15 mm. Projects can be
 sorted by their zero-padded four-digit filesystem ID; analytics retain the ID
 as an integer, and the prefix is omitted from headings and printable titles.
@@ -95,7 +95,7 @@ analytics status facts. Preview colors use green terrain, red trail, blue water,
 black plate, and white text; STL files themselves remain colorless. Builds include
 lakes, major rivers, and coastal sea by default as recessed inserts. Water
 regions smaller than 25 mm² on the model are filtered out before
-their matching recesses are made. Every generated plate includes a shallow,
+their matching recesses are made.
 
 From the validated preview, TrailPrint can also create a reviewable Bambu Studio
 3MF using the printer, process, filaments, and colors currently configured in
@@ -116,3 +116,14 @@ evidence coverage, fitted bands, and confidence, and still offers the original
 manual green/grey/white elevation mode. An Overpass failure never blocks STL
 output. Plate defaults to black filament slot 1; Trail and Text retain
 color-matched defaults.
+
+## Development checks
+
+Install the development tools and run the same checks used by continuous
+integration:
+
+```sh
+.venv/bin/pip install -e '.[dev]'
+.venv/bin/ruff check .
+.venv/bin/pytest -q
+```

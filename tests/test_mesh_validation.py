@@ -28,7 +28,8 @@ class MeshValidationTests(unittest.TestCase):
             self.assertTrue(validate_stls([terrain, trail], "route")["valid"])
 
             left = trimesh.creation.box(extents=[20, 3, 2])
-            right = left.copy(); right.apply_translation([40, 0, 0])
+            right = left.copy()
+            right.apply_translation([40, 0, 0])
             trimesh.util.concatenate([left, right]).export(trail)
             report = validate_stls([terrain, trail], "route")
             self.assertFalse(report["valid"])

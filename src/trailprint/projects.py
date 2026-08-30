@@ -12,11 +12,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import BinaryIO, List, Optional
 
-from .config import load_config
 from .gpx import read_gpx
-from .naming import (META_FILE, STORAGE_PATTERN, canonical_3mf_name, human_name,
-                     logical_slug, read_project_meta, storage_name)
-
+from .naming import canonical_3mf_name, human_name, logical_slug, read_project_meta, storage_name
 
 MAX_GPX_BYTES = 10 * 1024 * 1024
 TRASH_PATTERN = re.compile(r"^(?P<slug>[a-z0-9][a-z0-9-]*)--(?P<stamp>\d{8}T\d{6}Z)--[a-f0-9]{8}$")
@@ -166,7 +163,7 @@ def read_upload(stream: BinaryIO, filename: str, limit: int = MAX_GPX_BYTES) -> 
     return data
 
 
-def create_project(prints_dir: Path, presets_dir: Path, name: str, gpx_data: bytes) -> Path:
+def create_project(prints_dir: Path, name: str, gpx_data: bytes) -> Path:
     slug = slugify(name)
     prints_dir.mkdir(parents=True, exist_ok=True)
     destination = resolve_project(prints_dir, slug)
@@ -178,14 +175,12 @@ def create_project(prints_dir: Path, presets_dir: Path, name: str, gpx_data: byt
         route = temporary / "route.gpx"
         route.write_bytes(gpx_data)
         read_gpx(route)
-        (temporary / "print.yaml").write_text("preset: standard\n", encoding="utf-8")
         (temporary / "README.md").write_text(
             f"# {name.strip()}\n\nCreated with the TrailPrint web interface.\n", encoding="utf-8")
         (temporary / "build").mkdir()
         (temporary / "build" / ".gitkeep").touch()
         (temporary / "deliverables").mkdir()
         (temporary / "deliverables" / ".gitkeep").touch()
-        load_config(temporary, presets_dir)
         os.rename(temporary, destination)
     except Exception:
         shutil.rmtree(temporary, ignore_errors=True)

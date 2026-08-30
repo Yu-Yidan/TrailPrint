@@ -3,8 +3,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from trailprint.osm_colors import (analyze_project, load_palette,
-                                   optimize_elevation_bands, print_bands)
+from trailprint.osm_colors import (
+    analyze_project,
+    load_palette,
+    optimize_elevation_bands,
+    print_bands,
+)
 
 
 class OsmColorTests(unittest.TestCase):

@@ -6,7 +6,6 @@ from typing import Optional
 
 from PIL import ImageFont
 
-
 FONT_PATH = Path("/System/Library/Fonts/Supplemental/Arial Black.ttf")
 TEXT_HEIGHT_MM = 5.0
 TITLE_LIMITS_MM = {

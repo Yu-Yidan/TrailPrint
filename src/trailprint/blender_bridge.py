@@ -3,8 +3,8 @@
 import json
 import math
 import os
-import signal
 import shutil
+import signal
 import subprocess
 import tempfile
 import time
@@ -13,18 +13,21 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-import trimesh
-
-
-class BuildCancelled(Exception):
-    """Raised after a requested Blender build cancellation is cleaned up."""
-
-from .gpx import (AUTO_RELIEF_LIMIT_MM, format_trip_stats, gpx_center_latitude,
-                  read_gpx_trip_date, read_gpx_trip_stats)
+from .gpx import (
+    AUTO_RELIEF_LIMIT_MM,
+    format_trip_stats,
+    gpx_center_latitude,
+    read_gpx_trip_date,
+    read_gpx_trip_stats,
+)
 from .mesh_validation import align_core_to_terrain, mesh_role, validate_stls, write_report
 from .naming import deliverable_prefix, human_name
 from .osm_colors import analyze_project
 from .title import resolve_project_title, validate_title_fit
+
+
+class BuildCancelled(Exception):
+    """Raised after a requested Blender build cancellation is cleaned up."""
 
 
 SHAPE_EXTRAS: Dict[str, Tuple[str, ...]] = {
@@ -113,9 +116,15 @@ class BuildSettings:
             raise ValueError("Plate recess depth must be from 0 to 4 mm.")
         if not has_separate_plate(shape, shape_extra):
             plate_recess_depth = 0.0
-        return cls(shape, shape_extra, resolution, *text_values, x_offset, y_offset,
-                   bool(fixed_elevation_scale), *locations, unit_system,
-                   plate_recess_depth)
+        return cls(
+            shape=shape, shape_extra=shape_extra, resolution=resolution,
+            plate_title=text_values[0], plate_text_1=text_values[1],
+            plate_text_2=text_values[2], plate_text_3=text_values[3],
+            plate_text_4=text_values[4], plate_text_5=text_values[5],
+            x_offset=x_offset, y_offset=y_offset,
+            fixed_elevation_scale=bool(fixed_elevation_scale),
+            city=locations[0], state=locations[1], country=locations[2],
+            unit_system=unit_system, plate_recess_depth=plate_recess_depth)
 
 
 def has_separate_plate(shape: str, shape_extra: str) -> bool:
@@ -306,12 +315,16 @@ def run_blender_build(project: Path, settings: BuildSettings, blender: Optional[
     resolved_title = resolve_project_title(settings.plate_title, human_name(project))
     validate_title_fit(resolved_title, settings.shape, settings.shape_extra)
     settings = BuildSettings.validated(
-        settings.shape, settings.shape_extra, settings.resolution,
-        resolved_title, settings.plate_text_1, settings.plate_text_2,
-        settings.plate_text_3, settings.plate_text_4, settings.plate_text_5,
-        settings.x_offset, settings.y_offset, settings.fixed_elevation_scale,
-        settings.city, settings.state, settings.country, settings.unit_system,
-        settings.plate_recess_depth)
+        shape=settings.shape, shape_extra=settings.shape_extra,
+        resolution=settings.resolution, plate_title=resolved_title,
+        plate_text_1=settings.plate_text_1, plate_text_2=settings.plate_text_2,
+        plate_text_3=settings.plate_text_3, plate_text_4=settings.plate_text_4,
+        plate_text_5=settings.plate_text_5, x_offset=settings.x_offset,
+        y_offset=settings.y_offset,
+        fixed_elevation_scale=settings.fixed_elevation_scale,
+        city=settings.city, state=settings.state, country=settings.country,
+        unit_system=settings.unit_system,
+        plate_recess_depth=settings.plate_recess_depth)
     blender_path = find_blender(blender)
     build_dir = project / "build"
     build_dir.mkdir(parents=True, exist_ok=True)
@@ -368,7 +381,7 @@ def run_blender_build(project: Path, settings: BuildSettings, blender: Optional[
             shutil.rmtree(attempt_root, ignore_errors=True)
             PROGRESS_FILE.unlink(missing_ok=True)
             raise
-        except subprocess.TimeoutExpired as exc:
+        except subprocess.TimeoutExpired:
             logs.append("\n[no Shape Extras fallback]\nTimed out\n")
             fallback_validation = {"valid": False, "files": [], "corrections": [],
                                    "errors": ["Fallback build timed out."]}

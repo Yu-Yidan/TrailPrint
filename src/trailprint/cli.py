@@ -4,23 +4,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from .blender_bridge import BuildSettings, SHAPE_EXTRAS, run_blender_build
-from .config import load_config
-from .geometry import ribbon_mesh
-from .gpx import project, read_gpx
-from .mesh import write_stl
-
-
-def build_ribbon(print_dir: Path, presets_dir: Path) -> Path:
-    print_dir = print_dir.resolve()
-    config = load_config(print_dir, presets_dir.resolve())
-    points = project(read_gpx(print_dir / "route.gpx"), float(config["max_size_mm"]),
-                     float(config["elevation_scale"]))
-    vertices, faces = ribbon_mesh(points, float(config["track_width_mm"]),
-                                  float(config["base_thickness_mm"]))
-    output = print_dir / "deliverables" / f"{print_dir.name}.stl"
-    write_stl(output, vertices, faces, print_dir.name)
-    return output
+from .blender_bridge import SHAPE_EXTRAS, BuildSettings, run_blender_build
 
 
 def main(argv=None) -> int:

@@ -4,7 +4,6 @@ import json
 import re
 from pathlib import Path
 
-
 ID_WIDTH = 4
 MAX_PROJECT_ID = 10 ** ID_WIDTH - 1
 STORAGE_PATTERN = re.compile(r"^(?P<id>\d{4})-(?P<slug>[a-z0-9][a-z0-9-]*)$")

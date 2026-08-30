@@ -194,23 +194,3 @@ def gpx_center_latitude(path: Path) -> float:
     except ValueError:
         return 0.0
     return (min(point[0] for point in points) + max(point[0] for point in points)) / 2
-
-
-def project(points: List[Point3], max_size_mm: float, elevation_scale: float) -> List[Point3]:
-    """Project latitude/longitude locally, scale to millimetres, and center."""
-    mean_lat = sum(p[0] for p in points) / len(points)
-    lat_scale = 111_320.0
-    lon_scale = lat_scale * math.cos(math.radians(mean_lat))
-    raw = [(p[1] * lon_scale, p[0] * lat_scale, p[2]) for p in points]
-    min_x, max_x = min(p[0] for p in raw), max(p[0] for p in raw)
-    min_y, max_y = min(p[1] for p in raw), max(p[1] for p in raw)
-    span = max(max_x - min_x, max_y - min_y)
-    if span <= 0:
-        raise ValueError("GPX track has no geographic extent")
-    scale = max_size_mm / span
-    center_x, center_y = (min_x + max_x) / 2, (min_y + max_y) / 2
-    min_ele = min(p[2] for p in raw)
-    return [
-        ((x - center_x) * scale, (y - center_y) * scale, (z - min_ele) * elevation_scale)
-        for x, y, z in raw
-    ]
