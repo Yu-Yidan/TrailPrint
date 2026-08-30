@@ -121,9 +121,8 @@ the trail is dominated by one connected route rather than floating fragments.
 Small non-manifold or degenerate artifacts are reported as warnings because
 they can occur in otherwise usable TrailPrint3D output.
 
-Whenever the selected layout creates a plate, TrailPrint engraves
+Whenever the selected layout creates a plate, TrailPrint adds a one-layer grey
 `© OpenStreetMap contributors` and `Terrain: © Mapterhorn` into its lower
-underside. The fixed attribution is 0.3 mm deep and oriented to read normally
 after flipping the plate left-to-right.
 
 Files with an obviously incorrect export origin are centered in X/Y and moved

@@ -12,25 +12,13 @@ import trimesh
 from trailprint.blender_bridge import (BuildCancelled, BuildSettings, _failure_detail,
                                        _run_command, run_blender_build)
 from trailprint.blender_worker import (classify_osm_samples, configure_water,
-                                       attribution_layout, fetch_lava_osm,
+                                       fetch_lava_osm,
                                        fixed_elevation_multiplier, lava_osm_query, resolve_text,
                                        with_plate_clearance)
 from trailprint.gpx import read_gpx_trip_date
 
 
 class SettingsTests(unittest.TestCase):
-    def test_attribution_layout_is_centered_near_plate_bottom(self):
-        layout = attribution_layout(((-60, -52, 0), (60, 52, 5)))
-        self.assertEqual(layout["center_x"], 0)
-        self.assertEqual(layout["font_height_mm"], 3.0)
-        self.assertEqual(layout["max_width_mm"], 72.0)
-        self.assertGreater(layout["line_y"][0], layout["line_y"][1])
-        self.assertLess(layout["line_y"][0], -35)
-
-    def test_attribution_layout_rejects_tiny_plate(self):
-        with self.assertRaisesRegex(ValueError, "too small"):
-            attribution_layout(((0, 0, 0), (20, 20, 2)))
-
     def test_fixed_elevation_target_compensates_for_latitude(self):
         self.assertAlmostEqual(fixed_elevation_multiplier(15, 0), 1.5)
         self.assertAlmostEqual(fixed_elevation_multiplier(15, 60), 0.75)
@@ -228,7 +216,9 @@ class SettingsTests(unittest.TestCase):
                 return subprocess.CompletedProcess(command, 0, "ok", "")
 
             with patch("trailprint.blender_bridge.subprocess.run", side_effect=fake_run):
-                outputs = run_blender_build(project, BuildSettings(), blender=blender)
+                outputs = run_blender_build(
+                    project, BuildSettings(),
+                    blender=blender)
             self.assertEqual({path.name for path in outputs}, {"project.stl", "project_Trail.stl"})
             self.assertFalse((project / "deliverables/old.stl").exists())
             self.assertTrue((project / "deliverables/keep.3mf").exists())
@@ -283,12 +273,6 @@ class SettingsTests(unittest.TestCase):
                     right = left.copy(); right.apply_translation([40, 0, 0])
                     trail = trimesh.util.concatenate([left, right])
                     trimesh.creation.box(extents=[110, 90, 2]).export(output / "project_Plate.stl")
-                    (output / "plate-attribution.json").write_text(json.dumps({
-                        "applied": True,
-                        "lines": ["© OpenStreetMap contributors",
-                                  "Terrain: © Mapterhorn"],
-                        "depth_mm": 0.3,
-                    }), encoding="utf-8")
                 trail.export(output / "project_Trail.stl")
                 return subprocess.CompletedProcess(command, 0, "ok", "")
 
@@ -302,8 +286,6 @@ class SettingsTests(unittest.TestCase):
             report = json.loads((project / "build/validation.json").read_text(encoding="utf-8"))
             self.assertTrue(report["fallback_used"])
             self.assertTrue(report["valid"])
-            self.assertTrue(report["plate_attribution"]["applied"])
-            self.assertEqual(report["plate_attribution"]["depth_mm"], 0.3)
             self.assertTrue(report["preview"]["valid"])
             self.assertEqual(report["fallback_alignment"]["translation_mm"], [0.0, 0.0, 5.0])
             terrain = trimesh.load(project / "deliverables/project.stl", force="mesh")

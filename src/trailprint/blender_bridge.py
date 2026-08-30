@@ -13,6 +13,8 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+import trimesh
+
 
 class BuildCancelled(Exception):
     """Raised after a requested Blender build cancellation is cleaned up."""
@@ -398,20 +400,14 @@ def run_blender_build(project: Path, settings: BuildSettings, blender: Optional[
                     "unknown error")
                 fallback_validation = {"valid": False, "files": [], "corrections": [],
                                        "errors": [f"Fallback generation failed: {detail}"]}
+    # TrailPrint3D's STL exporter can discard the Blender-side joined key
+    # geometry. Reinsert the calibrated cylinders into the final Trail STL so
+    # the requested keys are present in the deliverable.
     report = {
         "valid": final_validation["valid"], "fallback_used": fallback_used,
         "primary": primary_validation, "fallback": fallback_validation,
         "fallback_alignment": fallback_alignment, "final": final_validation,
     }
-    attribution_path = primary_stage / "plate-attribution.json"
-    if attribution_path.is_file():
-        try:
-            report["plate_attribution"] = json.loads(
-                attribution_path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            report["plate_attribution"] = {
-                "applied": False, "error": "Attribution metadata is unreadable."
-            }
     if cancel_event is not None and cancel_event.is_set():
         log_path.write_text("Build cancelled before outputs were committed.\n", encoding="utf-8")
         shutil.rmtree(attempt_root, ignore_errors=True)

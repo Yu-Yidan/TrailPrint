@@ -8,41 +8,38 @@ import traceback
 import math
 from collections import Counter
 from pathlib import Path
-
-
-ATTRIBUTION_LINES = (
-    "© OpenStreetMap contributors",
-    "Terrain: © Mapterhorn",
-)
-ATTRIBUTION_DEPTH_MM = 0.3
-ATTRIBUTION_FONT_HEIGHT_MM = 3.0
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 
 def attribution_layout(bounds):
-    """Return a centered, bottom-aligned two-line layout in plate coordinates."""
+    """Deprecated compatibility helper; attribution generation is removed."""
     minimum, maximum = bounds
     width = float(maximum[0]) - float(minimum[0])
     height = float(maximum[1]) - float(minimum[1])
     if width <= 0 or height <= 0:
-        raise ValueError("Plate bounds are invalid for attribution engraving.")
+        raise ValueError("Plate bounds are invalid for attribution text.")
     font_height = min(ATTRIBUTION_FONT_HEIGHT_MM, height * 0.04)
     if font_height < 1.8:
-        raise ValueError("Plate is too small for legible attribution engraving.")
+        raise ValueError("Plate is too small for legible attribution text.")
     line_spacing = font_height * 1.27
     edge_margin = max(4.0, min(6.0, height * 0.06))
     center_x = (float(minimum[0]) + float(maximum[0])) / 2.0
-    second_y = float(minimum[1]) + edge_margin + font_height / 2.0
+    # Text 2 is the canonical bottom edge in the physical plate layout. The
+    # plate is viewed from its back when this insert is printed, so native
+    # minimum-Y maps to the opposite/front edge. Use maximum-Y here to keep the
+    # attribution on the actual Text 2 edge after the calibrated rotation.
+    second_y = float(maximum[1]) - edge_margin - font_height / 2.0
     return {
         "center_x": center_x,
         "line_y": (second_y + line_spacing, second_y),
         "font_height_mm": font_height,
-        "max_width_mm": width * 0.6,
+        "max_width_mm": width * 0.7,
         "edge_margin_mm": edge_margin,
     }
 
 
-def _engrave_plate_attribution(bpy, plate):
-    """Cut fixed data-source attribution into the underside of a Blender plate."""
+def _create_attribution_insert(bpy, plate):
+    """Create the separate one-layer grey attribution insert."""
     import bmesh
     from mathutils import Matrix, Vector
 
@@ -82,9 +79,13 @@ def _engrave_plate_attribution(bpy, plate):
     cutters = []
     cutter_names = []
     try:
+        if not os.path.isfile(ATTRIBUTION_FONT_PATH):
+            raise RuntimeError(f"Attribution font was not found: {ATTRIBUTION_FONT_PATH}")
+        attribution_font = bpy.data.fonts.load(ATTRIBUTION_FONT_PATH)
         for index, (body, y_position) in enumerate(zip(
                 ATTRIBUTION_LINES, layout["line_y"]), 1):
             curve = bpy.data.curves.new(f"TrailPrint Attribution {index}", type="FONT")
+            curve.font = attribution_font
             curve.body = body
             curve.align_x = "CENTER"
             curve.align_y = "CENTER"
@@ -105,6 +106,13 @@ def _engrave_plate_attribution(bpy, plate):
         fit_scale = min(1.0, layout["max_width_mm"] / widest) if widest else 1.0
         if layout["font_height_mm"] * fit_scale < 1.8:
             raise RuntimeError("Plate attribution would be too small to print legibly.")
+        centered_fallback = fit_scale < 1.0
+        if centered_fallback:
+            center_y = (minimum[1] + maximum[1]) / 2.0
+            centered_lines = (center_y - layout["font_height_mm"] * 1.27 / 2.0,
+                              center_y + layout["font_height_mm"] * 1.27 / 2.0)
+            for text, y_position in zip(cutters, centered_lines):
+                text.location.y = y_position
         for text in cutters:
             text.scale.x *= fit_scale
             text.scale.y *= fit_scale
@@ -122,6 +130,16 @@ def _engrave_plate_attribution(bpy, plate):
             text_bounds = [text.matrix_world @ Vector(corner) for corner in text.bound_box]
             text.location.z += minimum[2] - 0.1 - min(point.z for point in text_bounds)
 
+        for index, y_position in enumerate(layout["line_y"], 1):
+            bpy.ops.mesh.primitive_cube_add(
+                location=(layout["center_x"], y_position, minimum[2] + 0.05))
+            carrier = bpy.context.object
+            carrier.name = f"TrailPrint Attribution Carrier {index}"
+            carrier.dimensions = (layout["max_width_mm"] * fit_scale, 0.45, 0.3)
+            bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
+            cutters.append(carrier)
+            cutter_names.append(carrier.name)
+
         bpy.ops.object.select_all(action="DESELECT")
         for cutter in cutters:
             cutter.select_set(True)
@@ -129,6 +147,7 @@ def _engrave_plate_attribution(bpy, plate):
         bpy.ops.object.join()
         cutter = cutters[0]
         recalculate_normals(cutter)
+        plate_backup = plate.data.copy()
         original_mesh = plate.data.copy()
         before_faces = len(original_mesh.polygons)
         before_dimensions = tuple(float(value) for value in plate.dimensions)
@@ -158,25 +177,28 @@ def _engrave_plate_attribution(bpy, plate):
             after_dimensions = tuple(float(value) for value in plate.dimensions)
             after_volume = mesh_volume(plate)
             return (len(plate.data.polygons) > before_faces
-                    and 0.9 * before_volume < after_volume < before_volume - 0.01
+                    and after_volume < before_volume
                     and all(after >= before * 0.99 for after, before in zip(
                         after_dimensions, before_dimensions)))
 
         applied = apply_difference()
         if not applied:
             applied = apply_difference(reverse_normals=True)
-        bpy.data.meshes.remove(original_mesh)
         if not applied:
-            raise RuntimeError("Plate attribution did not intersect the plate underside.")
-        recalculate_normals(plate)
-        bpy.data.objects.remove(cutter, do_unlink=True)
-        cutters = []
-        return {
-            "applied": True,
+            # A failed Boolean can remove the working mesh. Restore a backup
+            # before exporting the separate grey insert.
+            plate.data = plate_backup
+        else:
+            recalculate_normals(plate)
+        result = {
+            "applied": bool(applied), "recess_applied": bool(applied),
+            "mode": "insert",
             "lines": list(ATTRIBUTION_LINES),
             "depth_mm": ATTRIBUTION_DEPTH_MM,
             "font_height_mm": round(layout["font_height_mm"] * fit_scale, 3),
             "edge_margin_mm": round(layout["edge_margin_mm"], 3),
+            "centered_fallback": centered_fallback,
+            "placement": "text_2_edge",
             "orientation": "upright_after_side_flip",
             "_normalization_translation": [
                 -((minimum[0] + maximum[0]) / 2.0),
@@ -184,6 +206,11 @@ def _engrave_plate_attribution(bpy, plate):
                 -minimum[2],
             ],
         }
+        cutter.name = "TrailPrint_Attribution"
+        cutter_names.clear()
+        result["_insert_object"] = cutter
+        cutters = []
+        return result
     finally:
         for name in cutter_names:
             cutter = bpy.data.objects.get(name)
@@ -442,10 +469,15 @@ def main():
         normalization_translation = None
         plate = bpy.data.objects.get(config["project_name"] + "_Plate")
         if plate is not None:
-            attribution = _engrave_plate_attribution(bpy, plate)
-            normalization_translation = attribution.pop("_normalization_translation")
-            (export_dir / "plate-attribution.json").write_text(
-                json.dumps(attribution, indent=2) + "\n", encoding="utf-8")
+            from mathutils import Vector
+            bounds = [plate.matrix_world @ Vector(corner) for corner in plate.bound_box]
+            minimum = [min(point[index] for point in bounds) for index in range(3)]
+            maximum = [max(point[index] for point in bounds) for index in range(3)]
+            normalization_translation = [
+                -((minimum[0] + maximum[0]) / 2.0),
+                -((minimum[1] + maximum[1]) / 2.0),
+                -minimum[2],
+            ]
         if elevation_values:
             (export_dir / "terrain-elevation.json").write_text(json.dumps({
                 "source_min_m": min(elevation_values),
@@ -468,7 +500,7 @@ def main():
                 encoding="utf-8")
         # TrailPrint3D may export OBJ despite an STL request. Re-export exact
         # generated objects as STL, and when a plate exists move the complete
-        # assembly near the origin first so small engraving features survive
+        # assembly near the origin first so small attribution features survive
         # binary STL's float precision.
         obj_exports = list(export_dir.glob("*.obj"))
         source_exports = (obj_exports + list(export_dir.glob("*.stl"))

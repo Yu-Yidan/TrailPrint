@@ -139,6 +139,9 @@ class BambuProjectTests(unittest.TestCase):
             self.assertEqual(final["enable_prime_tower"], "0")
             self.assertEqual(final["prime_tower_enable_framework"], "0")
             self.assertEqual(final["enable_tower_interface_features"], "0")
+            self.assertEqual(final["first_layer_print_sequence"], ["0"])
+            self.assertEqual(final["other_layers_print_sequence"], ["0"])
+            self.assertEqual(final["other_layers_print_sequence_nums"], "0")
             self.assertEqual([item["filament"] for item in report["terrain_bands"]], [1, 2])
             self.assertEqual([item["layer_height"] for item in report["terrain_bands"]],
                              [0.2, 0.2])
