@@ -282,7 +282,6 @@ class WebTests(unittest.TestCase):
             "plate_text_2": "Gain {elevation}", "plate_text_3": "{duration}",
             "plate_text_4": "Hawaii", "plate_text_5": "2026",
             "x_offset": "1.25", "y_offset": "-0.5", "fixed_elevation_scale": "on",
-            "include_water": "on",
             "city": "Volcano", "state": "Hawaii", "country": "United States"})
         self.assertEqual(response.status_code, 302)
         settings = self.build_manager.started.settings
@@ -294,7 +293,6 @@ class WebTests(unittest.TestCase):
         self.assertEqual(settings.plate_text_5, "2026")
         self.assertEqual((settings.x_offset, settings.y_offset), (1.25, -0.5))
         self.assertFalse(settings.fixed_elevation_scale)
-        self.assertTrue(settings.include_water)
         self.assertEqual(settings.plate_recess_depth, 1.5)
         self.assertEqual((settings.city, settings.state, settings.country),
                          ("Volcano", "Hawaii", "United States"))
@@ -324,9 +322,7 @@ class WebTests(unittest.TestCase):
         self.assertNotIn(b"Trail location", page)
         self.assertIn(b'id="use-metric" type="checkbox" name="use_metric"', page)
         self.assertIn(b'name="plate_recess_depth" type="number" value="1.5"', page)
-        self.assertIn(b'name="include_water" checked', page)
-        self.assertIn(b"lakes, major rivers, and sea", page)
-        self.assertIn(b"smaller than 25 mm", page)
+        self.assertNotIn(b'name="include_water"', page)
         self.assertNotIn(b'name="include_ocean"', page)
         self.assertNotIn(b'name="fixed_elevation_scale"', page)
         self.assertIn(b"Natural elevation scale retained", page)
@@ -343,7 +339,7 @@ class WebTests(unittest.TestCase):
 
         self.client.post("/projects/tall/build", data={
             "shape": "HEXAGON", "shape_extra": "NONE", "resolution": "8",
-            "plate_title": "Tall", "include_water": "on"})
+            "plate_title": "Tall"})
 
         self.assertTrue(self.build_manager.started.settings.fixed_elevation_scale)
 
@@ -503,7 +499,7 @@ class WebTests(unittest.TestCase):
         self.assertEqual(settings.automatic_bands, tuple(bands))
         self.assertEqual(settings.by_role()["terrain"], 4)
 
-    def test_water_build_surfaces_fourth_plate_and_blue_filament(self):
+    def test_water_build_uses_combined_terrain_object_and_blue_filament(self):
         project = create_project(self.root / "prints", self.root / "presets", "Wet Route", GPX)
         for name in ("wet-route.stl", "wet-route_Trail.stl", "wet-route_Plate.stl",
                      "wet-route_Text.stl", "wet-route_WATER.stl"):
@@ -518,8 +514,9 @@ class WebTests(unittest.TestCase):
         page = self.client.get("/projects/wet-route/preview")
 
         self.assertIn(b"One-plate print setup", page.data)
-        self.assertIn(b"One-plate export unavailable", page.data)
-        self.assertNotIn(b'name="water_filament"', page.data)
+        self.assertIn(b"Terrain + Water", page.data)
+        self.assertNotIn(b"One-plate export unavailable", page.data)
+        self.assertIn(b'name="water_filament"', page.data)
         self.assertNotIn(b'name="water_placement"', page.data)
 
         response = self.client.post("/projects/wet-route/bambu", data={
@@ -528,12 +525,11 @@ class WebTests(unittest.TestCase):
             "summit_filament": "2", "plate_filament": "1",
             "text_filament": "2", "water_filament": "4",
             "grey_start": "1200", "white_start": "2300",
-            "water_placement": "terrain",
         })
         self.assertEqual(response.status_code, 302)
-        self.assertEqual(self.bambu_manager.started.settings.water_placement, "terrain")
+        self.assertEqual(self.bambu_manager.started.settings.water_filament, 4)
 
-    def test_preview_blocks_one_plate_export_when_water_exists(self):
+    def test_preview_shows_combined_water_layer_estimate(self):
         project = create_project(self.root / "prints", self.root / "presets", "Mixed Water", GPX)
         for name in ("mixed-water.stl", "mixed-water_Trail.stl",
                      "mixed-water_Plate.stl", "mixed-water_Text.stl",
@@ -547,7 +543,7 @@ class WebTests(unittest.TestCase):
             "min_thickness_mm": 2, "unit_system": "METRIC",
         }), encoding="utf-8")
         (project / "build/bambu-validation.json").write_text(json.dumps({
-            "water_placement": "terrain",
+            "water_filament": 4,
             "water_layer_estimate": {
                 "mixed_filament_layer_count": 13,
                 "mixed_filament_layer_ranges": [[23, 35]],
@@ -559,7 +555,10 @@ class WebTests(unittest.TestCase):
         page = self.client.get("/projects/mixed-water/preview").data
 
         self.assertIn(b"One-plate print setup", page)
-        self.assertIn(b"One-plate export unavailable", page)
+        self.assertIn(b"Terrain + Water", page)
+        self.assertNotIn(b"One-plate export unavailable", page)
+        self.assertIn(b"Estimated mixed-color water layers: 13", page)
+        self.assertNotIn(b'name="water_placement"', page)
 
     def test_bambu_script_opens_output_folder_after_success(self):
         script = self.client.get("/static/bambu.js").data

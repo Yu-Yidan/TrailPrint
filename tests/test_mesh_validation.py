@@ -12,6 +12,12 @@ class MeshValidationTests(unittest.TestCase):
         self.assertEqual(mesh_role(Path("0019-route_WATER.stl"), "0019-route"), "water")
         self.assertEqual(mesh_role(Path("0019-Ocean.stl"), "0019-route"), "water")
 
+    def test_water_in_project_name_does_not_override_core_roles(self):
+        slug = "0032-water-combined"
+        self.assertEqual(mesh_role(Path(f"{slug}.stl"), slug), "terrain")
+        self.assertEqual(mesh_role(Path(f"{slug}_Trail.stl"), slug), "trail")
+        self.assertEqual(mesh_role(Path(f"{slug}_WATER.stl"), slug), "water")
+
     def test_valid_set_and_fragmented_trail(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

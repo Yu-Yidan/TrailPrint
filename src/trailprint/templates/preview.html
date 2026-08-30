@@ -3,7 +3,6 @@
 {% block content %}
 {% set final_validation = validation.get('final', {}) %}
 {% set has_water = 'water' in files|map(attribute='role')|list %}
-{% set combined_water = false %}
 {% set has_snow_cap = osm_palette and (osm_palette.bands|selectattr('role', 'in', ['white', 'summit'])|list|length > 0) %}
 <a class="back" href="{{ url_for('project_detail', slug=project.name) }}">← Project settings</a>
 <section class="preview-header"><div><p class="eyebrow">VALIDATED MODEL PREVIEW</p>
@@ -31,14 +30,16 @@ Terrain and trail were regenerated with Shape Extras set to None; the requested 
 </section>
 <section class="panel bambu-panel">
   <div class="bambu-heading"><div><p class="eyebrow">BAMBU PROJECT</p><h2>One-plate print setup</h2>
-    <p>One plate: Trail · Terrain · Plate + Text. Objects use the calibrated layout and print by object.</p></div>
+    <p>One plate: Trail · Terrain{% if has_water %} + Water{% endif %} · Plate + Text. Objects use the calibrated layout and print by object.</p></div>
     {% if bambu_output %}<div class="bambu-actions">
       <a class="button secondary" href="{{ url_for('download_file', slug=project.name, filename=project.name ~ '.3mf') }}">Download 3MF</a>
       <form method="post" action="{{ url_for('open_bambu_project', slug=project.name) }}"><button class="button secondary" type="submit">Open in Bambu Studio</button></form>
     </div>{% endif %}
   </div>
   {% set water_estimate = bambu_validation.get('water_layer_estimate') %}
-  {% if has_water %}<div class="notice error"><strong>One-plate export unavailable.</strong> This project contains water geometry; water must be removed before creating the calibrated one-plate 3MF.</div>{% endif %}
+  {% if bambu_output and water_estimate %}<div class="notice success water-layer-estimate"><strong>Estimated mixed-color water layers: {{ water_estimate.mixed_filament_layer_count }}</strong>
+    <p>Layer{% if water_estimate.mixed_filament_layer_count != 1 %}s{% endif %} {% for range in water_estimate.mixed_filament_layer_ranges %}{{ range[0] }}{% if range[1] != range[0] %}–{{ range[1] }}{% endif %}{% if not loop.last %}, {% endif %}{% else %}none{% endfor %} at {{ '%.2f'|format(water_estimate.nominal_layer_height_mm) }} mm nominal height; up to {{ water_estimate.manual_swaps_max }} manual swaps.</p>
+    <p class="fine-print">Unsliced estimate. Bambu Studio's exact count may change after slicing, especially with variable layer height.</p></div>{% endif %}
   {% if has_snow_cap %}<div class="notice error"><strong>One-plate export unavailable.</strong> This project contains a snow-cap band; snow-cap layouts are not yet supported on the calibrated one-plate export.</div>{% endif %}
   {% if bambu_job %}<div class="build-status {{ bambu_job.state }}" id="bambu-status" data-job-id="{{ bambu_job.id }}" data-open-folder-url="{{ url_for('open_output_folder', slug=project.name) }}" data-home-url="{{ url_for('dashboard') }}">
     <strong id="bambu-state">{{ bambu_job.state|title }}</strong><p id="bambu-message">{{ bambu_job.message }}</p><small id="bambu-elapsed"></small>
@@ -63,7 +64,7 @@ Terrain and trail were regenerated with Shape Extras set to None; the requested 
       </div><p class="fine-print" id="terrain-band-summary"></p>
     </div>{% else %}<div class="notice error"><strong>Elevation colors unavailable.</strong> Rebuild this project to capture its downloaded terrain elevation range.</div>{% endif %}
     <div class="filament-grid">
-      {% for role in ['trail', 'plate', 'text'] %}<label><span>{{ role|title }} filament</span>
+      {% for role in ['trail', 'plate', 'text'] + (['water'] if has_water else []) %}<label><span>{{ role|title }} filament</span>
         <select class="text-input" name="{{ role }}_filament">
           {% for filament in bambu_environment.filaments %}<option value="{{ filament.number }}" data-color="{{ filament.color }}" {% if bambu_defaults[role] == filament.number %}selected{% endif %}>{{ filament.number }} · {{ filament.name }}</option>{% endfor %}
         </select><i class="filament-dot" style="--filament-color:{{ bambu_environment.filaments[bambu_defaults[role]-1].color }}"></i>
@@ -75,11 +76,11 @@ Terrain and trail were regenerated with Shape Extras set to None; the requested 
         <select class="text-input" name="{{ role }}_filament">{% for filament in bambu_environment.filaments %}<option value="{{ filament.number }}" data-color="{{ filament.color }}" {% if bambu_defaults[role] == filament.number %}selected{% endif %}>{{ filament.number }} · {{ filament.name }}</option>{% endfor %}</select><i class="filament-dot" style="--filament-color:{{ bambu_environment.filaments[bambu_defaults[role]-1].color }}"></i>
       </label>{% endfor %}{% endif %}
     </div>
-    <label class="save-terrain-defaults"><input type="checkbox" name="save_terrain_defaults"> Save terrain filaments and elevations as defaults</label>
+    <label class="save-terrain-defaults"><input type="checkbox" name="save_terrain_defaults"> Save terrain{% if has_water %} and water{% endif %} filaments and elevations as defaults</label>
     {% if bambu_missing_roles %}<div class="notice error"><strong>Export unavailable.</strong>
       This build is missing: {{ bambu_missing_roles|join(', ')|title }}. Rebuild the STL set first.</div>{% endif %}
     <div class="notice error"><strong>Object-by-object print · purge multiplier 0.6.</strong> The prime tower is disabled; confirm AMS mapping and color transitions in Bambu Studio before printing.</div>
-    <button class="button primary" type="submit" {% if not bambu_ready or has_water or has_snow_cap or (bambu_job and bambu_job.state in ['queued','running']) %}disabled{% endif %}>Create Bambu 3MF</button>
+    <button class="button primary" type="submit" {% if not bambu_ready or has_snow_cap or (bambu_job and bambu_job.state in ['queued','running']) %}disabled{% endif %}>Create Bambu 3MF</button>
   </form>{% endif %}
 </section>
 <script src="{{ url_for('static', filename='bambu.js') }}"></script>

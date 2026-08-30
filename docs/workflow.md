@@ -174,10 +174,12 @@ choose the closest configured color to their preview colors. After a successful 
 the deliverables folder opens in Finder and the browser returns to the project
 dashboard.
 
-Lakes, major rivers, and coastal sea remain available in the terrain build, but
-projects containing water are not eligible for the calibrated one-plate Bambu
-export. Snow-cap bands are likewise blocked until a calibrated multi-color
-layout is available.
+Lakes, major rivers, and coastal sea remain available in the terrain build. When
+water exists, the calibrated one-plate Bambu export always groups its recessed
+blue geometry with Terrain as one multipart object; there is no separate-water
+layout. TrailPrint reports an unsliced estimate of mixed-color water layers and
+possible manual swaps. Snow-cap bands remain blocked until a calibrated
+multi-color layout is available.
 
 TrailPrint disables the prime tower, uses Bambu's configured purge matrix with a
 0.6 flush multiplier, and sets print sequence to by object. The result must be

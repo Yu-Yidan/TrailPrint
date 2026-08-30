@@ -93,16 +93,18 @@ TrailPrint stops Blender and discards staged work while preserving prior STL,
 3MF, preview, and validation files. Cancelled and failed jobs do not create
 analytics status facts. Preview colors use green terrain, red trail, blue water,
 black plate, and white text; STL files themselves remain colorless. Builds include
-lakes, major rivers, and coastal sea by default as separately printable recessed
-inserts. Water regions smaller than 25 mm² on the model are filtered out before
+lakes, major rivers, and coastal sea by default as recessed inserts. Water
+regions smaller than 25 mm² on the model are filtered out before
 their matching recesses are made. Every generated plate includes a shallow,
 
 From the validated preview, TrailPrint can also create a reviewable Bambu Studio
 3MF using the printer, process, filaments, and colors currently configured in
 Bambu Studio. Choose filament numbers for each model role and TrailPrint builds
-one calibrated plate containing Trail, Terrain, and multipart Plate + Text.
-Objects print by object using the calibrated layout. Water and snow-cap projects
-are currently blocked from this one-plate export. The 3MF is validated before
+one calibrated plate containing Trail, multipart Terrain + Water when water is
+available, and multipart Plate + Text. Objects print by object using the
+calibrated layout. Water always uses its selected blue filament within the
+Terrain object; it is never exported as a separate plate. Snow-cap projects are
+currently blocked from this one-plate export. The 3MF is validated before
 replacing an earlier export. The prime tower is disabled and the purge multiplier
 is 0.6, so always confirm the AMS mapping and contamination risk in Bambu Studio
 before slicing or printing. During a build, TrailPrint uses
