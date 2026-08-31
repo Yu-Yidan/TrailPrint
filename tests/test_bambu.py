@@ -36,29 +36,34 @@ class BambuProjectTests(unittest.TestCase):
         )
         self.assertEqual(default_filament_mapping(filaments),
                          {"trail": 3, "terrain": 1, "plate": 1, "text": 2,
+                          "attribution": 4,
                           "water": 4, "land": 4, "mountain": 4, "summit": 2,
                           "black": 1, "green": 4, "grey": 4, "white": 2})
-        files = {role: Path(f"/{role}.stl") for role in ("trail", "terrain", "plate", "text")}
+        files = {role: Path(f"/{role}.stl")
+                 for role in ("trail", "terrain", "plate", "text", "attribution")}
         manifest = assemble_manifest(files, BambuSettings(3, 4, 1, 2, 1, 2), 4)
         self.assertEqual([plate["plate_name"] for plate in manifest["plates"]],
                          ["TrailPrint"])
         self.assertFalse(manifest["plates"][0]["need_arrange"])
-        self.assertEqual(len(manifest["plates"][0]["objects"]), 4)
+        self.assertEqual(len(manifest["plates"][0]["objects"]), 5)
         self.assertEqual([item["assemble_index"] for item in manifest["plates"][0]["objects"]],
-                         [[0], [0], [1], [1]])
+                         [[0], [0], [1], [1], [1]])
+        self.assertEqual([item["print_params"] for item in
+                          manifest["plates"][0]["objects"]],
+                         [{}, {}, {}, {}, {}])
 
     def test_water_is_always_combined_with_terrain_on_one_plate(self):
         files = {role: Path(f"/{role}.stl")
-                 for role in ("trail", "terrain", "plate", "text")}
+                 for role in ("trail", "terrain", "plate", "text", "attribution")}
         files["water"] = [Path("/route_WATER.stl"), Path("/Ocean.stl")]
         settings = BambuSettings(3, 4, 1, 2, 1, 2, water_filament=4)
         manifest = assemble_manifest(files, settings, 4)
         objects = manifest["plates"][0]["objects"]
         self.assertEqual(len(manifest["plates"]), 1)
         self.assertEqual([item["filaments"] for item in objects],
-                         [[3], [4], [4], [4], [1], [2]])
+                         [[3], [4], [4], [4], [1], [2], [1]])
         self.assertEqual([item["assemble_index"] for item in objects],
-                         [[0], [2], [2], [2], [1], [1]])
+                         [[0], [2], [2], [2], [1], [1], [1]])
 
     def test_estimates_mixed_water_layers_and_manual_swaps(self):
         settings = BambuSettings(3, 4, 1, 2, 1, 2, water_filament=2)
@@ -86,10 +91,16 @@ class BambuProjectTests(unittest.TestCase):
             black=1, green=4, grey=3, white=2,
             terrain_mode="osm", automatic_bands=bands)
         files = {role: Path(f"/{role}.stl")
-                 for role in ("trail", "terrain", "plate", "text")}
+                 for role in ("trail", "terrain", "plate", "text", "attribution")}
         manifest = assemble_manifest(files, settings, 4)
         self.assertEqual(manifest["plates"][0]["objects"][1]["filaments"], [1])
         self.assertEqual(settings.terrain_filaments()["green"], 4)
+        self.assertEqual(settings.by_role()["attribution"], 3)
+
+    def test_manual_attribution_reuses_mountain_filament(self):
+        settings = BambuSettings.validated(
+            4, trail=3, land=4, mountain=2, summit=1, plate=1, text=2)
+        self.assertEqual(settings.by_role()["attribution"], 2)
 
     def test_validates_and_enforces_bambu_archive(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -98,7 +109,7 @@ class BambuProjectTests(unittest.TestCase):
             model = '''<config>
               <object id="2"><metadata key="extruder" value="3"/><part><metadata key="source_file" value="model_Trail.stl"/><metadata key="source_object_id" value="0"/></part></object>
               <object id="4"><part><metadata key="source_file" value="model.stl"/><metadata key="source_object_id" value="1"/><metadata key="extruder" value="4"/></part><part><metadata key="source_file" value="model_WATER.stl"/><metadata key="source_object_id" value="2"/><metadata key="extruder" value="2"/></part></object>
-              <object id="7"><part id="1"><metadata key="source_file" value="model_Plate.stl"/><metadata key="source_object_id" value="2"/><metadata key="extruder" value="1"/></part><part id="2"><metadata key="source_file" value="model_Text.stl"/><metadata key="source_object_id" value="3"/><metadata key="extruder" value="2"/></part></object>
+              <object id="7"><part id="1"><metadata key="source_file" value="model_Plate.stl"/><metadata key="source_object_id" value="2"/><metadata key="extruder" value="1"/></part><part id="2"><metadata key="source_file" value="model_Text.stl"/><metadata key="source_object_id" value="3"/><metadata key="extruder" value="2"/></part><part id="3"><metadata key="source_file" value="model_Attribution.stl"/><metadata key="source_object_id" value="4"/><metadata key="extruder" value="1"/></part></object>
               <plate><metadata key="plater_name" value="TrailPrint"/><model_instance><metadata key="object_id" value="2"/></model_instance><model_instance><metadata key="object_id" value="4"/></model_instance><model_instance><metadata key="object_id" value="7"/></model_instance></plate>
             </config>'''
             plate_json = {"is_seq_print": True, "bbox_objects": [
@@ -124,7 +135,8 @@ class BambuProjectTests(unittest.TestCase):
             terrain_filaments = {"land": 4, "mountain": 1, "summit": 2}
             _enforce_project_settings(output, environment, bands, terrain_filaments)
             report = validate_3mf(
-                output, {"trail": 3, "terrain": 4, "plate": 1, "text": 2},
+                output, {"trail": 3, "terrain": 4, "plate": 1, "text": 2,
+                         "attribution": 1},
                 bands, terrain_filaments, water_filament=2, filament_count=4)
 
             self.assertTrue(report["valid"])
@@ -139,6 +151,7 @@ class BambuProjectTests(unittest.TestCase):
             self.assertEqual(final["enable_prime_tower"], "0")
             self.assertEqual(final["prime_tower_enable_framework"], "0")
             self.assertEqual(final["enable_tower_interface_features"], "0")
+            self.assertEqual(float(final["initial_layer_print_height"]), 0.2)
             self.assertEqual(final["first_layer_print_sequence"], ["0"])
             self.assertEqual(final["other_layers_print_sequence"], ["0"])
             self.assertEqual(final["other_layers_print_sequence_nums"], "0")

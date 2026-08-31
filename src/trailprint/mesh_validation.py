@@ -16,6 +16,8 @@ def mesh_role(path: Path, project_slug: str) -> str:
     slug = project_slug.lower()
     if stem == slug:
         return "terrain"
+    if stem.endswith("_attribution"):
+        return "attribution"
     if "_trail" in stem or stem.endswith("trail"):
         return "trail"
     if "plate" in stem:
@@ -114,6 +116,10 @@ def inspect_stl(path: Path, project_slug: str, map_span: float = None) -> dict:
         trail_span = float(max(extents[0], extents[1]))
         if map_span and trail_span < map_span * 0.1:
             result["errors"].append("Trail span is unexpectedly small relative to the terrain.")
+    if role == "attribution":
+        if abs(float(extents[2]) - 0.2) > 0.01:
+            result["errors"].append(
+                "Attribution must be exactly one 0.20 mm first layer deep.")
     result["valid"] = not result["errors"]
     return result
 
@@ -206,6 +212,28 @@ def validate_stls(paths: Iterable[Path], project_slug: str, repair=True) -> dict
         errors.append("No valid terrain STL was generated.")
     if "trail" not in roles:
         errors.append("No valid trail STL was generated.")
+    plate_result = next((item for item in files
+                         if item["role"] == "plate" and item["valid"]), None)
+    attribution_result = next((item for item in files
+                               if item["role"] == "attribution" and item["valid"]), None)
+    if plate_result and not attribution_result:
+        errors.append("No valid back-plate attribution STL was generated.")
+    if attribution_result and not plate_result:
+        errors.append("Attribution was generated without a valid plate STL.")
+    if plate_result and attribution_result:
+        plate_bounds = np.asarray(plate_result["bounds_mm"], dtype=float)
+        attribution_bounds = np.asarray(attribution_result["bounds_mm"], dtype=float)
+        plate_center = plate_bounds[:, :2].mean(axis=0)
+        attribution_center = attribution_bounds[:, :2].mean(axis=0)
+        if (np.any(attribution_bounds[0, :2] < plate_bounds[0, :2])
+                or np.any(attribution_bounds[1, :2] > plate_bounds[1, :2])):
+            errors.append("Back-plate attribution extends outside the plate footprint.")
+        if np.max(np.abs(attribution_center - plate_center)) > 0.25:
+            errors.append("Back-plate attribution is not centered on the plate.")
+        if (abs(attribution_bounds[0, 2] - plate_bounds[0, 2]) > 0.01
+                or abs(attribution_bounds[1, 2] -
+                       (plate_bounds[0, 2] + 0.2)) > 0.01):
+            errors.append("Back-plate attribution is not flush with the first layer.")
     for item in files:
         errors.extend(f"{item['filename']}: {error}" for error in item["errors"])
     return {"valid": not errors, "files": files, "corrections": corrections, "errors": errors}

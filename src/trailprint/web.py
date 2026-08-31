@@ -331,7 +331,8 @@ def create_app(repo_root: Path = None, build_manager: BuildManager = None,
             "name": path.name, "role": mesh_role(path, slug),
         } for path in files]
         available_roles = {item["role"] for item in preview_files}
-        missing_roles = [role for role in ("trail", "terrain", "plate", "text")
+        missing_roles = [role for role in
+                         ("trail", "terrain", "plate", "text", "attribution")
                          if role not in available_roles]
         try:
             bambu_environment = discover_environment()

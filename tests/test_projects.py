@@ -441,7 +441,7 @@ class WebTests(unittest.TestCase):
     def test_bambu_export_starts_with_terrain_band_assignments(self):
         project = create_project(self.root / "prints", "Build Me", GPX)
         for name in ("build-me.stl", "build-me_Trail.stl", "build-me_Plate.stl",
-                     "build-me_Text.stl"):
+                     "build-me_Text.stl", "build-me_Attribution.stl"):
             (project / "deliverables" / name).write_bytes(b"stl")
         (project / "build/preview.png").write_bytes(b"png")
         (project / "build/elevation.json").write_text(json.dumps({
@@ -461,7 +461,8 @@ class WebTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 302)
         self.assertEqual(self.bambu_manager.started.settings.by_role(),
-                         {"trail": 3, "terrain": 4, "plate": 1, "text": 2})
+                         {"trail": 3, "terrain": 4, "plate": 1, "text": 2,
+                          "attribution": 1})
         self.assertEqual(self.bambu_manager.started.settings.terrain_filaments(),
                          {"land": 4, "mountain": 1, "summit": 2})
 

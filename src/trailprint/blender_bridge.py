@@ -418,6 +418,11 @@ def run_blender_build(project: Path, settings: BuildSettings, blender: Optional[
         "primary": primary_validation, "fallback": fallback_validation,
         "fallback_alignment": fallback_alignment, "final": final_validation,
     }
+    try:
+        report["attribution"] = json.loads(
+            (primary_stage / "plate-attribution.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        pass
     if cancel_event is not None and cancel_event.is_set():
         log_path.write_text("Build cancelled before outputs were committed.\n", encoding="utf-8")
         shutil.rmtree(attempt_root, ignore_errors=True)

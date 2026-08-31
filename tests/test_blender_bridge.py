@@ -17,8 +17,15 @@ from trailprint.blender_bridge import (
     run_blender_build,
 )
 from trailprint.blender_worker import (
+    ATTRIBUTION_FONT_PATH,
+    ATTRIBUTION_LINE_GAP_MM,
+    ATTRIBUTION_TEXT_HEIGHT_MM,
+    COPYRIGHT_MARK_DIAMETER_MM,
+    COPYRIGHT_MIN_FEATURE_MM,
+    attribution_text_scale,
     classify_osm_samples,
     configure_water,
+    copyright_mark_geometry,
     fetch_lava_osm,
     fixed_elevation_multiplier,
     lava_osm_query,
@@ -29,6 +36,24 @@ from trailprint.gpx import read_gpx_trip_date
 
 
 class SettingsTests(unittest.TestCase):
+    def test_attribution_uses_one_edge_text_reference_scale(self):
+        self.assertAlmostEqual(attribution_text_scale(0.5), 9.0)
+        self.assertTrue(ATTRIBUTION_FONT_PATH.endswith("Arial Bold.ttf"))
+        self.assertEqual(ATTRIBUTION_LINE_GAP_MM, 1.2)
+        with self.assertRaisesRegex(ValueError, "reference height"):
+            attribution_text_scale(0)
+
+    def test_copyright_mark_is_printable_one_layer_geometry(self):
+        vertices, faces = copyright_mark_geometry()
+        mark = trimesh.Trimesh(vertices=vertices, faces=faces, process=True)
+        self.assertTrue(mark.is_watertight)
+        self.assertGreater(mark.volume, 0)
+        self.assertEqual(tuple(mark.extents),
+                         (COPYRIGHT_MARK_DIAMETER_MM,
+                          COPYRIGHT_MARK_DIAMETER_MM, 0.2))
+        self.assertEqual(ATTRIBUTION_TEXT_HEIGHT_MM, 4.5)
+        self.assertGreaterEqual(COPYRIGHT_MIN_FEATURE_MM, 0.6)
+
     def test_fixed_elevation_target_compensates_for_latitude(self):
         self.assertAlmostEqual(fixed_elevation_multiplier(15, 0), 1.5)
         self.assertAlmostEqual(fixed_elevation_multiplier(15, 60), 0.75)
@@ -269,7 +294,8 @@ class SettingsTests(unittest.TestCase):
                 config = json.loads(Path(command[-1]).read_text(encoding="utf-8"))
                 if Path(command[-3]).name == "preview_worker.py":
                     self.assertEqual({Path(item["path"]).name for item in config["stl_files"]},
-                                     {"project.stl", "project_Trail.stl", "project_Plate.stl"})
+                                     {"project.stl", "project_Trail.stl",
+                                      "project_Plate.stl", "project_Attribution.stl"})
                     Path(config["output_path"]).write_bytes(b"\x89PNG\r\n\x1a\n" + b"0" * 1200)
                     return subprocess.CompletedProcess(command, 0, "preview ok", "")
                 attempts.append(config["shape_extra"])
@@ -286,6 +312,9 @@ class SettingsTests(unittest.TestCase):
                     right.apply_translation([40, 0, 0])
                     trail = trimesh.util.concatenate([left, right])
                     trimesh.creation.box(extents=[110, 90, 2]).export(output / "project_Plate.stl")
+                    attribution = trimesh.creation.box(extents=[60, 10, 0.2])
+                    attribution.apply_translation([0, 0, -0.9])
+                    attribution.export(output / "project_Attribution.stl")
                 trail.export(output / "project_Trail.stl")
                 return subprocess.CompletedProcess(command, 0, "ok", "")
 
@@ -295,7 +324,8 @@ class SettingsTests(unittest.TestCase):
 
             self.assertEqual(attempts, ["OUTER TEXT", "NONE"])
             self.assertEqual({path.name for path in outputs},
-                             {"project.stl", "project_Trail.stl", "project_Plate.stl"})
+                             {"project.stl", "project_Trail.stl",
+                              "project_Plate.stl", "project_Attribution.stl"})
             report = json.loads((project / "build/validation.json").read_text(encoding="utf-8"))
             self.assertTrue(report["fallback_used"])
             self.assertTrue(report["valid"])
