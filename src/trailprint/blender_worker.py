@@ -42,6 +42,236 @@ def fixed_elevation_multiplier(target_relief_mm, center_latitude):
         0.01, math.cos(math.radians(float(center_latitude))))
 
 
+ATTRIBUTION_LINES = (
+    "© OpenStreetMap contributors",
+    "Terrain: © Mapterhorn",
+)
+ATTRIBUTION_DEPTH_MM = 0.2
+ATTRIBUTION_TEXT_HEIGHT_MM = 4.5
+ATTRIBUTION_SPACE_MM = 1.4
+ATTRIBUTION_LINE_GAP_MM = 1.2
+ATTRIBUTION_FONT_PATH = "/System/Library/Fonts/Supplemental/Arial Bold.ttf"
+COPYRIGHT_MARK_DIAMETER_MM = 5.0
+COPYRIGHT_MIN_FEATURE_MM = 0.6
+
+
+def copyright_mark_geometry(depth=ATTRIBUTION_DEPTH_MM, segments=64):
+    """Return a printable © mesh with 0.4 mm-nozzle-safe features."""
+    vertices = []
+    faces = []
+
+    def add_annular_segment(inner_radius, outer_radius, start, end, count,
+                            closed=False):
+        offset = len(vertices)
+        steps = count if closed else count + 1
+        for index in range(steps):
+            ratio = index / count
+            angle = start + (end - start) * ratio
+            cosine, sine = math.cos(angle), math.sin(angle)
+            vertices.extend([
+                (outer_radius * cosine, outer_radius * sine, 0.0),
+                (inner_radius * cosine, inner_radius * sine, 0.0),
+                (outer_radius * cosine, outer_radius * sine, depth),
+                (inner_radius * cosine, inner_radius * sine, depth),
+            ])
+        interval_count = count if closed else count
+        for index in range(interval_count):
+            next_index = (index + 1) % steps
+            current = offset + index * 4
+            following = offset + next_index * 4
+            faces.extend([
+                (current, following, following + 1, current + 1),
+                (current + 2, current + 3, following + 3, following + 2),
+                (current, current + 2, following + 2, following),
+                (current + 1, following + 1, following + 3, current + 3),
+            ])
+        if not closed:
+            first = offset
+            last = offset + count * 4
+            faces.extend([
+                (first, first + 1, first + 3, first + 2),
+                (last, last + 2, last + 3, last + 1),
+            ])
+
+    outer_radius = COPYRIGHT_MARK_DIAMETER_MM / 2.0
+    outer_ring_inner = outer_radius - (COPYRIGHT_MIN_FEATURE_MM + 0.05)
+    add_annular_segment(outer_ring_inner, outer_radius,
+                        0.0, math.tau, segments, closed=True)
+    # The inner C opens to the right. Its 0.6 mm stroke and 0.6 mm clearance
+    # from the outer ring remain printable with the configured 0.4 mm nozzle.
+    c_outer = outer_ring_inner - COPYRIGHT_MIN_FEATURE_MM
+    c_inner = c_outer - COPYRIGHT_MIN_FEATURE_MM
+    add_annular_segment(c_inner, c_outer, math.radians(45), math.radians(315),
+                        max(12, round(segments * 0.75)))
+    return vertices, [tuple(reversed(face)) for face in faces]
+
+
+def attribution_text_scale(reference_height):
+    """Match TrailPrint3D's regular edge-text scale from its Name reference."""
+    reference_height = float(reference_height)
+    if not math.isfinite(reference_height) or reference_height <= 0:
+        raise ValueError("attribution font reference height must be positive")
+    return ATTRIBUTION_TEXT_HEIGHT_MM / reference_height
+
+
+def _world_xy_bounds(obj, vector_type):
+    bounds = [obj.matrix_world @ vector_type(corner) for corner in obj.bound_box]
+    return ([min(point[index] for point in bounds) for index in range(2)],
+            [max(point[index] for point in bounds) for index in range(2)])
+
+
+def create_plate_attribution(bpy, module_root, plate):
+    """Cut a flush, bed-facing attribution inlay into a generated plate."""
+    from mathutils import Vector
+
+    text_utils = importlib.import_module(module_root + ".utils.text_objects")
+    world_bounds = [plate.matrix_world @ Vector(corner) for corner in plate.bound_box]
+    minimum = [min(point[index] for point in world_bounds) for index in range(3)]
+    maximum = [max(point[index] for point in world_bounds) for index in range(3)]
+    center_x = (minimum[0] + maximum[0]) / 2.0
+    center_y = (minimum[1] + maximum[1]) / 2.0
+    available_width = (maximum[0] - minimum[0]) * 0.95
+    attribution_objects = []
+
+    reference = text_utils.create_text(
+        "trailprint_attribution_reference", "Name", (0.0, 0.0, 0.0), 1.0,
+        (0.0, 0.0, 0.0), ATTRIBUTION_DEPTH_MM / 2.0,
+        font_path=ATTRIBUTION_FONT_PATH)
+    bpy.context.view_layer.update()
+    shared_text_scale = attribution_text_scale(reference.dimensions.y)
+    reference_data = reference.data
+    bpy.data.objects.remove(reference, do_unlink=True)
+    bpy.data.curves.remove(reference_data)
+
+    def create_text_segment(name, body):
+        segment = text_utils.create_text(
+            name, body, (0.0, 0.0, minimum[2] + 1.0), 1.0,
+            (0.0, 0.0, 0.0), ATTRIBUTION_DEPTH_MM / 2.0,
+            font_path=ATTRIBUTION_FONT_PATH)
+        segment.location.z = minimum[2] + ATTRIBUTION_DEPTH_MM / 2.0
+        bpy.context.view_layer.update()
+        segment.scale.x = shared_text_scale
+        segment.scale.y = shared_text_scale
+        bpy.context.view_layer.objects.active = segment
+        segment.select_set(True)
+        bpy.ops.object.convert(target="MESH")
+        bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
+        segment.select_set(False)
+        return segment
+
+    def create_copyright_mark(name):
+        vertices, faces = copyright_mark_geometry()
+        mesh = bpy.data.meshes.new(name)
+        mesh.from_pydata(vertices, [], faces)
+        mesh.update()
+        mark = bpy.data.objects.new(name, mesh)
+        bpy.context.collection.objects.link(mark)
+        mark.location.z = minimum[2]
+        return mark
+
+    line_specs = (
+        (("mark", ""), ("text", "OpenStreetMap contributors")),
+        (("text", "Terrain:"), ("mark", ""), ("text", "Mapterhorn")),
+    )
+    for line_index, spec in enumerate(line_specs):
+        items = []
+        for item_index, (kind, body) in enumerate(spec):
+            name = f"trailprint_attribution_{line_index}_{item_index}"
+            item = (create_copyright_mark(name) if kind == "mark"
+                    else create_text_segment(name, body))
+            bounds = _world_xy_bounds(item, Vector)
+            items.append((item, bounds[1][0] - bounds[0][0]))
+        total_width = (sum(width for _item, width in items)
+                       + ATTRIBUTION_SPACE_MM * (len(items) - 1))
+        if total_width > available_width:
+            raise RuntimeError(
+                "back-plate attribution does not fit at its configured printable size")
+        cursor = center_x - total_width / 2.0
+        for item, width in items:
+            bounds = _world_xy_bounds(item, Vector)
+            item.location.x += cursor + width / 2.0 - (
+                bounds[0][0] + bounds[1][0]) / 2.0
+            item.location.y += center_y - (bounds[0][1] + bounds[1][1]) / 2.0
+            cursor += width + ATTRIBUTION_SPACE_MM
+            attribution_objects.append(item)
+        bpy.context.view_layer.update()
+        line_bounds = [_world_xy_bounds(item, Vector) for item, _width in items]
+        line_min_y = min(bounds[0][1] for bounds in line_bounds)
+        line_max_y = max(bounds[1][1] for bounds in line_bounds)
+        target = (center_y + ATTRIBUTION_LINE_GAP_MM / 2.0
+                  if line_index == 0
+                  else center_y - ATTRIBUTION_LINE_GAP_MM / 2.0)
+        translation_y = (target - line_min_y if line_index == 0
+                         else target - line_max_y)
+        for item, _width in items:
+            item.location.y += translation_y
+
+    bpy.ops.object.select_all(action="DESELECT")
+    for item in attribution_objects:
+        item.select_set(True)
+    bpy.context.view_layer.objects.active = attribution_objects[0]
+    bpy.ops.object.join()
+    attribution = attribution_objects[0]
+    attribution.name = plate.name.removesuffix("_Plate") + "_Attribution"
+    attribution.data.name = attribution.name
+    joined_bounds = [attribution.matrix_world @ Vector(corner)
+                     for corner in attribution.bound_box]
+    attribution.location.x += center_x - (
+        min(point.x for point in joined_bounds) + max(point.x for point in joined_bounds)) / 2.0
+    attribution.location.y += center_y - (
+        min(point.y for point in joined_bounds) + max(point.y for point in joined_bounds)) / 2.0
+    # Mirror the complete layout, rather than individual segments, so both
+    # character order and glyph shapes read normally when viewed from below.
+    original_cursor = bpy.context.scene.cursor.location.copy()
+    bpy.context.scene.cursor.location = (center_x, center_y, minimum[2])
+    bpy.context.view_layer.objects.active = attribution
+    attribution.select_set(True)
+    bpy.ops.object.origin_set(type="ORIGIN_CURSOR")
+    bpy.context.scene.cursor.location = original_cursor
+    attribution.scale.x = -1.0
+    bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
+    bpy.context.view_layer.update()
+
+    cutter = attribution.copy()
+    cutter.data = attribution.data.copy()
+    cutter.name = "trailprint_attribution_cutter"
+    bpy.context.collection.objects.link(cutter)
+    cutter_min = min(vertex.co.z for vertex in cutter.data.vertices)
+    cutter_max = max(vertex.co.z for vertex in cutter.data.vertices)
+    epsilon = 0.02
+    for vertex in cutter.data.vertices:
+        if abs(vertex.co.z - cutter_min) <= 1e-6:
+            vertex.co.z -= epsilon
+        if abs(vertex.co.z - cutter_max) <= 1e-6:
+            vertex.co.z += epsilon
+
+    bpy.ops.object.select_all(action="DESELECT")
+    plate.select_set(True)
+    bpy.context.view_layer.objects.active = plate
+    modifier = plate.modifiers.new("TrailPrint attribution recess", "BOOLEAN")
+    modifier.operation = "DIFFERENCE"
+    modifier.solver = "EXACT"
+    modifier.object = cutter
+    try:
+        bpy.ops.object.modifier_apply(modifier=modifier.name)
+    except Exception as exc:
+        raise RuntimeError("could not cut the back-plate attribution recess") from exc
+    finally:
+        bpy.data.objects.remove(cutter, do_unlink=True)
+
+    return attribution, {
+        "lines": list(ATTRIBUTION_LINES),
+        "depth_mm": ATTRIBUTION_DEPTH_MM,
+        "target_text_height_mm": ATTRIBUTION_TEXT_HEIGHT_MM,
+        "shared_text_scale": shared_text_scale,
+        "font_path": ATTRIBUTION_FONT_PATH,
+        "line_gap_mm": ATTRIBUTION_LINE_GAP_MM,
+        "copyright_mark_diameter_mm": COPYRIGHT_MARK_DIAMETER_MM,
+        "copyright_min_feature_mm": COPYRIGHT_MIN_FEATURE_MM,
+        "orientation": "upright from back with title edge at top",
+    }
+
+
 def configure_water(props, enabled, min_area_mm2=25.0):
     """Keep every supported water source behind one printability control."""
     enabled = bool(enabled)
@@ -240,7 +470,12 @@ def main():
         export_dir = Path(config["export_path"])
         normalization_translation = None
         plate = bpy.data.objects.get(config["project_name"] + "_Plate")
+        attribution = None
         if plate is not None:
+            attribution, attribution_metadata = create_plate_attribution(
+                bpy, module_root, plate)
+            (export_dir / "plate-attribution.json").write_text(
+                json.dumps(attribution_metadata, indent=2) + "\n", encoding="utf-8")
             from mathutils import Vector
             bounds = [plate.matrix_world @ Vector(corner) for corner in plate.bound_box]
             minimum = [min(point[index] for point in bounds) for index in range(3)]
@@ -289,6 +524,8 @@ def main():
                     raise RuntimeError(
                         f"could not locate generated Blender object {source_path.stem}")
                 generated_objects[source_path.stem] = generated
+            if attribution is not None:
+                generated_objects[attribution.name] = attribution
             if normalization_translation is not None:
                 from mathutils import Vector
                 translation = Vector(normalization_translation)
