@@ -3,7 +3,6 @@
 {% block content %}
 {% set final_validation = validation.get('final', {}) %}
 {% set has_water = 'water' in files|map(attribute='role')|list %}
-{% set has_snow_cap = osm_palette and (osm_palette.bands|selectattr('role', 'in', ['white', 'summit'])|list|length > 0) %}
 <a class="back" href="{{ url_for('project_detail', slug=project.name) }}">← Project settings</a>
 <section class="preview-header"><div><p class="eyebrow">VALIDATED MODEL PREVIEW</p>
   <h1>{{ project_title }}</h1><p>Bird's-eye view of the generated print files.</p></div>
@@ -40,7 +39,6 @@ Terrain and trail were regenerated with Shape Extras set to None; the requested 
   {% if bambu_output and water_estimate %}<div class="notice success water-layer-estimate"><strong>Estimated mixed-color water layers: {{ water_estimate.mixed_filament_layer_count }}</strong>
     <p>Layer{% if water_estimate.mixed_filament_layer_count != 1 %}s{% endif %} {% for range in water_estimate.mixed_filament_layer_ranges %}{{ range[0] }}{% if range[1] != range[0] %}–{{ range[1] }}{% endif %}{% if not loop.last %}, {% endif %}{% else %}none{% endfor %} at {{ '%.2f'|format(water_estimate.nominal_layer_height_mm) }} mm nominal height; up to {{ water_estimate.manual_swaps_max }} manual swaps.</p>
     <p class="fine-print">Unsliced estimate. Bambu Studio's exact count may change after slicing, especially with variable layer height.</p></div>{% endif %}
-  {% if has_snow_cap %}<div class="notice error"><strong>One-plate export unavailable.</strong> This project contains a snow-cap band; snow-cap layouts are not yet supported on the calibrated one-plate export.</div>{% endif %}
   {% if bambu_job %}<div class="build-status {{ bambu_job.state }}" id="bambu-status" data-job-id="{{ bambu_job.id }}" data-open-folder-url="{{ url_for('open_output_folder', slug=project.name) }}" data-home-url="{{ url_for('dashboard') }}">
     <strong id="bambu-state">{{ bambu_job.state|title }}</strong><p id="bambu-message">{{ bambu_job.message }}</p><small id="bambu-elapsed"></small>
   </div>{% endif %}
@@ -81,7 +79,7 @@ Terrain and trail were regenerated with Shape Extras set to None; the requested 
     {% if bambu_missing_roles %}<div class="notice error"><strong>Export unavailable.</strong>
       This build is missing: {{ bambu_missing_roles|join(', ')|title }}. Rebuild the STL set first.</div>{% endif %}
     <div class="notice error"><strong>Object-by-object print · purge multiplier 0.6.</strong> The prime tower is disabled; confirm AMS mapping and color transitions in Bambu Studio before printing.</div>
-    <button class="button primary" type="submit" {% if not bambu_ready or has_snow_cap or (bambu_job and bambu_job.state in ['queued','running']) %}disabled{% endif %}>Create Bambu 3MF</button>
+    <button class="button primary" type="submit" {% if not bambu_ready or (bambu_job and bambu_job.state in ['queued','running']) %}disabled{% endif %}>Create Bambu 3MF</button>
   </form>{% endif %}
 </section>
 <script src="{{ url_for('static', filename='bambu.js') }}"></script>

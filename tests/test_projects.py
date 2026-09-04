@@ -469,7 +469,7 @@ class WebTests(unittest.TestCase):
     def test_osm_palette_is_default_and_uses_server_owned_bands(self):
         project = create_project(self.root / "prints", "OSM Map", GPX)
         for name in ("osm-map.stl", "osm-map_Trail.stl", "osm-map_Plate.stl",
-                     "osm-map_Text.stl"):
+                     "osm-map_Text.stl", "osm-map_Attribution.stl"):
             (project / "deliverables" / name).write_bytes(b"stl")
         (project / "build/preview.png").write_bytes(b"png")
         (project / "build/elevation.json").write_text(json.dumps({
@@ -478,10 +478,12 @@ class WebTests(unittest.TestCase):
             "min_thickness_mm": 2, "unit_system": "METRIC",
         }), encoding="utf-8")
         bands = [
-            {"role": "green", "min_z": 2, "max_z": 7,
-             "min_elevation_m": 0, "max_elevation_m": 500},
-            {"role": "grey", "min_z": 7, "max_z": 12,
-             "min_elevation_m": 500, "max_elevation_m": 1000},
+            {"role": "green", "min_z": 2, "max_z": 6,
+             "min_elevation_m": 0, "max_elevation_m": 400},
+            {"role": "grey", "min_z": 6, "max_z": 9,
+             "min_elevation_m": 400, "max_elevation_m": 700},
+            {"role": "white", "min_z": 9, "max_z": 12,
+             "min_elevation_m": 700, "max_elevation_m": 1000},
         ]
         (project / "build/terrain-palette.json").write_text(json.dumps({
             "version": 2, "available": True, "source": "OpenStreetMap",
@@ -493,6 +495,8 @@ class WebTests(unittest.TestCase):
         self.assertIn(b'value="osm" checked', page)
         self.assertIn(b"OpenStreetMap-inspired elevation palette", page)
         self.assertIn(b"Mapped evidence covers 40%", page)
+        self.assertNotIn(b"One-plate export unavailable", page)
+        self.assertIn(b'type="submit" >Create Bambu 3MF</button>', page)
         self.assertNotIn(b"Satellite", page)
         self.assertNotIn(b"Sentinel", page)
 
