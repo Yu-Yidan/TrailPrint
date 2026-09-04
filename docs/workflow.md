@@ -174,8 +174,9 @@ Lakes, major rivers, and coastal sea remain available in the terrain build. When
 water exists, the calibrated one-plate Bambu export always groups its recessed
 blue geometry with Terrain as one multipart object; there is no separate-water
 layout. TrailPrint reports an unsliced estimate of mixed-color water layers and
-possible manual swaps. Snow-cap bands remain blocked until a calibrated
-multi-color layout is available.
+possible manual swaps. Snow-cap bands use the same Terrain height-range
+assignments as other elevation colors and remain on the calibrated one-plate
+layout.
 
 TrailPrint disables the prime tower, uses Bambu's configured purge matrix with a
 0.6 flush multiplier, and sets print sequence to by object. The result must be

@@ -839,11 +839,6 @@ def create_bambu_project(project: Path, settings: BambuSettings,
                                  settings.white_start_m, nominal_layer_height))
         except (KeyError, TypeError, ValueError) as exc:
             raise ValueError("Rebuild the terrain before creating elevation colors.") from exc
-        snow_roles = (settings.automatic_bands if settings.terrain_mode == "osm"
-                      else terrain_bands)
-        if any(band.get("role") in {"white", "summit"} for band in snow_roles):
-            raise ValueError(
-                "One-plate Bambu export is unavailable for projects with a snow cap.")
         count = len(environment.filaments)
         colors = [item["color"] for item in environment.filaments]
         matrix = list(environment.flush_volumes_matrix)

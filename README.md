@@ -103,8 +103,8 @@ Bambu Studio. Choose filament numbers for each model role and TrailPrint builds
 one calibrated plate containing Trail, multipart Terrain + Water when water is
 available, and multipart Plate + Text. Objects print by object using the
 calibrated layout. Water always uses its selected blue filament within the
-Terrain object; it is never exported as a separate plate. Snow-cap projects are
-currently blocked from this one-plate export. The 3MF is validated before
+Terrain object; it is never exported as a separate plate. Mountain and snow-cap
+colors are assigned to Terrain by elevation. The 3MF is validated before
 replacing an earlier export. The prime tower is disabled and the purge multiplier
 is 0.6, so always confirm the AMS mapping and contamination risk in Bambu Studio
 before slicing or printing. During a build, TrailPrint uses
