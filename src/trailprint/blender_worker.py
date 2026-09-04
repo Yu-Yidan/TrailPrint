@@ -424,6 +424,8 @@ def main():
         else:
             props.scaleElevation = 1.0
         props.plateInsertValue = float(config.get("plate_recess_depth", 0))
+        props.tolerance = float(config.get("trail_clearance_mm", 0.1))
+        print(f"Trail clearance per side: {props.tolerance:.3f} mm")
         props.singleColorMode = True
         configure_water(props, True, config.get("water_min_area_mm2", 25.0))
         props.disable_auto_export = False
