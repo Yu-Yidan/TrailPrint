@@ -105,12 +105,15 @@ The local interface intentionally exposes a small subset of TrailPrint3D:
   clearance; available only for layouts that generate a separate plate
 - Terrain resolution from 1–10 (8 by default; 8 or lower recommended)
 - Single-color trail mode, which is always enabled
+- A fixed 0.10 mm clearance on each side of the 1.2 mm trail, producing a
+  nominal 1.4 mm terrain groove while keeping Trail and Terrain separate
 
 Build choices are session-only and reset when the project page reloads. Text 4
 and Text 5 location corrections are saved when a build is submitted. Location
 detection sends the first route coordinate to OpenStreetMap Nominatim; failure
-leaves editable blank fields and never blocks a build. All other settings use
-the defaults supplied by the installed TrailPrint3D add-on. Blender runs
+leaves editable blank fields and never blocks a build. TrailPrint explicitly
+sets the tested trail clearance; other settings use the defaults supplied by
+the installed TrailPrint3D add-on. Blender runs
 invisibly, downloads terrain data, and exports STL geometry only.
 
 ## Validation and recovery

@@ -96,6 +96,8 @@ black plate, and white text; STL files themselves remain colorless. Builds inclu
 lakes, major rivers, and coastal sea by default as recessed inserts. Water
 regions smaller than 25 mm² on the model are filtered out before
 their matching recesses are made.
+The separately printed 1.2 mm trail uses 0.10 mm clearance per side in its
+terrain groove, for a nominal groove width of 1.4 mm.
 
 From the validated preview, TrailPrint can also create a reviewable Bambu Studio
 3MF using the printer, process, filaments, and colors currently configured in

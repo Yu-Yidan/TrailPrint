@@ -49,6 +49,7 @@ EXTRA_LABELS = {
 DEFAULT_BLENDER = Path("/Applications/Blender.app/Contents/MacOS/Blender")
 PROGRESS_FILE = Path(tempfile.gettempdir()) / "trailprint_progress.json"
 WATER_MIN_AREA_MM2 = 25.0
+TRAIL_CLEARANCE_MM = 0.1
 
 
 @dataclass(frozen=True)
@@ -264,6 +265,7 @@ def _run_attempt(project: Path, settings: BuildSettings, stage: Path, blender_pa
         "unit_system": settings.unit_system, **trip_values,
         "plate_recess_depth": settings.plate_recess_depth,
         "plate_recess_clearance": 0.0,
+        "trail_clearance_mm": TRAIL_CLEARANCE_MM,
         "water_min_area_mm2": WATER_MIN_AREA_MM2,
     }), encoding="utf-8")
     worker = Path(__file__).with_name("blender_worker.py")
@@ -417,6 +419,7 @@ def run_blender_build(project: Path, settings: BuildSettings, blender: Optional[
         "valid": final_validation["valid"], "fallback_used": fallback_used,
         "primary": primary_validation, "fallback": fallback_validation,
         "fallback_alignment": fallback_alignment, "final": final_validation,
+        "trail_clearance_mm": TRAIL_CLEARANCE_MM,
     }
     try:
         report["attribution"] = json.loads(
