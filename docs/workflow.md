@@ -144,11 +144,17 @@ The preview page reads the currently selected printer, process, filament names,
 and filament colors from the local Bambu Studio configuration. A successful
 Blender build also records the downloaded terrain's real elevation range and
 model-Z mapping; older builds must be rebuilt once before elevation colors are
-available. TrailPrint creates an
-unsliced `deliverables/<project-name>.3mf` with this plate layout:
+available. TrailPrint creates an unsliced `deliverables/<project-name>.3mf`
+with this plate layout:
 
-1. One calibrated plate containing Trail, Terrain, and Plate + Text as one object
-   containing two independently assignable parts
+1. One calibrated plate containing Trail, Terrain, and Plate + Text + Attribution.
+2. When **Generate DIY kit** is checked, a second plate containing the adaptive,
+   print-in-place integrated-knuckle case. This option is unchecked by default.
+
+The case height follows the actual Trail STL, rounds upward to 0.20 mm layers,
+and retains 0.20 mm clearance between the hinge envelope and closed-case height.
+It has no separate pin or insert and reuses the filament assigned to grey terrain
+rock: Grey in OSM-inspired mode or Mountain in manual mode.
 
 When OpenStreetMap land-cover evidence is reachable during the terrain build,
 the preview defaults to OSM-inspired colors. Forest and otherwise unclassified

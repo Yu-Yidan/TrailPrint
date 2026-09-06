@@ -28,8 +28,8 @@ Terrain and trail were regenerated with Shape Extras set to None; the requested 
   </aside>
 </section>
 <section class="panel bambu-panel">
-  <div class="bambu-heading"><div><p class="eyebrow">BAMBU PROJECT</p><h2>One-plate print setup</h2>
-    <p>One plate: Trail · Terrain{% if has_water %} + Water{% endif %} · Plate + Text + Attribution. Objects use the calibrated layout and print by object.</p></div>
+  <div class="bambu-heading"><div><p class="eyebrow">BAMBU PROJECT</p><h2>Map and DIY kit setup</h2>
+    <p>The calibrated map plate contains Trail · Terrain{% if has_water %} + Water{% endif %} · Plate + Text + Attribution and prints by object. Optionally add the integrated-knuckle case as a second plate.</p></div>
     {% if bambu_output %}<div class="bambu-actions">
       <a class="button secondary" href="{{ url_for('download_file', slug=project.name, filename=project.name ~ '.3mf') }}">Download 3MF</a>
       <form method="post" action="{{ url_for('open_bambu_project', slug=project.name) }}"><button class="button secondary" type="submit">Open in Bambu Studio</button></form>
@@ -75,6 +75,7 @@ Terrain and trail were regenerated with Shape Extras set to None; the requested 
       </label>{% endfor %}{% endif %}
     </div>
     <p class="muted">Back-plate attribution uses the selected {% if osm_palette %}Grey{% else %}Mountain{% endif %} filament and prints in the 0.20 mm first layer.</p>
+    <label class="toggle-setting"><input type="checkbox" name="generate_diy_kit"><span><strong>Generate DIY kit</strong><small>Add a support-free, print-in-place case as plate 2. The case reuses the selected {% if osm_palette %}Grey{% else %}Mountain{% endif %} terrain-rock filament.</small></span></label>
     <label class="save-terrain-defaults"><input type="checkbox" name="save_terrain_defaults"> Save terrain{% if has_water %} and water{% endif %} filaments and elevations as defaults</label>
     {% if bambu_missing_roles %}<div class="notice error"><strong>Export unavailable.</strong>
       This build is missing: {{ bambu_missing_roles|join(', ')|title }}. Rebuild the STL set first.</div>{% endif %}

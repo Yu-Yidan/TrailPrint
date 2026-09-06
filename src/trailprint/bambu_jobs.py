@@ -50,6 +50,8 @@ class BambuJobManager:
             try:
                 report = json.loads((job.project / "build/bambu-validation.json")
                                     .read_text(encoding="utf-8"))
+                if report.get("diy_kit_included"):
+                    message += " DIY case added as plate 2."
                 estimate = report.get("water_layer_estimate")
                 if estimate:
                     count = estimate["mixed_filament_layer_count"]

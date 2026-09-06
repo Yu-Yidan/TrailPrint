@@ -14,6 +14,7 @@ from typing import Dict, Iterable
 
 import trimesh
 
+from .diy_case import generate_diy_case
 from .mesh_validation import mesh_role
 from .naming import canonical_3mf_name
 from .terrain_colors import (
@@ -76,12 +77,14 @@ class BambuSettings:
     white_filament: int = 1
     terrain_mode: str = "manual"
     automatic_bands: tuple = ()
+    generate_diy_kit: bool = False
 
     @classmethod
     def validated(cls, filament_count, trail=1, land=1, mountain=1, summit=1,
                   plate=1, text=1, water=1, grey_start_m=DEFAULT_GREY_START_M,
                   white_start_m=DEFAULT_WHITE_START_M, black=1, green=1, grey=1,
-                  white=1, terrain_mode="manual", automatic_bands=()):
+                  white=1, terrain_mode="manual", automatic_bands=(),
+                  generate_diy_kit=False):
         try:
             values = [int(value) for value in
                       (trail, land, mountain, summit, plate, text, water,
@@ -112,7 +115,8 @@ class BambuSettings:
             white_start_m=white_start_m, black_filament=values[7],
             green_filament=values[8], grey_filament=values[9],
             white_filament=values[10], terrain_mode=terrain_mode,
-            automatic_bands=bands)
+            automatic_bands=bands,
+            generate_diy_kit=bool(generate_diy_kit))
 
     def by_role(self) -> dict:
         terrain = self.land_filament
@@ -131,6 +135,11 @@ class BambuSettings:
             values.update(black=self.black_filament, green=self.green_filament,
                           grey=self.grey_filament, white=self.white_filament)
         return values
+
+    def diy_case_filament(self) -> int:
+        """Reuse the filament assigned to the terrain's grey rock band."""
+        return (self.grey_filament if self.terrain_mode == "osm"
+                else self.mountain_filament)
 
 
 def discover_environment(data_dir: Path = BAMBU_DATA, binary: Path = BAMBU_APP) -> BambuEnvironment:
@@ -266,7 +275,7 @@ def _resting_z(path: Path) -> float:
 
 
 def assemble_manifest(files: dict, settings: BambuSettings, filament_count: int,
-                      positions=None) -> dict:
+                      positions=None, diy_case: Path = None) -> dict:
     positions = positions or {role: (0.0, 0.0)
                               for role in ("trail", "terrain", "plate_text")}
     values = settings.by_role()
@@ -279,7 +288,7 @@ def assemble_manifest(files: dict, settings: BambuSettings, filament_count: int,
         _object(path, settings.water_filament, terrain_assembly,
                 positions["terrain"])
         for path in files.get("water", ()))
-    return {"plates": [{
+    plates = [{
         "plate_name": "TrailPrint", "need_arrange": False,
         "filaments_count": filament_count, "plate_params": {},
         "objects": [
@@ -292,7 +301,20 @@ def assemble_manifest(files: dict, settings: BambuSettings, filament_count: int,
             _object(files["attribution"], values["attribution"], 1,
                     positions["plate_text"]),
         ],
-    }]}
+    }]
+    if diy_case is not None:
+        mesh = trimesh.load(diy_case, force="mesh", process=False)
+        center = mesh.bounds[:, :2].mean(axis=0)
+        plates.append({
+            "plate_name": "DIY Case", "need_arrange": False,
+            "filaments_count": filament_count,
+            "plate_params": {"enable_support": "0"},
+            "objects": [_object(
+                diy_case, settings.diy_case_filament(),
+                position=(128.0 - float(center[0]), 128.0 - float(center[1]))
+            )],
+        })
+    return {"plates": plates}
 
 
 def prepare_one_plate_layout(files: dict, temp_root: Path) -> tuple:
@@ -513,7 +535,7 @@ def _terrain_model_index(model_settings) -> str:
             source_stem = Path(source_file).stem.lower()
             if (not source_file or source_stem.endswith(
                     ("_trail", "_plate", "_text", "_attribution", "_water",
-                     "ocean"))):
+                     "ocean", "diy-case"))):
                 continue
             source_object_id = next((node.attrib.get("value")
                                      for node in part.findall("metadata")
@@ -592,7 +614,7 @@ def _enforce_project_settings(path: Path, environment: BambuEnvironment,
 
 def validate_3mf(path: Path, expected_filaments: dict, expected_bands=None,
                  terrain_filaments=None, water_filament=None,
-                 filament_count=None) -> dict:
+                 filament_count=None, diy_case_filament=None) -> dict:
     if not path.is_file() or path.stat().st_size < 1000:
         raise ValueError("Bambu Studio did not produce a usable 3MF project.")
     try:
@@ -656,7 +678,7 @@ def validate_3mf(path: Path, expected_filaments: dict, expected_bands=None,
             or len(vector_values) != filament_count * 2
             or any(value < 0 or not math.isfinite(value)
                    for value in matrix_values + vector_values)
-            or not any(value > 0 for value in matrix_values)):
+            or (filament_count > 1 and not any(value > 0 for value in matrix_values))):
         raise ValueError("Generated Bambu project did not preserve purge volumes.")
     try:
         root = ET.fromstring(model_settings)
@@ -665,18 +687,23 @@ def validate_3mf(path: Path, expected_filaments: dict, expected_bands=None,
     objects = {node.attrib["id"]: node for node in root.findall("object")}
     terrain_model_index = _terrain_model_index(model_settings)
     plates = root.findall("plate")
-    if len(plates) != 1:
-        raise ValueError(f"Generated Bambu project has {len(plates)} plates instead of 1.")
 
     def metadata(node, key):
         item = next((child for child in node.findall("metadata")
                      if child.attrib.get("key") == key), None)
         return item.attrib.get("value", "") if item is not None else ""
 
-    if metadata(plates[0], "plater_name") != "TrailPrint":
+    expected_plate_names = (["TrailPrint", "DIY Case"] if diy_case_filament is not None
+                            else ["TrailPrint"])
+    plate_names = [metadata(plate, "plater_name") for plate in plates]
+    if plate_names != expected_plate_names:
+        raise ValueError(
+            f"Generated Bambu project plates are {plate_names}, expected {expected_plate_names}.")
+    map_plate = plates[0]
+    if metadata(map_plate, "plater_name") != "TrailPrint":
         raise ValueError("Generated Bambu project has an unexpected plate layout.")
     ids = [metadata(instance, "object_id")
-           for instance in plates[0].findall("model_instance")]
+           for instance in map_plate.findall("model_instance")]
     plate_objects = [objects[item] for item in ids if item in objects]
     if len(plate_objects) != 3:
         raise ValueError(
@@ -749,6 +776,17 @@ def validate_3mf(path: Path, expected_filaments: dict, expected_bands=None,
         raise ValueError(
             "Plate, Text, or Attribution filament assignment was not preserved "
             f"(expected {expected_parts}, got {part_filaments}).")
+    if diy_case_filament is not None:
+        case_ids = [metadata(instance, "object_id")
+                    for instance in plates[1].findall("model_instance")]
+        case_objects = [objects[item] for item in case_ids if item in objects]
+        if len(case_objects) != 1:
+            raise ValueError("The DIY Case plate must contain exactly one case object.")
+        sources = object_sources(case_objects[0])
+        if not any("diy-case" in Path(source).stem for source in sources):
+            raise ValueError("The DIY Case plate does not contain the generated case.")
+        if object_filament(case_objects[0]) != str(diy_case_filament):
+            raise ValueError("The DIY case did not reuse the grey terrain-rock filament.")
     if plate_metadata is not None:
         plate_json = plate_metadata.get("bbox_objects", [])
         if not plate_metadata.get("is_seq_print") or len(plate_json) != 3:
@@ -792,7 +830,9 @@ def validate_3mf(path: Path, expected_filaments: dict, expected_bands=None,
             "water_filament": water_filament,
             "prime_tower": False, "purge_multiplier": PURGE_MULTIPLIER,
             "print_sequence": PRINT_SEQUENCE,
-            "plate_metadata": plate_metadata is not None}
+            "plate_metadata": plate_metadata is not None,
+            "diy_kit_included": diy_case_filament is not None,
+            "diy_case_filament": diy_case_filament}
 
 
 def create_bambu_project(project: Path, settings: BambuSettings,
@@ -808,7 +848,8 @@ def create_bambu_project(project: Path, settings: BambuSettings,
         white_start_m=settings.white_start_m, black=settings.black_filament,
         green=settings.green_filament, grey=settings.grey_filament,
         white=settings.white_filament, terrain_mode=settings.terrain_mode,
-        automatic_bands=settings.automatic_bands)
+        automatic_bands=settings.automatic_bands,
+        generate_diy_kit=settings.generate_diy_kit)
     files = _role_files(project)
     build_dir = project / "build"
     build_dir.mkdir(parents=True, exist_ok=True)
@@ -869,9 +910,15 @@ def create_bambu_project(project: Path, settings: BambuSettings,
             _write_json(target, value)
             filament_paths.append(target)
         layout_files, positions, layout_report = prepare_one_plate_layout(files, temp_root)
+        diy_case_path = None
+        diy_case_report = None
+        if settings.generate_diy_kit:
+            diy_case_path = temp_root / "diy-case.stl"
+            diy_case_report = generate_diy_case(
+                files["trail"], diy_case_path, temp_root / "diy-case-work")
         manifest_path = temp_root / "assemble.json"
         _write_json(manifest_path, assemble_manifest(
-            layout_files, settings, count, positions))
+            layout_files, settings, count, positions, diy_case_path))
         command = [str(environment.binary), "--debug", "2", "--ensure-on-bed",
                    "--allow-multicolor-oneplate",
                    "--load-assemble-list", str(manifest_path),
@@ -891,13 +938,17 @@ def create_bambu_project(project: Path, settings: BambuSettings,
         water_filament = settings.water_filament if files.get("water") else None
         report = validate_3mf(staged, settings.by_role(), terrain_bands,
                               settings.terrain_filaments(), water_filament,
-                              count)
+                              count,
+                              (settings.diy_case_filament()
+                               if settings.generate_diy_kit else None))
         if water_filament is not None:
             terrain_base, water_bounds = _validated_mesh_bounds(project)
             report["water_layer_estimate"] = estimate_water_layer_changes(
                 water_bounds, terrain_base, nominal_layer_height,
                 initial_layer_height, settings, terrain_bands)
         report["layout"] = layout_report
+        if diy_case_report is not None:
+            report["diy_case"] = diy_case_report
         _write_json(build_dir / "bambu-validation.json", report)
         destination = project / "deliverables" / canonical_3mf_name(project)
         os.replace(staged, destination)
