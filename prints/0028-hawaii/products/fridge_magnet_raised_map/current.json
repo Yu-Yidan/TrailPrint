@@ -1,7 +1,0 @@
-{
-  "schema_version": 1,
-  "id_build": "0d2a80669f394bb7a811213c73ac1e8f",
-  "artifact_root": "../../../deliverables",
-  "preview": "../../../build/preview.png",
-  "validation": "../../../build/validation.json"
-}

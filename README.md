@@ -103,10 +103,12 @@ From the validated preview, TrailPrint can also create a reviewable Bambu Studio
 3MF using the printer, process, filaments, and colors currently configured in
 Bambu Studio. Choose filament numbers for each model role and TrailPrint builds
 one calibrated plate containing Trail, multipart Terrain + Water when water is
-available, and multipart Plate + Text. Objects print by object using the
+available, and multipart Plate + Text + Attribution. Objects print by object using the
 calibrated layout. Water always uses its selected blue filament within the
 Terrain object; it is never exported as a separate plate. Mountain and snow-cap
-colors are assigned to Terrain by elevation. The 3MF is validated before
+colors are assigned to Terrain by elevation. An unchecked-by-default DIY kit
+option adds a second plate containing an adaptive, print-in-place integrated-knuckle
+case. The case reuses the filament assigned to grey terrain rock. The 3MF is validated before
 replacing an earlier export. The prime tower is disabled and the purge multiplier
 is 0.6, so always confirm the AMS mapping and contamination risk in Bambu Studio
 before slicing or printing. During a build, TrailPrint uses

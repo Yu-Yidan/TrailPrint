@@ -430,7 +430,9 @@ class WebTests(unittest.TestCase):
         self.assertIn(b'class="preview-sidebar panel preview-validation"', page.data)
         self.assertNotIn(b"Reset view", page.data)
         self.assertNotIn(b"preview.js", page.data)
-        self.assertIn(b"One-plate print setup", page.data)
+        self.assertIn(b"Map and DIY kit setup", page.data)
+        self.assertIn(b'name="generate_diy_kit"', page.data)
+        self.assertNotIn(b'name="generate_diy_kit" checked', page.data)
         self.assertIn(b"Export unavailable", page.data)
         response = self.client.get("/projects/build-me/preview-image")
         self.assertEqual(response.data, b"png preview")
@@ -457,7 +459,8 @@ class WebTests(unittest.TestCase):
             "trail_filament": "3", "land_filament": "4",
             "mountain_filament": "1", "summit_filament": "2",
             "plate_filament": "1", "text_filament": "2",
-            "grey_start": "4000", "white_start": "7500"})
+            "grey_start": "4000", "white_start": "7500",
+            "generate_diy_kit": "on"})
 
         self.assertEqual(response.status_code, 302)
         self.assertEqual(self.bambu_manager.started.settings.by_role(),
@@ -465,6 +468,8 @@ class WebTests(unittest.TestCase):
                           "attribution": 1})
         self.assertEqual(self.bambu_manager.started.settings.terrain_filaments(),
                          {"land": 4, "mountain": 1, "summit": 2})
+        self.assertTrue(self.bambu_manager.started.settings.generate_diy_kit)
+        self.assertEqual(self.bambu_manager.started.settings.diy_case_filament(), 1)
 
     def test_osm_palette_is_default_and_uses_server_owned_bands(self):
         project = create_project(self.root / "prints", "OSM Map", GPX)
@@ -528,7 +533,7 @@ class WebTests(unittest.TestCase):
 
         page = self.client.get("/projects/wet-route/preview")
 
-        self.assertIn(b"One-plate print setup", page.data)
+        self.assertIn(b"Map and DIY kit setup", page.data)
         self.assertIn(b"Terrain + Water", page.data)
         self.assertNotIn(b"One-plate export unavailable", page.data)
         self.assertIn(b'name="water_filament"', page.data)
@@ -569,7 +574,7 @@ class WebTests(unittest.TestCase):
 
         page = self.client.get("/projects/mixed-water/preview").data
 
-        self.assertIn(b"One-plate print setup", page)
+        self.assertIn(b"Map and DIY kit setup", page)
         self.assertIn(b"Terrain + Water", page)
         self.assertNotIn(b"One-plate export unavailable", page)
         self.assertIn(b"Estimated mixed-color water layers: 13", page)

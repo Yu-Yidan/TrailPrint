@@ -408,7 +408,8 @@ def create_app(repo_root: Path = None, build_manager: BuildManager = None,
                 white=request.form.get(
                     "white_filament", request.form.get("summit_filament", 1)),
                 terrain_mode=terrain_mode,
-                automatic_bands=palette.get("bands", ()))
+                automatic_bands=palette.get("bands", ()),
+                generate_diy_kit=request.form.get("generate_diy_kit") == "on")
             color_preferences = {
                 **settings.terrain_filaments(),
                 "grey_start_m": grey_start_m,
