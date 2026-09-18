@@ -162,20 +162,27 @@ def discover_environment(data_dir: Path = BAMBU_DATA, binary: Path = BAMBU_APP) 
         raise ValueError("Configure at least one filament in Bambu Studio first.")
     count = len(filaments)
 
-    def flush_values(key, expected):
+    def flush_values(key, expected, normalize_vector=False):
         raw = presets.get(key, "")
-        values = str(raw).split("|") if isinstance(raw, str) else list(raw)
+        values = ([] if raw in (None, "") else
+                  str(raw).split("|") if isinstance(raw, str) else list(raw))
         try:
             parsed = tuple(float(value) for value in values)
         except (TypeError, ValueError) as exc:
             raise ValueError("Bambu Studio's flushing volumes are invalid.") from exc
-        if len(parsed) != expected or any(not math.isfinite(value) or value < 0
-                                          for value in parsed):
+        if any(not math.isfinite(value) or value < 0 for value in parsed):
+            raise ValueError("Bambu Studio's flushing volumes are invalid.")
+        if normalize_vector:
+            if len(parsed) % 2:
+                raise ValueError(
+                    "Bambu Studio's flushing volumes do not match its filaments.")
+            return (parsed[:expected] + (140.0,) * expected)[:expected]
+        if len(parsed) != expected:
             raise ValueError("Bambu Studio's flushing volumes do not match its filaments.")
         return parsed
 
     matrix = flush_values("flush_volumes_matrix", count * count)
-    vector = flush_values("flush_volumes_vector", count * 2)
+    vector = flush_values("flush_volumes_vector", count * 2, normalize_vector=True)
     return BambuEnvironment(binary, data_dir, machine, process, filaments,
                             PURGE_MULTIPLIER, matrix, vector)
 
