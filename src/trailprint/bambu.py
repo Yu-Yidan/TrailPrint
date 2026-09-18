@@ -28,7 +28,7 @@ from .terrain_colors import (
 BAMBU_APP = Path("/Applications/BambuStudio.app/Contents/MacOS/BambuStudio")
 BAMBU_DATA = Path.home() / "Library/Application Support/BambuStudio"
 ROLE_ORDER = ("trail", "terrain", "plate", "text", "attribution")
-ATTRIBUTION_LAYER_HEIGHT_MM = 0.2
+FIRST_LAYER_HEIGHT_MM = 0.2
 PURGE_MULTIPLIER = 0.6
 PRINT_SEQUENCE = "by object"
 OBJECT_CLEARANCE_MM = 2.0  # P1S nozzle/gantry safety margin for sequential printing.
@@ -247,10 +247,11 @@ def _role_files(project: Path) -> dict:
             continue
         if role in ROLE_ORDER:
             files[role] = path.resolve()
-    missing = [role for role in ROLE_ORDER if role not in files]
+    required = ("trail", "terrain", "plate", "text")
+    missing = [role for role in required if role not in files]
     if missing:
         raise ValueError(
-            "Bambu export requires validated Terrain, Trail, Plate, Text, and Attribution STL files.")
+            "Bambu export requires validated Terrain, Trail, Plate, and Text STL files.")
     files["water"] = sorted(water)
     return files
 
@@ -288,6 +289,14 @@ def assemble_manifest(files: dict, settings: BambuSettings, filament_count: int,
         _object(path, settings.water_filament, terrain_assembly,
                 positions["terrain"])
         for path in files.get("water", ()))
+    plate_objects = [
+        _object(files["plate"], values["plate"], 1, positions["plate_text"]),
+        _object(files["text"], values["text"], 1, positions["plate_text"]),
+    ]
+    if files.get("attribution"):
+        plate_objects.append(_object(
+            files["attribution"], values["attribution"], 1,
+            positions["plate_text"]))
     plates = [{
         "plate_name": "TrailPrint", "need_arrange": False,
         "filaments_count": filament_count, "plate_params": {},
@@ -296,10 +305,7 @@ def assemble_manifest(files: dict, settings: BambuSettings, filament_count: int,
                     position=positions["trail"],
                     position_z=_resting_z(files["trail"])),
             *terrain_objects,
-            _object(files["plate"], values["plate"], 1, positions["plate_text"]),
-            _object(files["text"], values["text"], 1, positions["plate_text"]),
-            _object(files["attribution"], values["attribution"], 1,
-                    positions["plate_text"]),
+            *plate_objects,
         ],
     }]
     if diy_case is not None:
@@ -368,7 +374,8 @@ def prepare_one_plate_layout(files: dict, temp_root: Path) -> tuple:
         "trail": [rotated_bounds["trail"]],
         "terrain": [rotated_bounds["terrain"], *water_bounds],
         "plate_text": [rotated_bounds["plate"], rotated_bounds["text"],
-                       rotated_bounds["attribution"]],
+                       *([rotated_bounds["attribution"]]
+                         if "attribution" in rotated_bounds else [])],
     }
     placed_rectangles = {}
     for layout_role, bounds_group in groups.items():
@@ -566,7 +573,7 @@ def _enforce_project_settings(path: Path, environment: BambuEnvironment,
                 raise ValueError("Bambu Studio's flushing volumes do not match its filaments.")
             settings.update({
                 "enable_prime_tower": "0",
-                "initial_layer_print_height": str(ATTRIBUTION_LAYER_HEIGHT_MM),
+                "initial_layer_print_height": str(FIRST_LAYER_HEIGHT_MM),
                 "prime_tower_enable_framework": "0",
                 "enable_tower_interface_features": "0",
                 "flush_multiplier": [str(PURGE_MULTIPLIER)],
@@ -649,7 +656,7 @@ def validate_3mf(path: Path, expected_filaments: dict, expected_bands=None,
                       if isinstance(initial_height, list) and initial_height
                       else initial_height)
     try:
-        if abs(float(initial_height) - ATTRIBUTION_LAYER_HEIGHT_MM) > 1e-9:
+        if abs(float(initial_height) - FIRST_LAYER_HEIGHT_MM) > 1e-9:
             raise ValueError
     except (TypeError, ValueError):
         raise ValueError("Generated Bambu project did not preserve the 0.20 mm first layer.")
@@ -707,7 +714,7 @@ def validate_3mf(path: Path, expected_filaments: dict, expected_bands=None,
     plate_objects = [objects[item] for item in ids if item in objects]
     if len(plate_objects) != 3:
         raise ValueError(
-            "One plate must contain Trail, Terrain, and Plate + Text + Attribution.")
+            "One plate must contain Trail, Terrain, and Plate + Text.")
 
     def object_sources(obj):
         parts = obj.findall("part")
@@ -720,8 +727,6 @@ def validate_3mf(path: Path, expected_filaments: dict, expected_bands=None,
                          if any(Path(source).stem.endswith("_plate")
                                 for source in object_sources(obj))
                          and any(Path(source).stem.endswith("_text")
-                                 for source in object_sources(obj))
-                         and any(Path(source).stem.endswith("_attribution")
                                  for source in object_sources(obj))), None)
     terrain_object = next((obj for obj in plate_objects
                            if obj not in {trail_object, plate_object}), None)
@@ -757,9 +762,9 @@ def validate_3mf(path: Path, expected_filaments: dict, expected_bands=None,
                for part in water_parts):
             raise ValueError("Water filament assignment was not preserved.")
     parts = plate_object.findall("part")
-    if len(parts) != 3:
+    if len(parts) not in {2, 3}:
         raise ValueError(
-            "Plate 3 is not one object containing Plate, Text, and Attribution parts.")
+            "Plate 3 is not one object containing Plate and Text parts.")
     part_filaments = {}
     for part in parts:
         source = metadata(part, "source_file").lower()
@@ -770,11 +775,12 @@ def validate_3mf(path: Path, expected_filaments: dict, expected_bands=None,
         if role:
             part_filaments[role] = metadata(part, "extruder")
     expected_parts = {"plate": str(expected_filaments["plate"]),
-                      "text": str(expected_filaments["text"]),
-                      "attribution": str(expected_filaments["attribution"])}
+                      "text": str(expected_filaments["text"])}
+    if "attribution" in part_filaments:
+        expected_parts["attribution"] = str(expected_filaments["attribution"])
     if part_filaments != expected_parts:
         raise ValueError(
-            "Plate, Text, or Attribution filament assignment was not preserved "
+            "Plate or Text filament assignment was not preserved "
             f"(expected {expected_parts}, got {part_filaments}).")
     if diy_case_filament is not None:
         case_ids = [metadata(instance, "object_id")
@@ -826,6 +832,7 @@ def validate_3mf(path: Path, expected_filaments: dict, expected_bands=None,
                 or actual["filament"] != terrain_filaments[expected["role"]]):
             raise ValueError("Generated terrain color ranges were not preserved.")
     return {"valid": True, "plates": len(plates), "filaments": expected_filaments,
+            "attribution_included": "attribution" in part_filaments,
             "terrain_bands": actual_bands,
             "water_filament": water_filament,
             "prime_tower": False, "purge_multiplier": PURGE_MULTIPLIER,
@@ -888,7 +895,7 @@ def create_bambu_project(project: Path, settings: BambuSettings,
             raise ValueError("Bambu Studio's flushing volumes do not match its filaments.")
         process.update({"enable_prime_tower": "0",
                         "initial_layer_print_height": str(
-                            ATTRIBUTION_LAYER_HEIGHT_MM),
+                            FIRST_LAYER_HEIGHT_MM),
                         "flush_multiplier": [str(PURGE_MULTIPLIER)],
                         "flush_volumes_matrix": [str(value) for value in matrix],
                         "flush_volumes_vector": [str(value) for value in vector],
@@ -899,7 +906,7 @@ def create_bambu_project(project: Path, settings: BambuSettings,
                         "prime_tower_enable_framework": "0",
                         "enable_tower_interface_features": "0",
                         "filament_colour": colors})
-        initial_layer_height = ATTRIBUTION_LAYER_HEIGHT_MM
+        initial_layer_height = FIRST_LAYER_HEIGHT_MM
         machine_path, process_path = temp_root / "machine.json", temp_root / "process.json"
         _write_json(machine_path, machine)
         _write_json(process_path, process)

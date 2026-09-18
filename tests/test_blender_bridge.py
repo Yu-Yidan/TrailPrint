@@ -1,4 +1,5 @@
 import json
+import math
 import subprocess
 import tempfile
 import threading
@@ -26,6 +27,8 @@ from trailprint.blender_worker import (
     classify_osm_samples,
     configure_water,
     copyright_mark_geometry,
+    dot_magnet_backing_extension,
+    dot_magnet_centers,
     fetch_lava_osm,
     fixed_elevation_multiplier,
     lava_osm_query,
@@ -106,7 +109,8 @@ class SettingsTests(unittest.TestCase):
 
     def test_defaults_and_compatibility(self):
         self.assertEqual(BuildSettings.validated(),
-                         BuildSettings("HEXAGON", "NONE", 8, plate_recess_depth=0))
+                         BuildSettings("HEXAGON", "NONE", 8, plate_recess_depth=0,
+                                       dot_magnet_recess=False))
         self.assertEqual(BuildSettings.validated("circle", "outer text", "8"),
                          BuildSettings("CIRCLE", "OUTER TEXT", 8))
         with self.assertRaisesRegex(ValueError, "unavailable"):
@@ -125,6 +129,30 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(recessed.plate_recess_depth, 1.5)
         with self.assertRaisesRegex(ValueError, "0 to 4"):
             BuildSettings.validated("hexagon", "outer text", plate_recess_depth=4.1)
+
+    def test_dot_magnet_layout_is_centered_and_equilateral(self):
+        centers = dot_magnet_centers()
+        sides = [math.dist(centers[index], centers[(index + 1) % 3])
+                 for index in range(3)]
+        centroid = tuple(sum(point[axis] for point in centers) / 3
+                         for axis in (0, 1))
+        self.assertTrue(all(abs(side - 36 * math.sqrt(3)) < 1e-9
+                            for side in sides))
+        self.assertEqual(centroid, (0.0, 0.0))
+        self.assertEqual(centers[0], (0.0, 36.0))
+
+    def test_dot_magnet_backing_preserves_floor_for_every_recess_depth(self):
+        self.assertEqual(dot_magnet_backing_extension(5, 0), 0)
+        self.assertAlmostEqual(dot_magnet_backing_extension(5, 1.5), 0.3)
+        self.assertAlmostEqual(dot_magnet_backing_extension(5, 4), 2.8)
+
+    def test_dot_magnets_can_be_disabled_and_require_a_plate(self):
+        self.assertFalse(BuildSettings.validated(
+            "hexagon", "outer text", dot_magnet_recess=False).dot_magnet_recess)
+        self.assertTrue(BuildSettings.validated(
+            "octagon", "outer text").dot_magnet_recess)
+        self.assertFalse(BuildSettings.validated(
+            "hexagon", "inner text").dot_magnet_recess)
 
     def test_plate_clearance_override_is_scoped_to_the_cutter(self):
         class Props:
@@ -297,7 +325,7 @@ class SettingsTests(unittest.TestCase):
                 if Path(command[-3]).name == "preview_worker.py":
                     self.assertEqual({Path(item["path"]).name for item in config["stl_files"]},
                                      {"project.stl", "project_Trail.stl",
-                                      "project_Plate.stl", "project_Attribution.stl"})
+                                      "project_Plate.stl"})
                     Path(config["output_path"]).write_bytes(b"\x89PNG\r\n\x1a\n" + b"0" * 1200)
                     return subprocess.CompletedProcess(command, 0, "preview ok", "")
                 attempts.append(config["shape_extra"])
@@ -314,9 +342,6 @@ class SettingsTests(unittest.TestCase):
                     right.apply_translation([40, 0, 0])
                     trail = trimesh.util.concatenate([left, right])
                     trimesh.creation.box(extents=[110, 90, 2]).export(output / "project_Plate.stl")
-                    attribution = trimesh.creation.box(extents=[60, 10, 0.2])
-                    attribution.apply_translation([0, 0, -0.9])
-                    attribution.export(output / "project_Attribution.stl")
                 trail.export(output / "project_Trail.stl")
                 return subprocess.CompletedProcess(command, 0, "ok", "")
 
@@ -327,7 +352,7 @@ class SettingsTests(unittest.TestCase):
             self.assertEqual(attempts, ["OUTER TEXT", "NONE"])
             self.assertEqual({path.name for path in outputs},
                              {"project.stl", "project_Trail.stl",
-                              "project_Plate.stl", "project_Attribution.stl"})
+                              "project_Plate.stl"})
             report = json.loads((project / "build/validation.json").read_text(encoding="utf-8"))
             self.assertTrue(report["fallback_used"])
             self.assertTrue(report["valid"])

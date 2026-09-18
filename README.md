@@ -79,7 +79,12 @@ Nominatim, shown directly in editable Text 4 and Text 5 fields respectively,
 and cached per project. Title defaults to the readable project name and is
 measured against the selected plate layout before a build can start. Terrain
 resolution defaults to 8. Plate-generating layouts default to an adjustable
-1.5 mm terrain-shaped alignment recess with zero digital clearance.
+1.5 mm terrain-shaped alignment recess with zero digital clearance. They also default
+to three bed-facing recesses for 18.2 mm diameter by 3.0 mm deep dot magnets. The
+magnet centers form a 62.354 mm equilateral triangle centered on the backing plate.
+The option can be disabled before building, and TrailPrint automatically thickens the
+bed-facing backing only as much as needed to retain at least 0.8 mm beneath the
+terrain alignment recess.
 
 Every Blender output is checked before it replaces prior deliverables. Clearly
 misplaced meshes are centered using the included Bambu-boundary correction. If
@@ -103,7 +108,7 @@ From the validated preview, TrailPrint can also create a reviewable Bambu Studio
 3MF using the printer, process, filaments, and colors currently configured in
 Bambu Studio. Choose filament numbers for each model role and TrailPrint builds
 one calibrated plate containing Trail, multipart Terrain + Water when water is
-available, and multipart Plate + Text + Attribution. Objects print by object using the
+available, and multipart Plate + Text. Objects print by object using the
 calibrated layout. Water always uses its selected blue filament within the
 Terrain object; it is never exported as a separate plate. Mountain and snow-cap
 colors are assigned to Terrain by elevation. An unchecked-by-default DIY kit
@@ -120,6 +125,10 @@ evidence coverage, fitted bands, and confidence, and still offers the original
 manual green/grey/white elevation mode. An Overpass failure never blocks STL
 output. Plate defaults to black filament slot 1; Trail and Text retain
 color-matched defaults.
+
+The plate back is intentionally blank apart from the three dot-magnet recesses.
+Include this credit on the product packaging and online listing instead:
+`Map data © OpenStreetMap contributors — openstreetmap.org/copyright. Elevation data © Mapterhorn — mapterhorn.com/attribution.`
 
 ## Development checks
 

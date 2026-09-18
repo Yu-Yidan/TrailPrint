@@ -302,6 +302,7 @@ class WebTests(unittest.TestCase):
         self.assertEqual((settings.x_offset, settings.y_offset), (1.25, -0.5))
         self.assertFalse(settings.fixed_elevation_scale)
         self.assertEqual(settings.plate_recess_depth, 1.5)
+        self.assertTrue(settings.dot_magnet_recess)
         self.assertEqual((settings.city, settings.state, settings.country),
                          ("Volcano", "Hawaii", "United States"))
         self.assertTrue((self.root / "prints/build-me/location.json").is_file())
@@ -330,6 +331,8 @@ class WebTests(unittest.TestCase):
         self.assertNotIn(b"Trail location", page)
         self.assertIn(b'id="use-metric" type="checkbox" name="use_metric"', page)
         self.assertIn(b'name="plate_recess_depth" type="number" value="1.5"', page)
+        self.assertIn(b'id="dot-magnet-recess" type="checkbox"', page)
+        self.assertIn(b'name="dot_magnet_recess" value="on" checked', page)
         self.assertNotIn(b'name="include_water"', page)
         self.assertNotIn(b'name="include_ocean"', page)
         self.assertNotIn(b'name="fixed_elevation_scale"', page)
@@ -380,6 +383,21 @@ class WebTests(unittest.TestCase):
         self.assertIn(b"plateTextSettings.hidden = !hasText", script)
         self.assertIn(b"field.hidden = !usesFive", script)
         self.assertIn(b"plateRecessSetting.hidden = !hasPlate", script)
+        self.assertIn(b"dotMagnetSetting.hidden = !hasPlate", script)
+
+    def test_dot_magnet_checkbox_can_disable_recesses(self):
+        create_project(self.root / "prints", "No Magnets", GPX)
+        self.client.post("/projects/no-magnets/build", data={
+            "shape": "HEXAGON", "shape_extra": "OUTER TEXT", "resolution": "8",
+            "plate_title": "No Magnets", "dot_magnet_recess": "off"})
+        self.assertFalse(self.build_manager.started.settings.dot_magnet_recess)
+
+    def test_dot_magnets_are_suppressed_without_a_plate(self):
+        create_project(self.root / "prints", "No Plate Magnets", GPX)
+        self.client.post("/projects/no-plate-magnets/build", data={
+            "shape": "HEXAGON", "shape_extra": "INNER TEXT", "resolution": "8",
+            "plate_title": "No Plate", "dot_magnet_recess": "on"})
+        self.assertFalse(self.build_manager.started.settings.dot_magnet_recess)
 
     def test_recess_is_ignored_for_layout_without_a_plate(self):
         create_project(self.root / "prints", "No Plate", GPX)
@@ -433,6 +451,8 @@ class WebTests(unittest.TestCase):
         self.assertIn(b"Map and DIY kit setup", page.data)
         self.assertIn(b'name="generate_diy_kit"', page.data)
         self.assertNotIn(b'name="generate_diy_kit" checked', page.data)
+        self.assertIn(b"Data credit for packaging and product listing", page.data)
+        self.assertIn(b"Map data \xc2\xa9 OpenStreetMap contributors", page.data)
         self.assertIn(b"Export unavailable", page.data)
         response = self.client.get("/projects/build-me/preview-image")
         self.assertEqual(response.data, b"png preview")
@@ -443,7 +463,7 @@ class WebTests(unittest.TestCase):
     def test_bambu_export_starts_with_terrain_band_assignments(self):
         project = create_project(self.root / "prints", "Build Me", GPX)
         for name in ("build-me.stl", "build-me_Trail.stl", "build-me_Plate.stl",
-                     "build-me_Text.stl", "build-me_Attribution.stl"):
+                     "build-me_Text.stl"):
             (project / "deliverables" / name).write_bytes(b"stl")
         (project / "build/preview.png").write_bytes(b"png")
         (project / "build/elevation.json").write_text(json.dumps({
@@ -474,7 +494,7 @@ class WebTests(unittest.TestCase):
     def test_osm_palette_is_default_and_uses_server_owned_bands(self):
         project = create_project(self.root / "prints", "OSM Map", GPX)
         for name in ("osm-map.stl", "osm-map_Trail.stl", "osm-map_Plate.stl",
-                     "osm-map_Text.stl", "osm-map_Attribution.stl"):
+                     "osm-map_Text.stl"):
             (project / "deliverables" / name).write_bytes(b"stl")
         (project / "build/preview.png").write_bytes(b"png")
         (project / "build/elevation.json").write_text(json.dumps({

@@ -42,34 +42,34 @@ class BambuProjectTests(unittest.TestCase):
                           "water": 4, "land": 4, "mountain": 4, "summit": 2,
                           "black": 1, "green": 4, "grey": 4, "white": 2})
         files = {role: Path(f"/{role}.stl")
-                 for role in ("trail", "terrain", "plate", "text", "attribution")}
+                 for role in ("trail", "terrain", "plate", "text")}
         manifest = assemble_manifest(files, BambuSettings(3, 4, 1, 2, 1, 2), 4)
         self.assertEqual([plate["plate_name"] for plate in manifest["plates"]],
                          ["TrailPrint"])
         self.assertFalse(manifest["plates"][0]["need_arrange"])
-        self.assertEqual(len(manifest["plates"][0]["objects"]), 5)
+        self.assertEqual(len(manifest["plates"][0]["objects"]), 4)
         self.assertEqual([item["assemble_index"] for item in manifest["plates"][0]["objects"]],
-                         [[0], [0], [1], [1], [1]])
+                         [[0], [0], [1], [1]])
         self.assertEqual([item["print_params"] for item in
                           manifest["plates"][0]["objects"]],
-                         [{}, {}, {}, {}, {}])
+                         [{}, {}, {}, {}])
 
     def test_water_is_always_combined_with_terrain_on_one_plate(self):
         files = {role: Path(f"/{role}.stl")
-                 for role in ("trail", "terrain", "plate", "text", "attribution")}
+                 for role in ("trail", "terrain", "plate", "text")}
         files["water"] = [Path("/route_WATER.stl"), Path("/Ocean.stl")]
         settings = BambuSettings(3, 4, 1, 2, 1, 2, water_filament=4)
         manifest = assemble_manifest(files, settings, 4)
         objects = manifest["plates"][0]["objects"]
         self.assertEqual(len(manifest["plates"]), 1)
         self.assertEqual([item["filaments"] for item in objects],
-                         [[3], [4], [4], [4], [1], [2], [1]])
+                         [[3], [4], [4], [4], [1], [2]])
         self.assertEqual([item["assemble_index"] for item in objects],
-                         [[0], [2], [2], [2], [1], [1], [1]])
+                         [[0], [2], [2], [2], [1], [1]])
 
     def test_diy_case_adds_second_plate_with_terrain_rock_filament(self):
         files = {role: Path(f"/{role}.stl")
-                 for role in ("trail", "terrain", "plate", "text", "attribution")}
+                 for role in ("trail", "terrain", "plate", "text")}
         with tempfile.TemporaryDirectory() as temp:
             case = Path(temp) / "diy-case.stl"
             trimesh.creation.box(extents=(80, 190, 8)).export(case)
@@ -111,7 +111,7 @@ class BambuProjectTests(unittest.TestCase):
             black=1, green=4, grey=3, white=2,
             terrain_mode="osm", automatic_bands=bands)
         files = {role: Path(f"/{role}.stl")
-                 for role in ("trail", "terrain", "plate", "text", "attribution")}
+                 for role in ("trail", "terrain", "plate", "text")}
         manifest = assemble_manifest(files, settings, 4)
         self.assertEqual(manifest["plates"][0]["objects"][1]["filaments"], [1])
         self.assertEqual(settings.terrain_filaments()["green"], 4)
