@@ -15,12 +15,62 @@ from trailprint.bambu import (
     _terrain_model_index,
     assemble_manifest,
     default_filament_mapping,
+    discover_environment,
     estimate_water_layer_changes,
     validate_3mf,
 )
 
 
 class BambuProjectTests(unittest.TestCase):
+    def bambu_environment(self, vector, matrix=None):
+        temp = tempfile.TemporaryDirectory()
+        data_dir = Path(temp.name)
+        binary = data_dir / "BambuStudio"
+        binary.touch()
+        count = 5
+        presets = {
+            "machine": "P1S",
+            "process": "0.20mm Standard",
+            "filaments": [f"Filament {number}" for number in range(1, count + 1)],
+            "filament_colors": ",".join(["#000000"] * count),
+            "flush_volumes_matrix": "|".join(
+                map(str, matrix if matrix is not None else range(count * count))),
+            "flush_volumes_vector": "|".join(map(str, vector)),
+        }
+        (data_dir / "BambuStudio.conf").write_text(json.dumps({"presets": presets}))
+        return temp, data_dir, binary
+
+    def test_discovery_pads_stale_short_flush_vector(self):
+        temp, data_dir, binary = self.bambu_environment(range(8))
+        with temp:
+            environment = discover_environment(data_dir, binary)
+        self.assertEqual(environment.flush_volumes_vector,
+                         tuple(map(float, range(8))) + (140.0, 140.0))
+
+    def test_discovery_preserves_current_flush_vector(self):
+        temp, data_dir, binary = self.bambu_environment(range(10))
+        with temp:
+            environment = discover_environment(data_dir, binary)
+        self.assertEqual(environment.flush_volumes_vector, tuple(map(float, range(10))))
+
+    def test_discovery_trims_stale_long_flush_vector(self):
+        temp, data_dir, binary = self.bambu_environment(range(12))
+        with temp:
+            environment = discover_environment(data_dir, binary)
+        self.assertEqual(environment.flush_volumes_vector, tuple(map(float, range(10))))
+
+    def test_discovery_rejects_invalid_or_unpaired_flush_values(self):
+        for vector in ((0, -1), (0, float("inf")), (0, 1, 2)):
+            with self.subTest(vector=vector):
+                temp, data_dir, binary = self.bambu_environment(vector)
+                with temp, self.assertRaises(ValueError):
+                    discover_environment(data_dir, binary)
+
+    def test_discovery_keeps_flush_matrix_strict(self):
+        temp, data_dir, binary = self.bambu_environment(range(8), matrix=range(24))
+        with temp, self.assertRaisesRegex(ValueError, "do not match"):
+            discover_environment(data_dir, binary)
+
     def test_terrain_model_index_comes_from_source_object_id(self):
         model = '''<config>
           <object id="2"><part><metadata key="source_object_id" value="0"/></part></object>
