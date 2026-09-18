@@ -53,6 +53,173 @@ ATTRIBUTION_LINE_GAP_MM = 1.2
 ATTRIBUTION_FONT_PATH = "/System/Library/Fonts/Supplemental/Arial Bold.ttf"
 COPYRIGHT_MARK_DIAMETER_MM = 5.0
 COPYRIGHT_MIN_FEATURE_MM = 0.6
+DOT_MAGNET_DIAMETER_MM = 18.2
+DOT_MAGNET_DEPTH_MM = 3.0
+DOT_MAGNET_CENTER_RADIUS_MM = 36.0
+DOT_MAGNET_MIN_FLOOR_MM = 0.8
+DOT_MAGNET_EDGE_ALLOWANCE_MM = 2.0
+DOT_MAGNET_PHYSICAL_HEIGHT_MM = 3.048
+DOT_MAGNET_CYLINDER_SEGMENTS = 128
+
+
+def dot_magnet_centers(center_x=0.0, center_y=0.0,
+                       radius=DOT_MAGNET_CENTER_RADIUS_MM):
+    """Return a centered, upright equilateral triangle in back-view order."""
+    radius = float(radius)
+    half_width = math.sqrt(3.0) * radius / 2.0
+    return (
+        (float(center_x), float(center_y) + radius),
+        (float(center_x) - half_width, float(center_y) - radius / 2.0),
+        (float(center_x) + half_width, float(center_y) - radius / 2.0),
+    )
+
+
+def dot_magnet_backing_extension(plate_thickness, terrain_recess_depth):
+    """Add only enough backing to retain the required pocket floor."""
+    available = float(plate_thickness) - float(terrain_recess_depth)
+    return max(0.0, DOT_MAGNET_DEPTH_MM + DOT_MAGNET_MIN_FLOOR_MM - available)
+
+
+def _convex_hull_xy(points):
+    points = sorted(set((float(x), float(y)) for x, y in points))
+    if len(points) < 3:
+        raise RuntimeError("backing plate has no usable perimeter")
+
+    def cross(origin, first, second):
+        return ((first[0] - origin[0]) * (second[1] - origin[1])
+                - (first[1] - origin[1]) * (second[0] - origin[0]))
+
+    lower = []
+    for point in points:
+        while len(lower) >= 2 and cross(lower[-2], lower[-1], point) <= 0:
+            lower.pop()
+        lower.append(point)
+    upper = []
+    for point in reversed(points):
+        while len(upper) >= 2 and cross(upper[-2], upper[-1], point) <= 0:
+            upper.pop()
+        upper.append(point)
+    return lower[:-1] + upper[:-1]
+
+
+def _point_segment_distance(point, first, second):
+    dx, dy = second[0] - first[0], second[1] - first[1]
+    denominator = dx * dx + dy * dy
+    if denominator <= 1e-12:
+        return math.hypot(point[0] - first[0], point[1] - first[1])
+    ratio = max(0.0, min(1.0, (
+        (point[0] - first[0]) * dx + (point[1] - first[1]) * dy
+    ) / denominator))
+    return math.hypot(point[0] - (first[0] + ratio * dx),
+                      point[1] - (first[1] + ratio * dy))
+
+
+def _plate_prism(bpy, name, points, bottom_z, top_z):
+    count = len(points)
+    vertices = ([(x, y, bottom_z) for x, y in points]
+                + [(x, y, top_z) for x, y in points])
+    faces = [tuple(reversed(range(count))), tuple(range(count, count * 2))]
+    for index in range(count):
+        following = (index + 1) % count
+        faces.append((index, following, following + count, index + count))
+    mesh = bpy.data.meshes.new(name)
+    mesh.from_pydata(vertices, [], faces)
+    mesh.update()
+    result = bpy.data.objects.new(name, mesh)
+    bpy.context.collection.objects.link(result)
+    return result
+
+
+def _apply_plate_boolean(bpy, plate, operand, operation, name):
+    bpy.ops.object.select_all(action="DESELECT")
+    plate.select_set(True)
+    bpy.context.view_layer.objects.active = plate
+    modifier = plate.modifiers.new(name, "BOOLEAN")
+    modifier.operation = operation
+    modifier.solver = "EXACT"
+    modifier.object = operand
+    try:
+        bpy.ops.object.modifier_apply(modifier=modifier.name)
+    except Exception as exc:
+        raise RuntimeError(f"could not apply {name.lower()}") from exc
+    finally:
+        bpy.data.objects.remove(operand, do_unlink=True)
+
+
+def prepare_dot_magnet_backing(bpy, plate, terrain_recess_depth):
+    """Extend a generated plate and describe its centered pocket layout."""
+    world_vertices = [plate.matrix_world @ vertex.co for vertex in plate.data.vertices]
+    minimum_z = min(point.z for point in world_vertices)
+    maximum_z = max(point.z for point in world_vertices)
+    minimum_x = min(point.x for point in world_vertices)
+    maximum_x = max(point.x for point in world_vertices)
+    minimum_y = min(point.y for point in world_vertices)
+    maximum_y = max(point.y for point in world_vertices)
+    hull = _convex_hull_xy((point.x, point.y) for point in world_vertices)
+    thickness = maximum_z - minimum_z
+    extension = dot_magnet_backing_extension(thickness, terrain_recess_depth)
+    if extension > 1e-8:
+        backing = _plate_prism(
+            bpy, "TrailPrint dot-magnet backing", hull,
+            minimum_z - extension, minimum_z + 0.04)
+        _apply_plate_boolean(
+            bpy, plate, backing, "UNION", "TrailPrint dot-magnet backing")
+    backing_minimum_z = minimum_z - extension
+    centers = dot_magnet_centers(
+        (minimum_x + maximum_x) / 2.0, (minimum_y + maximum_y) / 2.0)
+    pocket_radius = DOT_MAGNET_DIAMETER_MM / 2.0
+    edge_walls = []
+    for center in centers:
+        center_edge_distance = min(
+            _point_segment_distance(center, hull[index], hull[(index + 1) % len(hull)])
+            for index in range(len(hull)))
+        wall = center_edge_distance - pocket_radius
+        if wall < DOT_MAGNET_EDGE_ALLOWANCE_MM - 1e-6:
+            raise RuntimeError(
+                f"dot magnet at {center} leaves only {wall:.3f} mm at the plate edge")
+        edge_walls.append(wall)
+    return {
+        "enabled": True,
+        "diameter_mm": DOT_MAGNET_DIAMETER_MM,
+        "depth_mm": DOT_MAGNET_DEPTH_MM,
+        "physical_magnet_height_mm": DOT_MAGNET_PHYSICAL_HEIGHT_MM,
+        "nominal_proud_mm": DOT_MAGNET_PHYSICAL_HEIGHT_MM - DOT_MAGNET_DEPTH_MM,
+        "center_radius_mm": DOT_MAGNET_CENTER_RADIUS_MM,
+        "centers_xy_mm": [list(center) for center in centers],
+        "triangle_side_mm": math.sqrt(3.0) * DOT_MAGNET_CENTER_RADIUS_MM,
+        "triangle_centroid_xy_mm": [
+            sum(center[0] for center in centers) / 3.0,
+            sum(center[1] for center in centers) / 3.0,
+        ],
+        "edge_walls_mm": edge_walls,
+        "minimum_edge_wall_mm": min(edge_walls),
+        "minimum_floor_mm": DOT_MAGNET_MIN_FLOOR_MM,
+        "actual_floor_mm": thickness + extension - float(terrain_recess_depth)
+                           - DOT_MAGNET_DEPTH_MM,
+        "original_plate_thickness_mm": thickness,
+        "backing_extension_mm": extension,
+        "final_plate_thickness_mm": thickness + extension,
+        "backing_minimum_z": backing_minimum_z,
+        "orientation": "upright from back with title edge at top",
+    }
+
+
+def cut_dot_magnet_recesses(bpy, plate, metadata):
+    """Cut the three bed-facing pockets into the prepared backing plate."""
+    radius = DOT_MAGNET_DIAMETER_MM / 2.0
+    bottom = float(metadata["backing_minimum_z"])
+    for index, center in enumerate(metadata["centers_xy_mm"], 1):
+        bpy.ops.mesh.primitive_cylinder_add(
+            vertices=DOT_MAGNET_CYLINDER_SEGMENTS, radius=radius,
+            depth=DOT_MAGNET_DEPTH_MM + 0.04,
+            location=(center[0], center[1],
+                      bottom + DOT_MAGNET_DEPTH_MM / 2.0 - 0.02))
+        cutter = bpy.context.active_object
+        cutter.name = f"TrailPrint dot-magnet pocket {index}"
+        _apply_plate_boolean(
+            bpy, plate, cutter, "DIFFERENCE", f"TrailPrint dot-magnet pocket {index}")
+    metadata.pop("backing_minimum_z", None)
+    return metadata
 
 
 def copyright_mark_geometry(depth=ATTRIBUTION_DEPTH_MM, segments=64):
@@ -472,20 +639,49 @@ def main():
         export_dir = Path(config["export_path"])
         normalization_translation = None
         plate = bpy.data.objects.get(config["project_name"] + "_Plate")
-        attribution = None
         if plate is not None:
-            attribution, attribution_metadata = create_plate_attribution(
-                bpy, module_root, plate)
-            (export_dir / "plate-attribution.json").write_text(
-                json.dumps(attribution_metadata, indent=2) + "\n", encoding="utf-8")
+            # TrailPrint3D builds at projected map coordinates that can be
+            # hundreds of kilometres from Blender's origin. Move the complete
+            # generated assembly before the small magnet booleans so the
+            # 18.2 mm features retain numerical precision.
             from mathutils import Vector
-            bounds = [plate.matrix_world @ Vector(corner) for corner in plate.bound_box]
-            minimum = [min(point[index] for point in bounds) for index in range(3)]
-            maximum = [max(point[index] for point in bounds) for index in range(3)]
+            initial_bounds = [plate.matrix_world @ Vector(corner)
+                              for corner in plate.bound_box]
+            initial_minimum = [min(point[index] for point in initial_bounds)
+                               for index in range(3)]
+            initial_maximum = [max(point[index] for point in initial_bounds)
+                               for index in range(3)]
+            early_translation = Vector((
+                -((initial_minimum[0] + initial_maximum[0]) / 2.0),
+                -((initial_minimum[1] + initial_maximum[1]) / 2.0),
+                -initial_minimum[2],
+            ))
+            for generated in bpy.data.objects:
+                if generated.type in {"MESH", "CURVE", "FONT"}:
+                    generated.location += early_translation
+            bpy.context.view_layer.update()
+            # A non-None value also makes the export path replace the add-on's
+            # pre-normalization STL files with the relocated Blender objects.
+            normalization_translation = [0.0, 0.0, 0.0]
+            dot_magnet_metadata = None
+            if config.get("dot_magnet_recess", True):
+                dot_magnet_metadata = prepare_dot_magnet_backing(
+                    bpy, plate, config.get("plate_recess_depth", 0.0))
+            if dot_magnet_metadata is not None:
+                dot_magnet_metadata = cut_dot_magnet_recesses(
+                    bpy, plate, dot_magnet_metadata)
+                (export_dir / "plate-dot-magnets.json").write_text(
+                    json.dumps(dot_magnet_metadata, indent=2) + "\n", encoding="utf-8")
+            final_bounds = [plate.matrix_world @ Vector(corner)
+                            for corner in plate.bound_box]
+            final_minimum = [min(point[index] for point in final_bounds)
+                             for index in range(3)]
+            final_maximum = [max(point[index] for point in final_bounds)
+                             for index in range(3)]
             normalization_translation = [
-                -((minimum[0] + maximum[0]) / 2.0),
-                -((minimum[1] + maximum[1]) / 2.0),
-                -minimum[2],
+                -((final_minimum[0] + final_maximum[0]) / 2.0),
+                -((final_minimum[1] + final_maximum[1]) / 2.0),
+                -final_minimum[2],
             ]
         if elevation_values:
             (export_dir / "terrain-elevation.json").write_text(json.dumps({
@@ -526,8 +722,6 @@ def main():
                     raise RuntimeError(
                         f"could not locate generated Blender object {source_path.stem}")
                 generated_objects[source_path.stem] = generated
-            if attribution is not None:
-                generated_objects[attribution.name] = attribution
             if normalization_translation is not None:
                 from mathutils import Vector
                 translation = Vector(normalization_translation)

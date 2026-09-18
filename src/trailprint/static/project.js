@@ -16,6 +16,7 @@ const titleMeasure = document.createElement('canvas').getContext('2d');
 const metricToggle = document.querySelector('#use-metric');
 const distanceText = document.querySelector('#plate-text-1');
 const plateRecessSetting = document.querySelector('#plate-recess-setting');
+const dotMagnetSetting = document.querySelector('#dot-magnet-setting');
 
 const orientationNotes = {
   HEXAGON: 'Text 1 lower-left · Text 2 bottom · Text 3 lower-right',
@@ -54,6 +55,7 @@ function refreshOrientation() {
   const usesFive = shape.value === 'HEXAGON' && extra.value === 'OUTER TEXT';
   const hasPlate = extra.value === 'OUTER TEXT' || (shape.value === 'HEXAGON' && extra.value === 'FRONT TEXT');
   plateRecessSetting.hidden = !hasPlate;
+  dotMagnetSetting.hidden = !hasPlate;
   plateTextSettings.querySelectorAll('[data-text-field="4"], [data-text-field="5"]')
     .forEach(field => { field.hidden = !usesFive; });
   locationStatus.hidden = !usesFive;

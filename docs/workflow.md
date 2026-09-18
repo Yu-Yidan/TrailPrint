@@ -103,6 +103,9 @@ The local interface intentionally exposes a small subset of TrailPrint3D:
   are automatically limited to 15 mm of relief (about 17 mm with the base)
 - A terrain-shaped plate recess, defaulting to 1.5 mm deep with zero digital
   clearance; available only for layouts that generate a separate plate
+- Checked-by-default 18.2 mm diameter by 3.0 mm deep recesses for three dot magnets;
+  their centers form a 62.354 mm equilateral triangle centered on every separate
+  backing plate, and automatic bed-facing thickness preserves at least a 0.8 mm floor
 - Terrain resolution from 1–10 (8 by default; 8 or lower recommended)
 - Single-color trail mode, which is always enabled
 - A fixed 0.10 mm clearance on each side of the 1.2 mm trail, producing a
@@ -147,9 +150,13 @@ model-Z mapping; older builds must be rebuilt once before elevation colors are
 available. TrailPrint creates an unsliced `deliverables/<project-name>.3mf`
 with this plate layout:
 
-1. One calibrated plate containing Trail, Terrain, and Plate + Text + Attribution.
+1. One calibrated plate containing Trail, Terrain, and Plate + Text.
 2. When **Generate DIY kit** is checked, a second plate containing the adaptive,
    print-in-place integrated-knuckle case. This option is unchecked by default.
+
+New builds do not emboss or inlay data-source attribution on the plate back.
+Use this copy on both the packaging and product listing:
+`Map data © OpenStreetMap contributors — openstreetmap.org/copyright. Elevation data © Mapterhorn — mapterhorn.com/attribution.`
 
 The case height follows the actual Trail STL, rounds upward to 0.20 mm layers,
 and retains 0.20 mm clearance between the hinge envelope and closed-case height.

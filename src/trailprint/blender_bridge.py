@@ -71,6 +71,7 @@ class BuildSettings:
     country: str = ""
     unit_system: str = "IMPERIAL"
     plate_recess_depth: float = 1.5
+    dot_magnet_recess: bool = True
 
     @classmethod
     def validated(cls, shape="HEXAGON", shape_extra="NONE", resolution=8,
@@ -78,7 +79,8 @@ class BuildSettings:
                   plate_text_2="{date}", plate_text_3="{duration}",
                   plate_text_4="{country}", plate_text_5="{state}", x_offset=0, y_offset=0,
                   fixed_elevation_scale=False, city="", state="", country="",
-                  unit_system="IMPERIAL", plate_recess_depth=1.5):
+                  unit_system="IMPERIAL", plate_recess_depth=1.5,
+                  dot_magnet_recess=True):
         shape = str(shape).upper()
         shape_extra = str(shape_extra).upper()
         try:
@@ -117,6 +119,7 @@ class BuildSettings:
             raise ValueError("Plate recess depth must be from 0 to 4 mm.")
         if not has_separate_plate(shape, shape_extra):
             plate_recess_depth = 0.0
+            dot_magnet_recess = False
         return cls(
             shape=shape, shape_extra=shape_extra, resolution=resolution,
             plate_title=text_values[0], plate_text_1=text_values[1],
@@ -125,7 +128,8 @@ class BuildSettings:
             x_offset=x_offset, y_offset=y_offset,
             fixed_elevation_scale=bool(fixed_elevation_scale),
             city=locations[0], state=locations[1], country=locations[2],
-            unit_system=unit_system, plate_recess_depth=plate_recess_depth)
+            unit_system=unit_system, plate_recess_depth=plate_recess_depth,
+            dot_magnet_recess=bool(dot_magnet_recess))
 
 
 def has_separate_plate(shape: str, shape_extra: str) -> bool:
@@ -265,6 +269,7 @@ def _run_attempt(project: Path, settings: BuildSettings, stage: Path, blender_pa
         "unit_system": settings.unit_system, **trip_values,
         "plate_recess_depth": settings.plate_recess_depth,
         "plate_recess_clearance": 0.0,
+        "dot_magnet_recess": settings.dot_magnet_recess,
         "trail_clearance_mm": TRAIL_CLEARANCE_MM,
         "water_min_area_mm2": WATER_MIN_AREA_MM2,
     }), encoding="utf-8")
@@ -326,7 +331,8 @@ def run_blender_build(project: Path, settings: BuildSettings, blender: Optional[
         fixed_elevation_scale=settings.fixed_elevation_scale,
         city=settings.city, state=settings.state, country=settings.country,
         unit_system=settings.unit_system,
-        plate_recess_depth=settings.plate_recess_depth)
+        plate_recess_depth=settings.plate_recess_depth,
+        dot_magnet_recess=settings.dot_magnet_recess)
     blender_path = find_blender(blender)
     build_dir = project / "build"
     build_dir.mkdir(parents=True, exist_ok=True)
@@ -422,8 +428,8 @@ def run_blender_build(project: Path, settings: BuildSettings, blender: Optional[
         "trail_clearance_mm": TRAIL_CLEARANCE_MM,
     }
     try:
-        report["attribution"] = json.loads(
-            (primary_stage / "plate-attribution.json").read_text(encoding="utf-8"))
+        report["dot_magnets"] = json.loads(
+            (primary_stage / "plate-dot-magnets.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         pass
     if cancel_event is not None and cancel_event.is_set():

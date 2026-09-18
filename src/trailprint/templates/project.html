@@ -44,6 +44,10 @@
           <input class="text-input" id="plate-recess-depth" name="plate_recess_depth" type="number" value="1.5" min="0" max="4" step="0.1">
           <p class="fine-print">Depth in millimetres. The pocket follows the exact terrain outline with zero clearance; enter 0 to disable it.</p>
         </div>
+        <div id="dot-magnet-setting">
+          <input type="hidden" name="dot_magnet_recess" value="off">
+          <label class="toggle-setting"><input id="dot-magnet-recess" type="checkbox" name="dot_magnet_recess" value="on" checked><span><strong>Three dot magnet recesses</strong><small>18.2 mm diameter × 3.0 mm deep, centered on the backing plate</small></span></label>
+        </div>
         <div class="text-orientation" id="text-orientation" hidden>
           <strong>Text orientation</strong><small>Face-up view, with the title at the top</small>
           <div class="orientation-shape" id="orientation-shape">

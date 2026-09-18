@@ -233,7 +233,10 @@ def create_app(repo_root: Path = None, build_manager: BuildManager = None,
                 country=request.form.get("country", ""),
                 unit_system=("METRIC" if request.form.get("use_metric") == "on"
                              else "IMPERIAL"),
-                plate_recess_depth=request.form.get("plate_recess_depth", 1.5))
+                plate_recess_depth=request.form.get("plate_recess_depth", 1.5),
+                dot_magnet_recess=(
+                    True if "dot_magnet_recess" not in request.form
+                    else "on" in request.form.getlist("dot_magnet_recess")))
             stats = read_gpx_trip_stats(project / "route.gpx")
             replacements = {"name": human_name(project), "city": settings.city,
                             "state": settings.state, "country": settings.country}
@@ -332,7 +335,7 @@ def create_app(repo_root: Path = None, build_manager: BuildManager = None,
         } for path in files]
         available_roles = {item["role"] for item in preview_files}
         missing_roles = [role for role in
-                         ("trail", "terrain", "plate", "text", "attribution")
+                         ("trail", "terrain", "plate", "text")
                          if role not in available_roles]
         try:
             bambu_environment = discover_environment()

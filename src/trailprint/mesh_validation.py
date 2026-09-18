@@ -216,8 +216,6 @@ def validate_stls(paths: Iterable[Path], project_slug: str, repair=True) -> dict
                          if item["role"] == "plate" and item["valid"]), None)
     attribution_result = next((item for item in files
                                if item["role"] == "attribution" and item["valid"]), None)
-    if plate_result and not attribution_result:
-        errors.append("No valid back-plate attribution STL was generated.")
     if attribution_result and not plate_result:
         errors.append("Attribution was generated without a valid plate STL.")
     if plate_result and attribution_result:
