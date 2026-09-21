@@ -9,6 +9,7 @@ import trimesh
 
 from trailprint.bambu import (
     ONE_PLATE_LAYOUT,
+    WALL_GENERATOR,
     BambuEnvironment,
     BambuSettings,
     _enforce_project_settings,
@@ -228,6 +229,8 @@ class BambuProjectTests(unittest.TestCase):
             self.assertTrue(any(float(value) > 0
                                 for value in final["flush_volumes_matrix"]))
             self.assertEqual(final["print_sequence"], "by object")
+            self.assertEqual(final["wall_generator"], "arachne")
+            self.assertEqual(report["wall_generator"], WALL_GENERATOR)
             self.assertEqual(final["enable_prime_tower"], "0")
             self.assertEqual(final["prime_tower_enable_framework"], "0")
             self.assertEqual(final["enable_tower_interface_features"], "0")
@@ -256,6 +259,7 @@ class BambuProjectTests(unittest.TestCase):
                 ],
                 "flush_volumes_vector": ["0"] * 8,
                 "print_sequence": "by object",
+                "wall_generator": "arachne",
                 "first_layer_print_sequence": ["0"],
                 "other_layers_print_sequence": ["0"],
                 "other_layers_print_sequence_nums": "0",
@@ -283,6 +287,27 @@ class BambuProjectTests(unittest.TestCase):
             self.assertTrue(report["diy_kit_included"])
             self.assertEqual(report["plates"], 2)
             self.assertEqual(report["diy_case_filament"], 3)
+
+    def test_validation_rejects_non_arachne_wall_generator(self):
+        with tempfile.TemporaryDirectory() as temp:
+            output = Path(temp) / "classic.3mf"
+            settings = {
+                "enable_prime_tower": "0",
+                "prime_tower_enable_framework": "0",
+                "enable_tower_interface_features": "0",
+                "initial_layer_print_height": "0.2",
+                "flush_multiplier": ["0.6"],
+                "print_sequence": "by object",
+                "wall_generator": "classic",
+            }
+            with zipfile.ZipFile(output, "w", zipfile.ZIP_STORED) as archive:
+                archive.writestr("3D/3dmodel.model", b"x" * 3000)
+                archive.writestr(
+                    "Metadata/project_settings.config", json.dumps(settings))
+                archive.writestr("Metadata/model_settings.config", "<config/>")
+
+            with self.assertRaisesRegex(ValueError, "Arachne"):
+                validate_3mf(output, {}, filament_count=1)
 
     def test_layout_constants_are_independent_calibration_parameters(self):
         self.assertEqual(ONE_PLATE_LAYOUT["terrain"]["rotation_deg"], 0.0)

@@ -31,6 +31,7 @@ ROLE_ORDER = ("trail", "terrain", "plate", "text", "attribution")
 FIRST_LAYER_HEIGHT_MM = 0.2
 PURGE_MULTIPLIER = 0.6
 PRINT_SEQUENCE = "by object"
+WALL_GENERATOR = "arachne"
 OBJECT_CLEARANCE_MM = 2.0  # P1S nozzle/gantry safety margin for sequential printing.
 ONE_PLATE_LAYOUT = {
     "trail": {
@@ -591,6 +592,7 @@ def _enforce_project_settings(path: Path, environment: BambuEnvironment,
                 "flush_volumes_matrix": [str(value) for value in matrix],
                 "flush_volumes_vector": [str(value) for value in vector],
                 "print_sequence": PRINT_SEQUENCE,
+                "wall_generator": WALL_GENERATOR,
                 "first_layer_print_sequence": ["0"],
                 "other_layers_print_sequence": ["0"],
                 "other_layers_print_sequence_nums": "0",
@@ -680,6 +682,8 @@ def validate_3mf(path: Path, expected_filaments: dict, expected_bands=None,
         raise ValueError("Generated Bambu project did not preserve the 0.6 purge multiplier.")
     if project_settings.get("print_sequence") != PRINT_SEQUENCE:
         raise ValueError("Generated Bambu project is not configured to print by object.")
+    if project_settings.get("wall_generator") != WALL_GENERATOR:
+        raise ValueError("Generated Bambu project is not configured to use Arachne walls.")
     if (project_settings.get("first_layer_print_sequence") != ["0"]
             or project_settings.get("other_layers_print_sequence") != ["0"]
             or str(project_settings.get("other_layers_print_sequence_nums")) != "0"):
@@ -848,6 +852,7 @@ def validate_3mf(path: Path, expected_filaments: dict, expected_bands=None,
             "water_filament": water_filament,
             "prime_tower": False, "purge_multiplier": PURGE_MULTIPLIER,
             "print_sequence": PRINT_SEQUENCE,
+            "wall_generator": WALL_GENERATOR,
             "plate_metadata": plate_metadata is not None,
             "diy_kit_included": diy_case_filament is not None,
             "diy_case_filament": diy_case_filament}
@@ -911,6 +916,7 @@ def create_bambu_project(project: Path, settings: BambuSettings,
                         "flush_volumes_matrix": [str(value) for value in matrix],
                         "flush_volumes_vector": [str(value) for value in vector],
                         "print_sequence": PRINT_SEQUENCE,
+                        "wall_generator": WALL_GENERATOR,
                         "first_layer_print_sequence": ["0"],
                         "other_layers_print_sequence": ["0"],
                         "other_layers_print_sequence_nums": "0",
