@@ -13,17 +13,31 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+import numpy as np
+import trimesh
+
 from .gpx import (
     AUTO_RELIEF_LIMIT_MM,
     format_trip_stats,
-    gpx_center_latitude,
     read_gpx_trip_date,
     read_gpx_trip_stats,
 )
-from .mesh_validation import align_core_to_terrain, mesh_role, validate_stls, write_report
+from .mesh_validation import (
+    align_core_to_terrain,
+    inspect_stl,
+    mesh_role,
+    normalize_anomalous_assembly,
+    validate_stls,
+    write_report,
+)
 from .naming import deliverable_prefix, human_name
 from .osm_colors import analyze_project
 from .title import resolve_project_title, validate_title_fit
+from .water_geometry import (
+    WATER_BOOLEAN_BOUNDS_TOLERANCE_MM,
+    prepare_integrated_water,
+    repair_terrain_for_water_boolean,
+)
 
 
 class BuildCancelled(Exception):
@@ -61,11 +75,11 @@ class BuildSettings:
     plate_text_1: str = "{length}"
     plate_text_2: str = "{date}"
     plate_text_3: str = "{duration}"
-    plate_text_4: str = "{country}"
-    plate_text_5: str = "{state}"
+    plate_text_4: str = ""
+    plate_text_5: str = ""
     x_offset: float = 0.0
     y_offset: float = 0.0
-    fixed_elevation_scale: bool = False
+    max_terrain_relief_mm: float = AUTO_RELIEF_LIMIT_MM
     city: str = ""
     state: str = ""
     country: str = ""
@@ -77,8 +91,9 @@ class BuildSettings:
     def validated(cls, shape="HEXAGON", shape_extra="NONE", resolution=8,
                   plate_title="{name}", plate_text_1="{length}",
                   plate_text_2="{date}", plate_text_3="{duration}",
-                  plate_text_4="{country}", plate_text_5="{state}", x_offset=0, y_offset=0,
-                  fixed_elevation_scale=False, city="", state="", country="",
+                  plate_text_4="", plate_text_5="", x_offset=0, y_offset=0,
+                  max_terrain_relief_mm=AUTO_RELIEF_LIMIT_MM,
+                  city="", state="", country="",
                   unit_system="IMPERIAL", plate_recess_depth=1.5,
                   dot_magnet_recess=True):
         shape = str(shape).upper()
@@ -105,6 +120,12 @@ class BuildSettings:
             raise ValueError("X and Y offsets must be numbers.") from exc
         if not math.isfinite(x_offset) or not math.isfinite(y_offset):
             raise ValueError("X and Y offsets must be finite numbers.")
+        try:
+            max_terrain_relief_mm = float(max_terrain_relief_mm)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Maximum terrain relief must be a positive number.") from exc
+        if not math.isfinite(max_terrain_relief_mm) or max_terrain_relief_mm <= 0:
+            raise ValueError("Maximum terrain relief must be a positive number.")
         locations = [str(value).strip() for value in (city, state, country)]
         if any(len(value) > 200 for value in locations):
             raise ValueError("Location fields must be 200 characters or fewer.")
@@ -126,7 +147,7 @@ class BuildSettings:
             plate_text_2=text_values[2], plate_text_3=text_values[3],
             plate_text_4=text_values[4], plate_text_5=text_values[5],
             x_offset=x_offset, y_offset=y_offset,
-            fixed_elevation_scale=bool(fixed_elevation_scale),
+            max_terrain_relief_mm=max_terrain_relief_mm,
             city=locations[0], state=locations[1], country=locations[2],
             unit_system=unit_system, plate_recess_depth=plate_recess_depth,
             dot_magnet_recess=bool(dot_magnet_recess))
@@ -182,6 +203,72 @@ def _prefix_staged_outputs(project: Path, stage: Path) -> None:
             path.rename(path.with_name(prefix + path.name))
 
 
+def _integrate_generated_water(stage: Path, project_slug: str, blender_path: Path,
+                               timeout: int, cancel_event=None) -> tuple:
+    paths = list(stage.glob("*.stl"))
+    terrain = next((path for path in paths
+                    if mesh_role(path, project_slug) == "terrain"), None)
+    water = [path for path in paths if mesh_role(path, project_slug) == "water"]
+    if terrain is None or not water:
+        return None, None
+    work = stage / "water-integration"
+    work.mkdir()
+    cap = work / f"{project_slug}_WATER.stl"
+    cutter = work / "water-cutter.stl"
+    support = work / "water-terrain-support.stl"
+    report = prepare_integrated_water(terrain, water, cap, cutter, support)
+    if not report.get("available"):
+        for path in water:
+            path.unlink(missing_ok=True)
+        return report, None
+    repaired_terrain = work / "terrain-manifold.stl"
+    repair = repair_terrain_for_water_boolean(terrain, repaired_terrain)
+    report["terrain_repair"] = repair
+    output = work / "terrain-with-water-basins.stl"
+    job = work / "job.json"
+    job.write_text(json.dumps({
+        "terrain_path": str(repaired_terrain), "cutter_path": str(cutter),
+        "support_path": str(support),
+        "output_path": str(output),
+    }), encoding="utf-8")
+    worker = Path(__file__).with_name("water_worker.py")
+    result = _run_command(
+        [str(blender_path), "--background", "--python", str(worker), "--", str(job)],
+        timeout, cancel_event)
+    combined_log = (result.stdout or "") + "\n" + (result.stderr or "")
+    if (result.returncode != 0 or not output.is_file()
+            or "Cannot execute" in combined_log):
+        detail = _failure_detail(result)
+        raise ValueError(f"Could not integrate shallow water into Terrain: {detail}")
+    integrated = trimesh.load_mesh(output, process=True)
+    original_bounds = np.asarray(repair["bounds_mm"], dtype=float)
+    integrated_bounds = np.asarray(integrated.bounds, dtype=float)
+    tolerance = WATER_BOOLEAN_BOUNDS_TOLERANCE_MM
+    preserved = np.allclose(
+        integrated_bounds[[0, 1], :2], original_bounds[[0, 1], :2],
+        atol=tolerance, rtol=0)
+    base_preserved = abs(integrated_bounds[0, 2] - original_bounds[0, 2]) <= tolerance
+    roof_absent = integrated_bounds[1, 2] <= original_bounds[1, 2] + tolerance
+    removed_volume = float(repair["volume_mm3"] - abs(integrated.volume))
+    volume_changed = abs(removed_volume) > 0.01
+    if not preserved or not base_preserved or not roof_absent or not volume_changed:
+        raise ValueError(
+            "Water basin Boolean validation failed "
+            f"(xy_preserved={preserved}, base_preserved={base_preserved}, "
+            f"cutter_roof_absent={roof_absent}, volume_delta_mm3={removed_volume:.4f}).")
+    report["terrain_boolean"] = {
+        "solver": "MANIFOLD", "bounds_preserved": True,
+        "cutter_roof_absent": True, "net_removed_volume_mm3": removed_volume,
+        "output_bounds_mm": integrated_bounds.tolist(),
+    }
+    os.replace(output, terrain)
+    for path in water:
+        path.unlink(missing_ok=True)
+    destination = stage / f"{project_slug}_WATER.stl"
+    os.replace(cap, destination)
+    return report, _attempt_log("integrated shallow water", result)
+
+
 def _read_elevation_metadata(stage: Path, validation: dict) -> dict:
     try:
         value = json.loads((stage / "terrain-elevation.json").read_text(encoding="utf-8"))
@@ -200,13 +287,40 @@ def _read_elevation_metadata(stage: Path, validation: dict) -> dict:
         return {}
     if maximum <= minimum or surface_max <= surface_min or thickness < 0:
         return {}
-    return {
+    result = {
         "source_min_m": minimum, "source_max_m": maximum,
         "model_surface_min_z_mm": surface_min,
         "model_surface_max_z_mm": surface_max,
         "min_thickness_mm": thickness,
         "unit_system": str(value.get("unit_system", "IMPERIAL")).upper(),
     }
+    for name in ("uncapped_model_relief_mm", "final_model_relief_mm",
+                 "max_terrain_relief_mm", "elevation_multiplier"):
+        try:
+            number = float(value[name])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if math.isfinite(number):
+            result[name] = number
+    result["cap_applied"] = bool(value.get("cap_applied", False))
+    return result
+
+
+def _validate_terrain_relief(stage: Path, validation: dict,
+                             maximum_relief_mm: float) -> dict:
+    elevation = _read_elevation_metadata(stage, validation)
+    if not elevation:
+        return {}
+    actual = (elevation["model_surface_max_z_mm"]
+              - elevation["model_surface_min_z_mm"])
+    maximum = float(maximum_relief_mm)
+    if actual > maximum + 0.05:
+        raise ValueError(
+            f"Generated terrain relief is {actual:.2f} mm; the maximum is "
+            f"{maximum:.2f} mm.")
+    elevation["actual_model_relief_mm"] = actual
+    elevation["max_terrain_relief_mm"] = maximum
+    return elevation
 
 
 def _run_command(command, timeout: int, cancel_event=None) -> subprocess.CompletedProcess:
@@ -261,9 +375,7 @@ def _run_attempt(project: Path, settings: BuildSettings, stage: Path, blender_pa
         "plate_text_2": settings.plate_text_2, "plate_text_3": settings.plate_text_3,
         "plate_text_4": settings.plate_text_4, "plate_text_5": settings.plate_text_5,
         "x_offset": settings.x_offset, "y_offset": settings.y_offset,
-        "fixed_elevation_scale": settings.fixed_elevation_scale,
-        "fixed_elevation_target_mm": AUTO_RELIEF_LIMIT_MM,
-        "center_latitude": gpx_center_latitude(route),
+        "max_terrain_relief_mm": settings.max_terrain_relief_mm,
         "trip_date": read_gpx_trip_date(route), "city": settings.city,
         "state": settings.state, "country": settings.country,
         "unit_system": settings.unit_system, **trip_values,
@@ -328,7 +440,7 @@ def run_blender_build(project: Path, settings: BuildSettings, blender: Optional[
         plate_text_3=settings.plate_text_3, plate_text_4=settings.plate_text_4,
         plate_text_5=settings.plate_text_5, x_offset=settings.x_offset,
         y_offset=settings.y_offset,
-        fixed_elevation_scale=settings.fixed_elevation_scale,
+        max_terrain_relief_mm=settings.max_terrain_relief_mm,
         city=settings.city, state=settings.state, country=settings.country,
         unit_system=settings.unit_system,
         plate_recess_depth=settings.plate_recess_depth,
@@ -363,8 +475,30 @@ def run_blender_build(project: Path, settings: BuildSettings, blender: Optional[
         detail = _failure_detail(result)
         raise ValueError(f"TrailPrint3D failed: {detail}")
     _prefix_staged_outputs(project, primary_stage)
+    primary_files = list(primary_stage.glob("*.stl"))
+    pre_water_corrections = normalize_anomalous_assembly(
+        primary_files,
+        [inspect_stl(path, project.name) for path in primary_files],
+        project.name)
+    water_integration = None
+    remaining = max(1, timeout - int(time.monotonic() - started))
+    try:
+        water_integration, water_log = _integrate_generated_water(
+            primary_stage, project.name, blender_path, remaining, cancel_event)
+        if water_log:
+            logs.append(water_log)
+    except (BuildCancelled, subprocess.TimeoutExpired, ValueError) as exc:
+        log_path.write_text("".join(logs) + f"\n[water integration]\n{exc}\n", encoding="utf-8")
+        shutil.rmtree(attempt_root, ignore_errors=True)
+        PROGRESS_FILE.unlink(missing_ok=True)
+        if isinstance(exc, BuildCancelled):
+            raise
+        raise ValueError(f"Water integration failed: {exc}") from exc
     primary_paths = list(primary_stage.glob("*.stl"))
     primary_validation = validate_stls(primary_paths, project.name)
+    if pre_water_corrections:
+        primary_validation["corrections"] = (
+            pre_water_corrections + primary_validation.get("corrections", []))
     final_validation = primary_validation
     fallback_validation = None
     fallback_used = False
@@ -397,8 +531,39 @@ def run_blender_build(project: Path, settings: BuildSettings, blender: Optional[
             logs.append(_attempt_log("no Shape Extras fallback", fallback_result))
             if fallback_result.returncode == 0:
                 _prefix_staged_outputs(project, fallback_stage)
+                fallback_files = list(fallback_stage.glob("*.stl"))
+                fallback_pre_water_corrections = normalize_anomalous_assembly(
+                    fallback_files,
+                    [inspect_stl(path, project.name) for path in fallback_files],
+                    project.name)
+                remaining = max(1, timeout - int(time.monotonic() - started))
+                try:
+                    fallback_water, water_log = _integrate_generated_water(
+                        fallback_stage, project.name, blender_path, remaining, cancel_event)
+                    if water_log:
+                        logs.append(water_log)
+                except BuildCancelled:
+                    log_path.write_text(
+                        "Build cancelled during fallback water integration.\n", encoding="utf-8")
+                    shutil.rmtree(attempt_root, ignore_errors=True)
+                    PROGRESS_FILE.unlink(missing_ok=True)
+                    raise
+                except (subprocess.TimeoutExpired, ValueError) as exc:
+                    fallback_validation = {
+                        "valid": False, "files": [], "corrections": [],
+                        "errors": [f"Fallback water integration failed: {exc}"],
+                    }
+                    fallback_water = None
+                else:
+                    if fallback_water is not None:
+                        water_integration = fallback_water
                 fallback_paths = list(fallback_stage.glob("*.stl"))
-                fallback_validation = validate_stls(fallback_paths, project.name)
+                if fallback_validation is None:
+                    fallback_validation = validate_stls(fallback_paths, project.name)
+                    if fallback_pre_water_corrections:
+                        fallback_validation["corrections"] = (
+                            fallback_pre_water_corrections
+                            + fallback_validation.get("corrections", []))
                 if fallback_validation["valid"]:
                     fallback_alignment = align_core_to_terrain(
                         fallback_paths, primary_paths, project.name)
@@ -418,6 +583,16 @@ def run_blender_build(project: Path, settings: BuildSettings, blender: Optional[
                     "unknown error")
                 fallback_validation = {"valid": False, "files": [], "corrections": [],
                                        "errors": [f"Fallback generation failed: {detail}"]}
+    try:
+        elevation = (_validate_terrain_relief(
+            elevation_stage, final_validation, settings.max_terrain_relief_mm)
+            if final_validation["valid"] else {})
+    except ValueError as exc:
+        log_path.write_text("".join(logs) + f"\n[terrain relief validation]\n{exc}\n",
+                            encoding="utf-8")
+        shutil.rmtree(attempt_root, ignore_errors=True)
+        PROGRESS_FILE.unlink(missing_ok=True)
+        raise
     # TrailPrint3D's STL exporter can discard the Blender-side joined key
     # geometry. Reinsert the calibrated cylinders into the final Trail STL so
     # the requested keys are present in the deliverable.
@@ -426,6 +601,8 @@ def run_blender_build(project: Path, settings: BuildSettings, blender: Optional[
         "primary": primary_validation, "fallback": fallback_validation,
         "fallback_alignment": fallback_alignment, "final": final_validation,
         "trail_clearance_mm": TRAIL_CLEARANCE_MM,
+        "water_integration": water_integration,
+        "terrain_elevation": elevation,
     }
     try:
         report["dot_magnets"] = json.loads(
@@ -489,7 +666,6 @@ def run_blender_build(project: Path, settings: BuildSettings, blender: Optional[
         os.replace(preview_stage, preview_path)
     else:
         preview_path.unlink(missing_ok=True)
-    elevation = _read_elevation_metadata(elevation_stage, final_validation)
     elevation_path = build_dir / "elevation.json"
     if elevation:
         temporary_elevation = elevation_path.with_suffix(".tmp")

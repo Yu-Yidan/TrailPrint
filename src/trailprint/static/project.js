@@ -104,11 +104,8 @@ if (plateTextSettings) {
   const countryValue = document.querySelector('#location-country');
   const status = document.querySelector('#location-status');
   const retry = document.querySelector('#retry-location');
-  [[countryText, countryValue], [stateText, stateValue]].forEach(([field, hidden]) => {
-    field.addEventListener('input', () => {
-      field.dataset.edited = 'true';
-      hidden.value = field.value;
-    });
+  [countryText, stateText].forEach((field) => {
+    field.addEventListener('input', () => { field.dataset.edited = 'true'; });
   });
   const detect = async () => {
     status.textContent = 'Detecting location…'; retry.hidden = true;
@@ -117,11 +114,8 @@ if (plateTextSettings) {
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Location lookup failed');
       cityValue.value = result.city || '';
-      [[countryText, countryValue, result.country], [stateText, stateValue, result.state]]
-        .forEach(([field, hidden, value]) => {
-          if (field.dataset.edited !== 'true') field.value = value || '';
-          hidden.value = field.value;
-        });
+      countryValue.value = result.country || '';
+      stateValue.value = result.state || '';
       status.textContent = 'Detected from the first GPX point';
     } catch (error) {
       status.textContent = `${error.message}. You can enter the location manually.`;

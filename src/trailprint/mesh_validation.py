@@ -29,7 +29,7 @@ def mesh_role(path: Path, project_slug: str) -> str:
     return "other"
 
 
-def _component_sizes(mesh: trimesh.Trimesh) -> List[int]:
+def _component_face_groups(mesh: trimesh.Trimesh) -> List[List[int]]:
     face_count = len(mesh.faces)
     if not face_count:
         return []
@@ -45,11 +45,15 @@ def _component_sizes(mesh: trimesh.Trimesh) -> List[int]:
         first_root, second_root = find(int(first)), find(int(second))
         if first_root != second_root:
             parent[second_root] = first_root
-    sizes: Dict[int, int] = {}
+    groups: Dict[int, List[int]] = {}
     for index in range(face_count):
         root = find(index)
-        sizes[root] = sizes.get(root, 0) + 1
-    return sorted(sizes.values(), reverse=True)
+        groups.setdefault(root, []).append(index)
+    return sorted(groups.values(), key=len, reverse=True)
+
+
+def _component_sizes(mesh: trimesh.Trimesh) -> List[int]:
+    return [len(group) for group in _component_face_groups(mesh)]
 
 
 def _load(path: Path) -> trimesh.Trimesh:
@@ -120,6 +124,23 @@ def inspect_stl(path: Path, project_slug: str, map_span: float = None) -> dict:
         if abs(float(extents[2]) - 0.2) > 0.01:
             result["errors"].append(
                 "Attribution must be exactly one 0.20 mm first layer deep.")
+    if role == "water":
+        if not mesh.is_watertight:
+            result["errors"].append("Integrated water must be watertight.")
+        columns = {}
+        for x_value, y_value, z_value in vertices:
+            key = (round(float(x_value), 4), round(float(y_value), 4))
+            columns.setdefault(key, []).append(float(z_value))
+        local_depths = [max(values) - min(values) for values in columns.values()
+                        if len(values) >= 2]
+        result["local_depth_min_mm"] = round(min(local_depths), 4) if local_depths else None
+        result["local_depth_max_mm"] = round(max(local_depths), 4) if local_depths else None
+        if (not local_depths
+                or any(min(abs(value - 0.2), abs(value - 0.4)) > 0.01
+                       for value in local_depths)):
+            result["errors"].append(
+                "Integrated inland water must be 0.40 mm deep and ocean water "
+                "must be 0.20 mm deep at every XY position.")
     result["valid"] = not result["errors"]
     return result
 

@@ -289,7 +289,7 @@ class WebTests(unittest.TestCase):
             "plate_title": "Volcano Loop", "plate_text_1": "{length}",
             "plate_text_2": "Gain {elevation}", "plate_text_3": "{duration}",
             "plate_text_4": "Hawaii", "plate_text_5": "2026",
-            "x_offset": "1.25", "y_offset": "-0.5", "fixed_elevation_scale": "on",
+            "x_offset": "1.25", "y_offset": "-0.5",
             "city": "Volcano", "state": "Hawaii", "country": "United States"})
         self.assertEqual(response.status_code, 302)
         settings = self.build_manager.started.settings
@@ -300,7 +300,7 @@ class WebTests(unittest.TestCase):
         self.assertEqual(settings.plate_text_2, "Gain 105 ft")
         self.assertEqual(settings.plate_text_5, "2026")
         self.assertEqual((settings.x_offset, settings.y_offset), (1.25, -0.5))
-        self.assertFalse(settings.fixed_elevation_scale)
+        self.assertEqual(settings.max_terrain_relief_mm, 15.0)
         self.assertEqual(settings.plate_recess_depth, 1.5)
         self.assertTrue(settings.dot_magnet_recess)
         self.assertEqual((settings.city, settings.state, settings.country),
@@ -315,8 +315,8 @@ class WebTests(unittest.TestCase):
                          b'name="plate_text_1" value="0.41 mi"',
                          b'name="plate_text_2" value=""',
                          b'name="plate_text_3" value=""',
-                         b'name="plate_text_4" value="USA"',
-                         b'name="plate_text_5" value="Hawaii"',
+                         b'name="plate_text_4" value=""',
+                         b'name="plate_text_5" value=""',
                          b'name="city" type="hidden" value="Volcano"',
                          b'name="state" type="hidden" value="Hawaii"',
                          b'name="country" type="hidden" value="USA"',
@@ -336,7 +336,8 @@ class WebTests(unittest.TestCase):
         self.assertNotIn(b'name="include_water"', page)
         self.assertNotIn(b'name="include_ocean"', page)
         self.assertNotIn(b'name="fixed_elevation_scale"', page)
-        self.assertIn(b"Natural elevation scale retained", page)
+        self.assertIn(b"Generated terrain relief capped at 15 mm", page)
+        self.assertIn(b"complete downloaded terrain", page)
         self.assertNotIn(b"{length}", page)
 
     def test_tall_route_is_automatically_limited(self):
@@ -346,13 +347,13 @@ class WebTests(unittest.TestCase):
           <trkpt lat="45.01" lon="-122.01"><ele>1000</ele></trkpt>
         </trkseg></trk></gpx>''', encoding="utf-8")
         page = self.client.get("/projects/tall").data
-        self.assertIn(b"Automatically limited to 15 mm", page)
+        self.assertIn(b"Generated terrain relief capped at 15 mm", page)
 
         self.client.post("/projects/tall/build", data={
             "shape": "HEXAGON", "shape_extra": "NONE", "resolution": "8",
             "plate_title": "Tall"})
 
-        self.assertTrue(self.build_manager.started.settings.fixed_elevation_scale)
+        self.assertEqual(self.build_manager.started.settings.max_terrain_relief_mm, 15.0)
 
     def test_project_page_surfaces_literal_gpx_trip_date(self):
         project = create_project(self.root / "prints", "Dated Trip", GPX)

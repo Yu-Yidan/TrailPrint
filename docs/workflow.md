@@ -96,11 +96,13 @@ The local interface intentionally exposes a small subset of TrailPrint3D:
 - A shape-aware diagram showing where each plate text field is placed
 - Trip date from the first GPX timestamp, formatted as `YYYY.MM.DD` and shown
   literally in Text 2
-- Country and state detected asynchronously from the first GPX point, shown in
-  editable Text 4 and Text 5 fields respectively, and cached in `location.json`
+- Country and state detected asynchronously from the first GPX point and cached
+  in `location.json`; Text 4 and Text 5 remain blank by default and independently
+  editable
 - X and Y terrain offsets
-- Expected printed relief calculated from GPX elevations; routes above 15 mm
-  are automatically limited to 15 mm of relief (about 17 mm with the base)
+- A route-only preliminary relief estimate, while the build itself measures the
+  complete downloaded DEM and strictly caps relief at 15 mm (about 17 mm with
+  the base); flatter terrain retains its natural scale
 - A terrain-shaped plate recess, defaulting to 1.5 mm deep with zero digital
   clearance; available only for layouts that generate a separate plate
 - Checked-by-default 18.2 mm diameter by 3.0 mm deep recesses for three dot magnets;
@@ -111,10 +113,9 @@ The local interface intentionally exposes a small subset of TrailPrint3D:
 - A fixed 0.10 mm clearance on each side of the 1.2 mm trail, producing a
   nominal 1.4 mm terrain groove while keeping Trail and Terrain separate
 
-Build choices are session-only and reset when the project page reloads. Text 4
-and Text 5 location corrections are saved when a build is submitted. Location
+Build choices are session-only and reset when the project page reloads. Location
 detection sends the first route coordinate to OpenStreetMap Nominatim; failure
-leaves editable blank fields and never blocks a build. TrailPrint explicitly
+leaves the cached metadata blank and never blocks a build. TrailPrint explicitly
 sets the tested trail clearance; other settings use the defaults supplied by
 the installed TrailPrint3D add-on. Blender runs
 invisibly, downloads terrain data, and exports STL geometry only.
@@ -187,10 +188,17 @@ the deliverables folder opens in Finder and the browser returns to the project
 dashboard.
 
 Lakes, major rivers, and coastal sea remain available in the terrain build. When
-water exists, the calibrated one-plate Bambu export always groups its recessed
-blue geometry with Terrain as one multipart object; there is no separate-water
-layout. TrailPrint reports an unsliced estimate of mixed-color water layers and
-possible manual swaps. Snow-cap bands use the same Terrain height-range
+water exists, TrailPrint replaces the source water solids with localized inlays
+whose elevation comes from a narrow ring of immediately adjacent terrain.
+Shorelines with no meaningful elevation change produce a flat 0.40 mm inlay on
+two 0.20 mm layers. Changing shorelines produce locally quantized 0.20 mm steps
+with the same local depth. Coastal ocean remains flat and uses one 0.20 mm
+layer. TrailPrint widens narrow or pointed regions to at least 1.0 mm, fills
+unprintably small holes, and creates matching Terrain basins and support. The calibrated one-plate Bambu
+export groups this blue geometry with Terrain as one multipart object; there is
+no independently placed water object or full-layer Ocean geometry. TrailPrint
+reports an unsliced estimate of mixed-color water layers and possible manual
+swaps. Snow-cap bands use the same Terrain height-range
 assignments as other elevation colors and remain on the calibrated one-plate
 layout.
 

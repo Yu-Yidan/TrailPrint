@@ -23,6 +23,15 @@ class MeshValidationTests(unittest.TestCase):
         self.assertEqual(mesh_role(Path(f"{slug}_Trail.stl"), slug), "trail")
         self.assertEqual(mesh_role(Path(f"{slug}_WATER.stl"), slug), "water")
 
+    def test_one_layer_ocean_and_two_layer_inland_water_are_valid(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            for depth in (0.2, 0.4):
+                path = root / f"route-{depth}_WATER.stl"
+                trimesh.creation.box(extents=(10, 10, depth)).export(path)
+                result = inspect_stl(path, f"route-{depth}")
+                self.assertTrue(result["valid"], result["errors"])
+
     def test_valid_set_and_fragmented_trail(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

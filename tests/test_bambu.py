@@ -97,6 +97,8 @@ class BambuProjectTests(unittest.TestCase):
         self.assertEqual([plate["plate_name"] for plate in manifest["plates"]],
                          ["TrailPrint"])
         self.assertFalse(manifest["plates"][0]["need_arrange"])
+        self.assertEqual(manifest["plates"][0]["plate_params"]["print_sequence"],
+                         "by object")
         self.assertEqual(len(manifest["plates"][0]["objects"]), 4)
         self.assertEqual([item["assemble_index"] for item in manifest["plates"][0]["objects"]],
                          [[0], [0], [1], [1]])
@@ -152,6 +154,14 @@ class BambuProjectTests(unittest.TestCase):
         self.assertEqual(estimate["water_layer_count"], 3)
         self.assertEqual(estimate["mixed_filament_layer_count"], 0)
         self.assertEqual(estimate["manual_swaps_max"], 0)
+
+    def test_two_layer_water_on_layer_boundaries_is_not_overcounted(self):
+        settings = BambuSettings(3, 4, 1, 2, 1, 2, water_filament=2)
+        estimate = estimate_water_layer_changes(
+            [(19.8, 20.2)], 3.8, 0.2, 0.2, settings, [])
+
+        self.assertEqual(estimate["water_layer_count"], 2)
+        self.assertEqual(estimate["water_layer_ranges"], [[81, 82]])
 
     def test_osm_mode_uses_lowest_band_as_terrain_base(self):
         bands = ({"role": "black", "min_z": 2.0, "max_z": 5.0},

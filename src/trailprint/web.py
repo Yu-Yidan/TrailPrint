@@ -212,9 +212,6 @@ def create_app(repo_root: Path = None, build_manager: BuildManager = None,
     def build_project(slug):
         project = get_project(slug)
         try:
-            expected_relief = estimate_print_relief_mm(project / "route.gpx")
-            limit_elevation = (expected_relief is not None
-                               and expected_relief > AUTO_RELIEF_LIMIT_MM)
             settings = BuildSettings.validated(
                 shape=request.form.get("shape", "HEXAGON"),
                 shape_extra=request.form.get("shape_extra", "OUTER TEXT"),
@@ -223,11 +220,11 @@ def create_app(repo_root: Path = None, build_manager: BuildManager = None,
                 plate_text_1=request.form.get("plate_text_1", "{length}"),
                 plate_text_2=request.form.get("plate_text_2", "{date}"),
                 plate_text_3=request.form.get("plate_text_3", "{duration}"),
-                plate_text_4=request.form.get("plate_text_4", "{country}"),
-                plate_text_5=request.form.get("plate_text_5", "{state}"),
+                plate_text_4=request.form.get("plate_text_4", ""),
+                plate_text_5=request.form.get("plate_text_5", ""),
                 x_offset=request.form.get("x_offset", 0),
                 y_offset=request.form.get("y_offset", 0),
-                fixed_elevation_scale=limit_elevation,
+                max_terrain_relief_mm=AUTO_RELIEF_LIMIT_MM,
                 city=request.form.get("city", ""),
                 state=request.form.get("state", ""),
                 country=request.form.get("country", ""),

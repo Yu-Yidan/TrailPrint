@@ -36,10 +36,42 @@ def with_plate_clearance(original, props, clearance):
     return wrapped
 
 
-def fixed_elevation_multiplier(target_relief_mm, center_latitude):
-    """Convert TrailPrint3D's equatorial 10 mm scale to a latitude-safe target."""
-    return (float(target_relief_mm) / 10.0) * max(
-        0.01, math.cos(math.radians(float(center_latitude))))
+def terrain_relief_scaling(elevations, mercator_factors, horizontal_scale,
+                           max_relief_mm):
+    """Choose TrailPrint3D scale settings from the complete DEM footprint."""
+    elevations = [float(value) for value in elevations]
+    mercator_factors = [float(value) for value in mercator_factors]
+    if not elevations or len(elevations) != len(mercator_factors):
+        raise ValueError("Terrain relief scaling requires matching DEM samples.")
+    if not all(math.isfinite(value) for value in elevations + mercator_factors):
+        raise ValueError("Terrain relief scaling received non-finite DEM samples.")
+    horizontal_scale = float(horizontal_scale)
+    maximum = float(max_relief_mm)
+    if not math.isfinite(horizontal_scale) or horizontal_scale <= 0:
+        raise ValueError("Terrain horizontal scale must be positive.")
+    if not math.isfinite(maximum) or maximum <= 0:
+        raise ValueError("Maximum terrain relief must be positive.")
+
+    natural = [elevation / 1000.0 * horizontal_scale * mercator
+               for elevation, mercator in zip(elevations, mercator_factors)]
+    uncapped_relief = max(natural) - min(natural)
+    result = {
+        "uncapped_model_relief_mm": float(uncapped_relief),
+        "final_model_relief_mm": float(uncapped_relief),
+        "max_terrain_relief_mm": maximum,
+        "cap_applied": False,
+        "elevation_multiplier": 1.0,
+    }
+    if uncapped_relief <= maximum + 1e-9:
+        return result
+
+    multiplier = maximum / uncapped_relief
+    result.update({
+        "final_model_relief_mm": maximum,
+        "cap_applied": True,
+        "elevation_multiplier": float(multiplier),
+    })
+    return result
 
 
 ATTRIBUTION_LINES = (
@@ -582,14 +614,8 @@ def main():
         props.textfield5 = resolve_text(config["plate_text_5"], config)
         props.xTerrainOffset = float(config["x_offset"])
         props.yTerrainOffset = float(config["y_offset"])
-        props.fixedElevationScale = bool(config["fixed_elevation_scale"])
-        if props.fixedElevationScale:
-            target_relief = float(config.get("fixed_elevation_target_mm", 15.0))
-            center_latitude = float(config.get("center_latitude", 0.0))
-            props.scaleElevation = fixed_elevation_multiplier(
-                target_relief, center_latitude)
-        else:
-            props.scaleElevation = 1.0
+        props.fixedElevationScale = False
+        props.scaleElevation = 1.0
         props.plateInsertValue = float(config.get("plate_recess_depth", 0))
         props.tolerance = float(config.get("trail_clearance_mm", 0.1))
         print(f"Trail clearance per side: {props.tolerance:.3f} mm")
@@ -602,6 +628,7 @@ def main():
         original_plate_insert = terrain_utils.plateInsert
         original_elevation = elevation_utils.get_tile_elevation
         elevation_values = []
+        elevation_scaling = {}
         terrain_samples = []
         terrain_bounds = {}
 
@@ -613,19 +640,39 @@ def main():
                 obj = args[0]
                 geo_utils = importlib.import_module(module_root + ".utils.geo")
                 vertices = list(obj.data.vertices)
+                paired_count = min(len(vertices), len(values))
+                mercator_factors = []
                 stride = max(1, math.ceil(len(vertices) / 20000))
-                for index in range(0, min(len(vertices), len(values)), stride):
+                for index in range(paired_count):
                     world = obj.matrix_world @ vertices[index].co
                     lat, lon = geo_utils.convert_to_geo(world.x, world.y)
                     elevation = float(values[index])
+                    mercator_factors.append(
+                        1.0 / max(0.01, math.cos(math.radians(float(lat)))))
+                    if index % stride != 0:
+                        continue
                     if all(math.isfinite(item) for item in (lat, lon, elevation)):
                         terrain_samples.append([lat, lon, elevation])
+                decision = terrain_relief_scaling(
+                    values[:paired_count], mercator_factors,
+                    float(props.get("sScaleHor", props.sScaleHor)),
+                    float(config.get("max_terrain_relief_mm", 15.0)))
+                print("[terrain relief cap] " + json.dumps(decision, sort_keys=True))
+                props.fixedElevationScale = False
+                props.scaleElevation = 1.0
+                elevation_scaling.update(decision)
                 terrain_bounds.update({
                     "min_lat": float(props.minLat), "max_lat": float(props.maxLat),
                     "min_lon": float(props.minLon), "max_lon": float(props.maxLon),
                 })
-            except (AttributeError, IndexError, TypeError, ValueError):
-                pass
+            except (AttributeError, IndexError, TypeError) as exc:
+                raise RuntimeError(
+                    "Could not calculate the DEM-based terrain relief cap.") from exc
+            if elevation_scaling.get("cap_applied"):
+                multiplier = elevation_scaling["elevation_multiplier"]
+                scaled_values = [float(value) * multiplier for value in values]
+                scaled_difference = max(scaled_values) - min(scaled_values)
+                return scaled_values, scaled_difference
             return values, difference
 
         terrain_utils.plateInsert = with_plate_clearance(
@@ -639,14 +686,15 @@ def main():
         export_dir = Path(config["export_path"])
         normalization_translation = None
         plate = bpy.data.objects.get(config["project_name"] + "_Plate")
-        if plate is not None:
+        reference = plate or bpy.data.objects.get(config["project_name"])
+        if reference is not None:
             # TrailPrint3D builds at projected map coordinates that can be
-            # hundreds of kilometres from Blender's origin. Move the complete
-            # generated assembly before the small magnet booleans so the
-            # 18.2 mm features retain numerical precision.
+            # hundreds of kilometres from Blender's origin. Always move the
+            # complete assembly before STL export so terrain, water and small
+            # magnet features retain printable-scale numerical precision.
             from mathutils import Vector
-            initial_bounds = [plate.matrix_world @ Vector(corner)
-                              for corner in plate.bound_box]
+            initial_bounds = [reference.matrix_world @ Vector(corner)
+                              for corner in reference.bound_box]
             initial_minimum = [min(point[index] for point in initial_bounds)
                                for index in range(3)]
             initial_maximum = [max(point[index] for point in initial_bounds)
@@ -664,7 +712,7 @@ def main():
             # pre-normalization STL files with the relocated Blender objects.
             normalization_translation = [0.0, 0.0, 0.0]
             dot_magnet_metadata = None
-            if config.get("dot_magnet_recess", True):
+            if plate is not None and config.get("dot_magnet_recess", True):
                 dot_magnet_metadata = prepare_dot_magnet_backing(
                     bpy, plate, config.get("plate_recess_depth", 0.0))
             if dot_magnet_metadata is not None:
@@ -672,8 +720,8 @@ def main():
                     bpy, plate, dot_magnet_metadata)
                 (export_dir / "plate-dot-magnets.json").write_text(
                     json.dumps(dot_magnet_metadata, indent=2) + "\n", encoding="utf-8")
-            final_bounds = [plate.matrix_world @ Vector(corner)
-                            for corner in plate.bound_box]
+            final_bounds = [reference.matrix_world @ Vector(corner)
+                            for corner in reference.bound_box]
             final_minimum = [min(point[index] for point in final_bounds)
                              for index in range(3)]
             final_maximum = [max(point[index] for point in final_bounds)
@@ -689,6 +737,7 @@ def main():
                 "source_max_m": max(elevation_values),
                 "min_thickness_mm": float(props.minThickness),
                 "unit_system": config.get("unit_system", "IMPERIAL"),
+                **elevation_scaling,
             }, indent=2) + "\n", encoding="utf-8")
         if terrain_samples and terrain_bounds:
             (export_dir / "terrain-samples.json").write_text(json.dumps({
