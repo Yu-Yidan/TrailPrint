@@ -63,8 +63,8 @@
           <label data-text-field="1"><span>Text 1</span><input class="text-input" id="plate-text-1" name="plate_text_1" value="{{ trip_values.IMPERIAL.length }}" maxlength="200"></label>
           <label data-text-field="2"><span>Text 2</span><input class="text-input" name="plate_text_2" value="{{ trip_values.IMPERIAL.date }}" maxlength="200"></label>
           <label data-text-field="3"><span>Text 3</span><input class="text-input" name="plate_text_3" value="{{ trip_values.IMPERIAL.duration }}" maxlength="200"></label>
-          <label data-text-field="4"><span>Text 4</span><input class="text-input" id="plate-text-4" name="plate_text_4" value="{{ location.country }}" maxlength="200"></label>
-          <label data-text-field="5"><span>Text 5</span><input class="text-input" id="plate-text-5" name="plate_text_5" value="{{ location.state }}" maxlength="200"></label>
+          <label data-text-field="4"><span>Text 4</span><input class="text-input" id="plate-text-4" name="plate_text_4" value="" maxlength="200"></label>
+          <label data-text-field="5"><span>Text 5</span><input class="text-input" id="plate-text-5" name="plate_text_5" value="" maxlength="200"></label>
         </div>
         <div class="location-status"><small id="location-status">{{ 'Saved location' if has_location_cache else 'Detecting location…' }}</small>
           <button class="link-button" id="retry-location" type="button" {% if not has_location_cache %}hidden{% endif %}>Detect again</button></div>
@@ -79,9 +79,8 @@
           <label><span>Y offset</span><input class="text-input" name="y_offset" type="number" value="0" step="any"></label>
         </div>
         <div class="terrain-elevation">
-          {% if expected_relief is none %}<strong>Expected terrain relief unavailable</strong><p class="fine-print">The GPX does not contain enough usable elevation data, so natural elevation scaling will be retained.</p>
-          {% elif expected_relief > relief_limit %}<strong>Expected relief: {{ '%.1f'|format(expected_relief) }} mm · Automatically limited to {{ '%.0f'|format(relief_limit) }} mm</strong><p class="fine-print">Approximately {{ '%.0f'|format(relief_limit + 2) }} mm total terrain thickness including the standard 2 mm base.</p>
-          {% else %}<strong>Expected relief: {{ '%.1f'|format(expected_relief) }} mm · Natural elevation scale retained</strong><p class="fine-print">Approximately {{ '%.1f'|format(expected_relief + 2) }} mm total terrain thickness including the standard 2 mm base.</p>{% endif %}
+          <strong>Generated terrain relief capped at {{ '%.0f'|format(relief_limit) }} mm</strong>
+          <p class="fine-print">The cap uses the complete downloaded terrain, not only the GPX route. Flatter terrain retains its natural scale. Maximum terrain thickness is approximately {{ '%.0f'|format(relief_limit + 2) }} mm including the standard 2 mm base.{% if expected_relief is not none %} Route-only preliminary estimate: {{ '%.1f'|format(expected_relief) }} mm.{% endif %}</p>
         </div>
       </fieldset>
       <label class="locked-setting"><input type="checkbox" checked disabled><span><strong>Single-color trail</strong><small>Always enabled for TrailPrint builds</small></span><span class="lock">Locked</span></label>

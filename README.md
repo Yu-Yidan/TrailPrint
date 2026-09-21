@@ -35,8 +35,10 @@ Start the project dashboard and open <http://127.0.0.1:5000>:
 The interface lists existing projects, accepts GPX files by drag-and-drop, and
 can run TrailPrint3D from a project detail page. The reduced interface exposes
 shape, shape extras, plate text, terrain offsets, and resolution while always
-enabling water and single-color trail mode. Terrain expected to exceed 15 mm of
-printed relief is automatically limited to 15 mm. Projects can be
+enabling water and single-color trail mode. The complete downloaded DEM is
+measured before displacement; relief above 15 mm is scaled down exactly while
+flatter terrain retains its natural scale. With the standard 2 mm base, terrain
+is therefore at most about 17 mm thick. Projects can be
 sorted by their zero-padded four-digit filesystem ID; analytics retain the ID
 as an integer, and the prefix is omitted from headings and printable titles.
 Projects can be
@@ -75,9 +77,9 @@ pipeline safely.
 
 Text 2 shows the GPX trip date in `YYYY.MM.DD` format. Country and state are
 detected in the background from the first GPX point using OpenStreetMap
-Nominatim, shown directly in editable Text 4 and Text 5 fields respectively,
-and cached per project. Title defaults to the readable project name and is
-measured against the selected plate layout before a build can start. Terrain
+Nominatim and cached per project as location metadata. Text 4 and Text 5 are
+blank by default and remain independently editable. Title defaults to the
+readable project name and is measured against the selected plate layout before a build can start. Terrain
 resolution defaults to 8. Plate-generating layouts default to an adjustable
 1.5 mm terrain-shaped alignment recess with zero digital clearance. They also default
 to three bed-facing recesses for 18.2 mm diameter by 3.0 mm deep dot magnets. The
@@ -98,9 +100,14 @@ TrailPrint stops Blender and discards staged work while preserving prior STL,
 3MF, preview, and validation files. Cancelled and failed jobs do not create
 analytics status facts. Preview colors use green terrain, red trail, blue water,
 black plate, and white text; STL files themselves remain colorless. Builds include
-lakes, major rivers, and coastal sea by default as recessed inserts. Water
-regions smaller than 25 mm² on the model are filtered out before
-their matching recesses are made.
+lakes, major rivers, and coastal sea by default as recessed Terrain inlays.
+Each inland water body samples the terrain immediately outside its shoreline.
+Level shorelines produce a flat two-layer, 0.40 mm inlay; changing shorelines
+produce locally quantized 0.20 mm elevation steps while retaining the same
+two-layer local depth. Coastal ocean is a flat one-layer, 0.20 mm inlay. Narrow
+or pointed regions are widened to at least 1.0 mm before the matching Terrain
+basin and terrain-colored support are made. Raw full-layer Ocean geometry is
+not packaged.
 The separately printed 1.2 mm trail uses 0.10 mm clearance per side in its
 terrain groove, for a nominal groove width of 1.4 mm.
 
@@ -109,8 +116,9 @@ From the validated preview, TrailPrint can also create a reviewable Bambu Studio
 Bambu Studio. Choose filament numbers for each model role and TrailPrint builds
 one calibrated plate containing Trail, multipart Terrain + Water when water is
 available, and multipart Plate + Text. Objects print by object using the
-calibrated layout. Water always uses its selected blue filament within the
-Terrain object; it is never exported as a separate plate. Mountain and snow-cap
+calibrated layout. Water always uses its selected blue filament as an integrated
+part within the Terrain object; it is never independently placed or exported as
+a separate plate. Mountain and snow-cap
 colors are assigned to Terrain by elevation. An unchecked-by-default DIY kit
 option adds a second plate containing an adaptive, print-in-place integrated-knuckle
 case. The case reuses the filament assigned to grey terrain rock. The 3MF is validated before

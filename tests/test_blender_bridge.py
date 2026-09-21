@@ -15,6 +15,7 @@ from trailprint.blender_bridge import (
     BuildSettings,
     _failure_detail,
     _run_command,
+    _validate_terrain_relief,
     run_blender_build,
 )
 from trailprint.blender_worker import (
@@ -30,9 +31,9 @@ from trailprint.blender_worker import (
     dot_magnet_backing_extension,
     dot_magnet_centers,
     fetch_lava_osm,
-    fixed_elevation_multiplier,
     lava_osm_query,
     resolve_text,
+    terrain_relief_scaling,
     with_plate_clearance,
 )
 from trailprint.gpx import read_gpx_trip_date
@@ -57,9 +58,40 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(ATTRIBUTION_TEXT_HEIGHT_MM, 4.5)
         self.assertGreaterEqual(COPYRIGHT_MIN_FEATURE_MM, 0.6)
 
-    def test_fixed_elevation_target_compensates_for_latitude(self):
-        self.assertAlmostEqual(fixed_elevation_multiplier(15, 0), 1.5)
-        self.assertAlmostEqual(fixed_elevation_multiplier(15, 60), 0.75)
+    def test_dem_relief_scaling_caps_actual_height_without_stretching_flat_maps(self):
+        flat = terrain_relief_scaling([1000, 1100], [1, 1], 40, 15)
+        self.assertFalse(flat["cap_applied"])
+        self.assertAlmostEqual(flat["final_model_relief_mm"], 4)
+
+        tall = terrain_relief_scaling(
+            [1010.25, 1219.0, 1368.5], [2.10, 2.11, 2.12], 33.96, 15)
+        self.assertTrue(tall["cap_applied"])
+        self.assertGreater(tall["uncapped_model_relief_mm"], 15)
+        self.assertAlmostEqual(tall["final_model_relief_mm"], 15)
+        self.assertGreater(tall["elevation_multiplier"], 0)
+
+    def test_final_terrain_relief_guard_uses_exported_surface_bounds(self):
+        with tempfile.TemporaryDirectory() as temp:
+            stage = Path(temp)
+            (stage / "terrain-elevation.json").write_text(json.dumps({
+                "source_min_m": 100, "source_max_m": 500,
+                "min_thickness_mm": 2, "unit_system": "IMPERIAL",
+                "uncapped_model_relief_mm": 24, "final_model_relief_mm": 15,
+                "max_terrain_relief_mm": 15, "cap_applied": True,
+                "elevation_multiplier": 0.625,
+            }), encoding="utf-8")
+            validation = {"files": [{
+                "role": "terrain", "valid": True,
+                "bounds_mm": [[-50, -40, 0], [50, 40, 17]],
+            }]}
+
+            result = _validate_terrain_relief(stage, validation, 15)
+            self.assertEqual(result["actual_model_relief_mm"], 15)
+            self.assertTrue(result["cap_applied"])
+
+            validation["files"][0]["bounds_mm"][1][2] = 17.06
+            with self.assertRaisesRegex(ValueError, "maximum is 15.00 mm"):
+                _validate_terrain_relief(stage, validation, 15)
 
     def test_failure_detail_prefers_exception_over_stdout(self):
         result = subprocess.CompletedProcess(
@@ -108,9 +140,11 @@ class SettingsTests(unittest.TestCase):
         self.assertLess(time.monotonic() - started, 4)
 
     def test_defaults_and_compatibility(self):
-        self.assertEqual(BuildSettings.validated(),
+        defaults = BuildSettings.validated()
+        self.assertEqual(defaults,
                          BuildSettings("HEXAGON", "NONE", 8, plate_recess_depth=0,
                                        dot_magnet_recess=False))
+        self.assertEqual((defaults.plate_text_4, defaults.plate_text_5), ("", ""))
         self.assertEqual(BuildSettings.validated("circle", "outer text", "8"),
                          BuildSettings("CIRCLE", "OUTER TEXT", 8))
         with self.assertRaisesRegex(ValueError, "unavailable"):
@@ -119,10 +153,10 @@ class SettingsTests(unittest.TestCase):
             BuildSettings.validated("HEXAGON", "NONE", 11)
         custom = BuildSettings.validated(
             "hexagon", "inner text", 5, "Summit", "12 km", "900 m", "2 hr", "", "",
-            "1.5", "-2", True)
+            "1.5", "-2", max_terrain_relief_mm=12.5)
         self.assertEqual(custom.plate_title, "Summit")
         self.assertEqual((custom.x_offset, custom.y_offset), (1.5, -2.0))
-        self.assertTrue(custom.fixed_elevation_scale)
+        self.assertEqual(custom.max_terrain_relief_mm, 12.5)
         with self.assertRaisesRegex(ValueError, "must be numbers"):
             BuildSettings.validated(x_offset="left")
         recessed = BuildSettings.validated("hexagon", "outer text", plate_recess_depth="1.5")
@@ -263,9 +297,7 @@ class SettingsTests(unittest.TestCase):
                 self.assertEqual(config["plate_text_3"], "{duration}")
                 self.assertEqual(config["trip_date"], "2022.09.21")
                 self.assertEqual(config["x_offset"], 0.0)
-                self.assertFalse(config["fixed_elevation_scale"])
-                self.assertEqual(config["fixed_elevation_target_mm"], 15.0)
-                self.assertAlmostEqual(config["center_latitude"], 0.0)
+                self.assertEqual(config["max_terrain_relief_mm"], 15.0)
                 self.assertEqual(config["plate_recess_depth"], 0.0)
                 self.assertEqual(config["plate_recess_clearance"], 0.0)
                 self.assertEqual(config["trail_clearance_mm"], 0.1)

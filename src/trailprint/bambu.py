@@ -306,7 +306,8 @@ def assemble_manifest(files: dict, settings: BambuSettings, filament_count: int,
             positions["plate_text"]))
     plates = [{
         "plate_name": "TrailPrint", "need_arrange": False,
-        "filaments_count": filament_count, "plate_params": {},
+        "filaments_count": filament_count,
+        "plate_params": {"print_sequence": PRINT_SEQUENCE},
         "objects": [
             _object(files["trail"], values["trail"],
                     position=positions["trail"],
@@ -450,7 +451,10 @@ def estimate_water_layer_changes(water_bounds, terrain_base_z, nominal_layer_hei
     for minimum, maximum in water_bounds:
         if not all(math.isfinite(float(value)) for value in (minimum, maximum)):
             continue
-        first, last = layer_at(minimum), layer_at(maximum)
+        # A solid whose lower face lies exactly on a layer boundary starts in
+        # the layer above that boundary; the lower layer contains no volume.
+        first = layer_at(float(minimum) + nominal * 1e-3)
+        last = layer_at(maximum)
         water_layers.update(range(first, last + 1))
 
     def layer_midpoint(layer):
