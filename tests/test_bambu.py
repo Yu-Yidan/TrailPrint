@@ -186,7 +186,11 @@ class BambuProjectTests(unittest.TestCase):
     def test_validates_and_enforces_bambu_archive(self):
         with tempfile.TemporaryDirectory() as temp:
             output = Path(temp) / "model.3mf"
-            settings = {"enable_prime_tower": "1", "flush_volumes_matrix": ["12"]}
+            settings = {
+                "enable_prime_tower": "1",
+                "flush_volumes_matrix": ["12"],
+                "different_settings_to_system": ["existing_override", "filament_override"],
+            }
             model = '''<config>
               <object id="2"><metadata key="extruder" value="3"/><part><metadata key="source_file" value="model_Trail.stl"/><metadata key="source_object_id" value="0"/></part></object>
               <object id="4"><part><metadata key="source_file" value="model.stl"/><metadata key="source_object_id" value="1"/><metadata key="extruder" value="4"/></part><part><metadata key="source_file" value="model_WATER.stl"/><metadata key="source_object_id" value="2"/><metadata key="extruder" value="2"/></part></object>
@@ -215,6 +219,7 @@ class BambuProjectTests(unittest.TestCase):
                      {"role": "summit", "min_z": 17.0, "max_z": 20.0}]
             terrain_filaments = {"land": 4, "mountain": 1, "summit": 2}
             _enforce_project_settings(output, environment, bands, terrain_filaments)
+            _enforce_project_settings(output, environment, bands, terrain_filaments)
             report = validate_3mf(
                 output, {"trail": 3, "terrain": 4, "plate": 1, "text": 2,
                          "attribution": 1},
@@ -230,6 +235,11 @@ class BambuProjectTests(unittest.TestCase):
                                 for value in final["flush_volumes_matrix"]))
             self.assertEqual(final["print_sequence"], "by object")
             self.assertEqual(final["wall_generator"], "arachne")
+            self.assertEqual(
+                final["different_settings_to_system"][0],
+                "existing_override;wall_generator")
+            self.assertEqual(final["different_settings_to_system"][1], "filament_override")
+            self.assertEqual(len(final["different_settings_to_system"]), 6)
             self.assertEqual(report["wall_generator"], WALL_GENERATOR)
             self.assertEqual(final["enable_prime_tower"], "0")
             self.assertEqual(final["prime_tower_enable_framework"], "0")
@@ -260,6 +270,7 @@ class BambuProjectTests(unittest.TestCase):
                 "flush_volumes_vector": ["0"] * 8,
                 "print_sequence": "by object",
                 "wall_generator": "arachne",
+                "different_settings_to_system": ["wall_generator"],
                 "first_layer_print_sequence": ["0"],
                 "other_layers_print_sequence": ["0"],
                 "other_layers_print_sequence_nums": "0",
@@ -307,6 +318,33 @@ class BambuProjectTests(unittest.TestCase):
                 archive.writestr("Metadata/model_settings.config", "<config/>")
 
             with self.assertRaisesRegex(ValueError, "Arachne"):
+                validate_3mf(output, {}, filament_count=1)
+
+    def test_validation_rejects_inactive_arachne_wall_generator(self):
+        with tempfile.TemporaryDirectory() as temp:
+            output = Path(temp) / "inactive-arachne.3mf"
+            settings = {
+                "enable_prime_tower": "0",
+                "prime_tower_enable_framework": "0",
+                "enable_tower_interface_features": "0",
+                "initial_layer_print_height": "0.2",
+                "flush_multiplier": ["0.6"],
+                "flush_volumes_matrix": ["0"],
+                "flush_volumes_vector": ["0", "0"],
+                "print_sequence": "by object",
+                "wall_generator": "arachne",
+                "different_settings_to_system": [""],
+                "first_layer_print_sequence": ["0"],
+                "other_layers_print_sequence": ["0"],
+                "other_layers_print_sequence_nums": "0",
+            }
+            with zipfile.ZipFile(output, "w", zipfile.ZIP_STORED) as archive:
+                archive.writestr("3D/3dmodel.model", b"x" * 3000)
+                archive.writestr(
+                    "Metadata/project_settings.config", json.dumps(settings))
+                archive.writestr("Metadata/model_settings.config", "<config/>")
+
+            with self.assertRaisesRegex(ValueError, "process override"):
                 validate_3mf(output, {}, filament_count=1)
 
     def test_layout_constants_are_independent_calibration_parameters(self):
