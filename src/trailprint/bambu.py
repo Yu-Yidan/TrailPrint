@@ -625,6 +625,7 @@ def _enforce_project_settings(path: Path, environment: BambuEnvironment,
                 "filament_colour": [item["color"] for item in environment.filaments],
             })
             _declare_process_override(settings, "wall_generator", count)
+            _declare_process_override(settings, "enable_prime_tower", count)
             with zipfile.ZipFile(replacement, "w", zipfile.ZIP_DEFLATED) as target:
                 for item in source.infolist():
                     if item.filename in {"Metadata/layer_config_ranges.xml",
@@ -691,6 +692,10 @@ def validate_3mf(path: Path, expected_filaments: dict, expected_bands=None,
                 "enable_tower_interface_features"):
         if str(project_settings.get(key)) not in {"0", "False", "false"}:
             raise ValueError("Generated Bambu project did not disable the prime tower.")
+    if not _has_process_override(project_settings, "enable_prime_tower"):
+        raise ValueError(
+            "Generated Bambu project does not activate the disabled prime tower setting "
+            "as a process override.")
     initial_height = project_settings.get("initial_layer_print_height")
     initial_height = (initial_height[0]
                       if isinstance(initial_height, list) and initial_height
