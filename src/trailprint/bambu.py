@@ -567,6 +567,32 @@ def _terrain_model_index(model_settings) -> str:
     raise ValueError("Generated Bambu project does not identify Terrain's model index.")
 
 
+def _declare_process_override(settings: dict, key: str, filament_count: int) -> None:
+    """Declare a project value as an override of Bambu's process preset."""
+    overrides = settings.get("different_settings_to_system")
+    if not isinstance(overrides, list):
+        overrides = []
+    else:
+        overrides = list(overrides)
+    while len(overrides) < filament_count + 2:
+        overrides.append("")
+
+    process_overrides = [
+        item for item in str(overrides[0]).split(";") if item
+    ]
+    if key not in process_overrides:
+        process_overrides.append(key)
+    overrides[0] = ";".join(process_overrides)
+    settings["different_settings_to_system"] = overrides
+
+
+def _has_process_override(settings: dict, key: str) -> bool:
+    overrides = settings.get("different_settings_to_system")
+    if not isinstance(overrides, list) or not overrides:
+        return False
+    return key in {item for item in str(overrides[0]).split(";") if item}
+
+
 def _enforce_project_settings(path: Path, environment: BambuEnvironment,
                               terrain_bands=None, terrain_filaments=None,
                               nominal_layer_height=0.2, layout_report=None) -> None:
@@ -598,6 +624,7 @@ def _enforce_project_settings(path: Path, environment: BambuEnvironment,
                 "other_layers_print_sequence_nums": "0",
                 "filament_colour": [item["color"] for item in environment.filaments],
             })
+            _declare_process_override(settings, "wall_generator", count)
             with zipfile.ZipFile(replacement, "w", zipfile.ZIP_DEFLATED) as target:
                 for item in source.infolist():
                     if item.filename in {"Metadata/layer_config_ranges.xml",
@@ -684,6 +711,9 @@ def validate_3mf(path: Path, expected_filaments: dict, expected_bands=None,
         raise ValueError("Generated Bambu project is not configured to print by object.")
     if project_settings.get("wall_generator") != WALL_GENERATOR:
         raise ValueError("Generated Bambu project is not configured to use Arachne walls.")
+    if not _has_process_override(project_settings, "wall_generator"):
+        raise ValueError(
+            "Generated Bambu project does not activate Arachne as a process override.")
     if (project_settings.get("first_layer_print_sequence") != ["0"]
             or project_settings.get("other_layers_print_sequence") != ["0"]
             or str(project_settings.get("other_layers_print_sequence_nums")) != "0"):
