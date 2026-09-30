@@ -109,8 +109,11 @@ class SettingsTests(unittest.TestCase):
             previous = {
                 project / "deliverables/previous.stl": b"previous stl",
                 project / "deliverables/keep.3mf": b"previous 3mf",
+                project / "deliverables/Previous-preview.png": b"previous customer preview",
                 project / "build/preview.png": b"previous preview",
-                project / "build/validation.json": b'{"valid": true}',
+                project / "build/validation.json": (
+                    b'{"valid": true, "preview": '
+                    b'{"customer_filename": "Previous-preview.png"}}'),
                 project / "build/elevation.json": b'{"source_min_m": 1}',
             }
             for path, data in previous.items():
@@ -279,11 +282,18 @@ class SettingsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             project = Path(temp) / "project"
             (project / "deliverables").mkdir(parents=True)
+            (project / "build").mkdir()
             (project / "route.gpx").write_text(
                 '<gpx><trk><trkseg><trkpt lat="1" lon="2"><time>2022-09-21T20:23:23-06:00</time>'
                 '</trkpt></trkseg></trk></gpx>', encoding="utf-8")
             (project / "deliverables/old.stl").write_text("old", encoding="ascii")
             (project / "deliverables/keep.3mf").write_text("keep", encoding="ascii")
+            old_customer = project / "deliverables/Old Title-preview.png"
+            old_customer.write_bytes(b"old customer preview")
+            (project / "build/validation.json").write_text(json.dumps({
+                "valid": True,
+                "preview": {"valid": True, "customer_filename": old_customer.name},
+            }), encoding="utf-8")
             blender = Path(temp) / "blender"
             blender.touch()
 
@@ -320,9 +330,15 @@ class SettingsTests(unittest.TestCase):
             self.assertEqual({path.name for path in outputs}, {"project.stl", "project_Trail.stl"})
             self.assertFalse((project / "deliverables/old.stl").exists())
             self.assertTrue((project / "deliverables/keep.3mf").exists())
+            self.assertFalse(old_customer.exists())
             self.assertGreater((project / "build/preview.png").stat().st_size, 1000)
+            customer_preview = project / "deliverables/Project-preview.png"
+            self.assertEqual(customer_preview.read_bytes(),
+                             (project / "build/preview.png").read_bytes())
             report = json.loads((project / "build/validation.json").read_text(encoding="utf-8"))
             self.assertTrue(report["preview"]["valid"])
+            self.assertEqual(report["preview"]["customer_filename"],
+                             "Project-preview.png")
             self.assertEqual(report["trail_clearance_mm"], 0.1)
             elevation = json.loads((project / "build/elevation.json").read_text(encoding="utf-8"))
             self.assertEqual((elevation["source_min_m"], elevation["source_max_m"]), (100, 200))
@@ -401,6 +417,12 @@ class SettingsTests(unittest.TestCase):
             (project / "deliverables").mkdir(parents=True)
             (project / "build").mkdir()
             (project / "build/preview.png").write_bytes(b"old preview")
+            old_customer = project / "deliverables/Old-preview.png"
+            old_customer.write_bytes(b"old customer preview")
+            (project / "build/validation.json").write_text(json.dumps({
+                "valid": True,
+                "preview": {"valid": True, "customer_filename": old_customer.name},
+            }), encoding="utf-8")
             (project / "route.gpx").write_text("<gpx/>", encoding="utf-8")
             blender = Path(temp) / "blender"
             blender.touch()
@@ -419,6 +441,7 @@ class SettingsTests(unittest.TestCase):
                 outputs = run_blender_build(project, BuildSettings(), blender=blender)
             self.assertEqual(len(outputs), 2)
             self.assertFalse((project / "build/preview.png").exists())
+            self.assertFalse(old_customer.exists())
             report = json.loads((project / "build/validation.json").read_text(encoding="utf-8"))
             self.assertFalse(report["preview"]["valid"])
             self.assertIn("render failed", report["preview"]["error"])
@@ -427,9 +450,20 @@ class SettingsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             project = Path(temp) / "project"
             (project / "deliverables").mkdir(parents=True)
+            (project / "build").mkdir()
             (project / "route.gpx").write_text("<gpx/>", encoding="utf-8")
             previous = project / "deliverables/previous.stl"
             previous.write_text("old", encoding="ascii")
+            customer_preview = project / "deliverables/Previous-preview.png"
+            customer_preview.write_bytes(b"old customer preview")
+            (project / "build/preview.png").write_bytes(b"old internal preview")
+            (project / "build/validation.json").write_text(json.dumps({
+                "valid": True,
+                "preview": {
+                    "valid": True,
+                    "customer_filename": customer_preview.name,
+                },
+            }), encoding="utf-8")
             blender = Path(temp) / "blender"
             blender.touch()
 
@@ -447,8 +481,12 @@ class SettingsTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "fragmented"):
                     run_blender_build(project, BuildSettings(), blender=blender)
             self.assertEqual(previous.read_text(encoding="ascii"), "old")
+            self.assertEqual(customer_preview.read_bytes(), b"old customer preview")
             report = json.loads((project / "build/validation.json").read_text(encoding="utf-8"))
             self.assertFalse(report["valid"])
+            self.assertTrue(report["preview"]["preserved"])
+            self.assertEqual(report["preview"]["customer_filename"],
+                             customer_preview.name)
 
     def test_failure_preserves_prior_stls(self):
         with tempfile.TemporaryDirectory() as temp:

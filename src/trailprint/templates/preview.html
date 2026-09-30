@@ -6,9 +6,12 @@
 <a class="back" href="{{ url_for('project_detail', slug=project.name) }}">← Project settings</a>
 <section class="preview-header"><div><p class="eyebrow">VALIDATED MODEL PREVIEW</p>
   <h1>{{ project_title }}</h1><p>Bird's-eye view of the generated print files.</p></div>
-  <form method="post" action="{{ url_for('open_output_folder', slug=project.name) }}">
-    <button class="button secondary" type="submit">Open output folder</button>
-  </form>
+  <div class="bambu-actions">
+    {% if customer_preview %}<a class="button secondary" href="{{ url_for('download_file', slug=project.name, filename=customer_preview) }}">Download customer preview</a>{% endif %}
+    <form method="post" action="{{ url_for('open_output_folder', slug=project.name) }}">
+      <button class="button secondary" type="submit">Open output folder</button>
+    </form>
+  </div>
 </section>
 {% if validation.fallback_used %}<div class="notice success"><strong>Automatic recovery used.</strong>
 Terrain and trail were regenerated with Shape Extras set to None; the requested plate and text were preserved.</div>{% endif %}

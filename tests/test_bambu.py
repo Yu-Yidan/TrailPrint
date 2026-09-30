@@ -234,7 +234,7 @@ class BambuProjectTests(unittest.TestCase):
             self.assertTrue(any(float(value) > 0
                                 for value in final["flush_volumes_matrix"]))
             self.assertEqual(final["print_sequence"], "by object")
-            self.assertEqual(final["wall_generator"], "arachne")
+            self.assertEqual(final["wall_generator"], "classic")
             self.assertEqual(
                 final["different_settings_to_system"][0],
                 "existing_override;wall_generator;enable_prime_tower")
@@ -269,7 +269,7 @@ class BambuProjectTests(unittest.TestCase):
                 ],
                 "flush_volumes_vector": ["0"] * 8,
                 "print_sequence": "by object",
-                "wall_generator": "arachne",
+                "wall_generator": "classic",
                 "different_settings_to_system": [
                     "wall_generator;enable_prime_tower"
                 ],
@@ -301,9 +301,9 @@ class BambuProjectTests(unittest.TestCase):
             self.assertEqual(report["plates"], 2)
             self.assertEqual(report["diy_case_filament"], 3)
 
-    def test_validation_rejects_non_arachne_wall_generator(self):
+    def test_validation_rejects_non_classic_wall_generator(self):
         with tempfile.TemporaryDirectory() as temp:
-            output = Path(temp) / "classic.3mf"
+            output = Path(temp) / "arachne.3mf"
             settings = {
                 "enable_prime_tower": "0",
                 "prime_tower_enable_framework": "0",
@@ -311,7 +311,7 @@ class BambuProjectTests(unittest.TestCase):
                 "initial_layer_print_height": "0.2",
                 "flush_multiplier": ["0.6"],
                 "print_sequence": "by object",
-                "wall_generator": "classic",
+                "wall_generator": "arachne",
                 "different_settings_to_system": [
                     "wall_generator;enable_prime_tower"
                 ],
@@ -322,12 +322,12 @@ class BambuProjectTests(unittest.TestCase):
                     "Metadata/project_settings.config", json.dumps(settings))
                 archive.writestr("Metadata/model_settings.config", "<config/>")
 
-            with self.assertRaisesRegex(ValueError, "Arachne"):
+            with self.assertRaisesRegex(ValueError, "wall generator"):
                 validate_3mf(output, {}, filament_count=1)
 
-    def test_validation_rejects_inactive_arachne_wall_generator(self):
+    def test_validation_rejects_inactive_classic_wall_generator(self):
         with tempfile.TemporaryDirectory() as temp:
-            output = Path(temp) / "inactive-arachne.3mf"
+            output = Path(temp) / "inactive-classic.3mf"
             settings = {
                 "enable_prime_tower": "0",
                 "prime_tower_enable_framework": "0",
@@ -337,7 +337,7 @@ class BambuProjectTests(unittest.TestCase):
                 "flush_volumes_matrix": ["0"],
                 "flush_volumes_vector": ["0", "0"],
                 "print_sequence": "by object",
-                "wall_generator": "arachne",
+                "wall_generator": "classic",
                 "different_settings_to_system": ["enable_prime_tower"],
                 "first_layer_print_sequence": ["0"],
                 "other_layers_print_sequence": ["0"],
@@ -364,7 +364,7 @@ class BambuProjectTests(unittest.TestCase):
                 "flush_volumes_matrix": ["0"],
                 "flush_volumes_vector": ["0", "0"],
                 "print_sequence": "by object",
-                "wall_generator": "arachne",
+                "wall_generator": "classic",
                 "different_settings_to_system": ["wall_generator"],
                 "first_layer_print_sequence": ["0"],
                 "other_layers_print_sequence": ["0"],

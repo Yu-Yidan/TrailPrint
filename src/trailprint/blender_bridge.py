@@ -30,7 +30,7 @@ from .mesh_validation import (
     validate_stls,
     write_report,
 )
-from .naming import deliverable_prefix, human_name
+from .naming import customer_preview_name, deliverable_prefix, human_name
 from .osm_colors import analyze_project
 from .title import resolve_project_title, validate_title_fit
 from .water_geometry import (
@@ -454,6 +454,16 @@ def run_blender_build(project: Path, settings: BuildSettings, blender: Optional[
     fallback_stage = attempt_root / "no-shape-extras"
     log_path = build_dir / "trailprint3d.log"
     report_path = build_dir / "validation.json"
+    previous_customer_preview = ""
+    try:
+        previous_report = json.loads(report_path.read_text(encoding="utf-8"))
+        previous_customer_preview = str(
+            previous_report.get("preview", {}).get("customer_filename", ""))
+        if (Path(previous_customer_preview).name != previous_customer_preview
+                or not previous_customer_preview.endswith("-preview.png")):
+            previous_customer_preview = ""
+    except (OSError, ValueError, TypeError):
+        pass
     PROGRESS_FILE.unlink(missing_ok=True)
     started = time.monotonic()
     logs = []
@@ -615,6 +625,16 @@ def run_blender_build(project: Path, settings: BuildSettings, blender: Optional[
         PROGRESS_FILE.unlink(missing_ok=True)
         raise BuildCancelled("Blender build cancelled.")
     if not final_validation["valid"]:
+        previous_customer_path = project / "deliverables" / previous_customer_preview
+        if (previous_customer_preview
+                and (build_dir / "preview.png").is_file()
+                and previous_customer_path.is_file()):
+            report["preview"] = {
+                "valid": True,
+                "filename": "preview.png",
+                "customer_filename": previous_customer_preview,
+                "preserved": True,
+            }
         report["duration_seconds"] = round(time.monotonic() - started, 1)
         write_report(report_path, report)
         log_path.write_text(f"Duration: {time.monotonic() - started:.1f}s\n" + "".join(logs), encoding="utf-8")
@@ -647,7 +667,12 @@ def run_blender_build(project: Path, settings: BuildSettings, blender: Optional[
     else:
         logs.append(_attempt_log("bird's-eye preview", preview_result))
         if preview_result.returncode == 0 and preview_stage.is_file() and preview_stage.stat().st_size >= 1000:
-            preview = {"valid": True, "filename": "preview.png"}
+            preview = {
+                "valid": True,
+                "filename": "preview.png",
+                "customer_filename": customer_preview_name(
+                    resolved_title, human_name(project)),
+            }
         else:
             detail = next((line for line in reversed(
                 (preview_result.stderr + preview_result.stdout).splitlines()) if line.strip()),
@@ -662,10 +687,20 @@ def run_blender_build(project: Path, settings: BuildSettings, blender: Optional[
         raise BuildCancelled("Blender build cancelled.")
     outputs = _promote_stls(staged, project / "deliverables", build_dir)
     preview_path = build_dir / "preview.png"
+    deliverables = project / "deliverables"
     if preview["valid"]:
+        customer_path = deliverables / preview["customer_filename"]
+        customer_stage = deliverables / f".preview-{uuid.uuid4().hex}.tmp"
+        shutil.copy2(preview_stage, customer_stage)
         os.replace(preview_stage, preview_path)
+        os.replace(customer_stage, customer_path)
+        if (previous_customer_preview
+                and previous_customer_preview != preview["customer_filename"]):
+            (deliverables / previous_customer_preview).unlink(missing_ok=True)
     else:
         preview_path.unlink(missing_ok=True)
+        if previous_customer_preview:
+            (deliverables / previous_customer_preview).unlink(missing_ok=True)
     elevation_path = build_dir / "elevation.json"
     if elevation:
         temporary_elevation = elevation_path.with_suffix(".tmp")
