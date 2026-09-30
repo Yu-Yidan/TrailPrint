@@ -314,7 +314,7 @@ def create_app(repo_root: Path = None, build_manager: BuildManager = None,
     def download_file(slug, filename):
         project = get_project(slug)
         if (Path(filename).name != filename
-                or Path(filename).suffix.lower() not in {".stl", ".3mf"}):
+                or Path(filename).suffix.lower() not in {".stl", ".3mf", ".png"}):
             abort(404)
         return send_from_directory(project / "deliverables", filename, as_attachment=True)
 
@@ -360,12 +360,20 @@ def create_app(repo_root: Path = None, build_manager: BuildManager = None,
                 "display_min": display_elevation(band["min_elevation_m"], unit_system),
                 "display_max": display_elevation(band["max_elevation_m"], unit_system),
             } for band in osm_palette["bands"]]}
+        validation = read_report(project / "build/validation.json")
+        customer_preview = str(
+            validation.get("preview", {}).get("customer_filename", ""))
+        if (Path(customer_preview).name != customer_preview
+                or not customer_preview.endswith("-preview.png")
+                or not (deliverables / customer_preview).is_file()):
+            customer_preview = ""
         bambu_job = app.extensions["trailprint_bambu"].for_project(project)
         bambu_validation = read_report(project / "build/bambu-validation.json")
         return render_template(
             "preview.html", project=project, files=preview_files,
             project_title=human_name(project),
-            validation=read_report(project / "build/validation.json"),
+            validation=validation,
+            customer_preview=customer_preview,
             bambu_environment=bambu_environment, bambu_defaults=filament_defaults,
             bambu_error=bambu_error, bambu_job=bambu_job,
             bambu_validation=bambu_validation,

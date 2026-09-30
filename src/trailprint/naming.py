@@ -2,12 +2,15 @@
 
 import json
 import re
+import unicodedata
 from pathlib import Path
 
 ID_WIDTH = 4
 MAX_PROJECT_ID = 10 ** ID_WIDTH - 1
 STORAGE_PATTERN = re.compile(r"^(?P<id>\d{4})-(?P<slug>[a-z0-9][a-z0-9-]*)$")
 META_FILE = "project.json"
+CUSTOMER_PREVIEW_SUFFIX = "-preview.png"
+UNSAFE_FILENAME = re.compile(r'[\x00-\x1f<>:"/\\|?*]+')
 
 
 def format_project_id(value) -> str:
@@ -66,3 +69,19 @@ def deliverable_prefix(project: Path) -> str:
 
 def canonical_3mf_name(project: Path) -> str:
     return f"{project.name}.3mf"
+
+
+def customer_preview_name(title: str, fallback: str = "TrailPrint") -> str:
+    """Return a readable, portable filename for a customer preview image."""
+    def clean(value):
+        value = unicodedata.normalize("NFC", str(value))
+        value = re.sub(r"\s+", " ", value).strip()
+        value = UNSAFE_FILENAME.sub("-", value).strip(" .-")
+        return value
+
+    value = clean(title) or clean(fallback) or "TrailPrint"
+    limit = 240 - len(CUSTOMER_PREVIEW_SUFFIX.encode("utf-8"))
+    while len(value.encode("utf-8")) > limit:
+        value = value[:-1]
+    value = value.rstrip(" .-") or "TrailPrint"
+    return value + CUSTOMER_PREVIEW_SUFFIX

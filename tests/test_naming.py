@@ -3,11 +3,32 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from trailprint.naming import format_project_id, human_name, logical_slug, storage_name
+from trailprint.naming import (
+    customer_preview_name,
+    format_project_id,
+    human_name,
+    logical_slug,
+    storage_name,
+)
 from trailprint.projects import migrate_active_project
 
 
 class ProjectNamingTests(unittest.TestCase):
+    def test_customer_preview_name_preserves_readable_safe_title(self):
+        self.assertEqual(
+            customer_preview_name("  Mānoa   Falls  "),
+            "Mānoa Falls-preview.png")
+        self.assertEqual(
+            customer_preview_name('Alaska: North/West?*'),
+            "Alaska- North-West-preview.png")
+        self.assertEqual(customer_preview_name("", "Evening Ride"),
+                         "Evening Ride-preview.png")
+
+    def test_customer_preview_name_limits_utf8_filename_length(self):
+        name = customer_preview_name("山" * 200)
+        self.assertLessEqual(len(name.encode("utf-8")), 240)
+        self.assertTrue(name.endswith("-preview.png"))
+
     def test_integer_ids_are_padded_only_for_storage(self):
         self.assertEqual(format_project_id(1), "0001")
         self.assertEqual(format_project_id("16"), "0016")

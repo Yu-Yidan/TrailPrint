@@ -441,6 +441,12 @@ class WebTests(unittest.TestCase):
         stl = project / "deliverables/build-me.stl"
         stl.write_bytes(b"preview data")
         (project / "build/preview.png").write_bytes(b"png preview")
+        customer = project / "deliverables/Customer Route-preview.png"
+        customer.write_bytes(b"customer png")
+        (project / "build/validation.json").write_text(json.dumps({
+            "valid": True,
+            "preview": {"valid": True, "customer_filename": customer.name},
+        }), encoding="utf-8")
         page = self.client.get("/projects/build-me/preview")
         self.assertEqual(page.status_code, 200)
         self.assertIn(b"VALIDATED MODEL PREVIEW", page.data)
@@ -455,6 +461,16 @@ class WebTests(unittest.TestCase):
         self.assertIn(b"Data credit for packaging and product listing", page.data)
         self.assertIn(b"Map data \xc2\xa9 OpenStreetMap contributors", page.data)
         self.assertIn(b"Export unavailable", page.data)
+        self.assertIn(b"Download customer preview", page.data)
+        self.assertIn(b"Customer%20Route-preview.png", page.data)
+        download = self.client.get(
+            "/projects/build-me/files/Customer%20Route-preview.png")
+        self.assertEqual(download.data, b"customer png")
+        self.assertIn("attachment", download.headers["Content-Disposition"])
+        download.close()
+        self.assertEqual(
+            self.client.get("/projects/build-me/files/not-allowed.txt").status_code,
+            404)
         response = self.client.get("/projects/build-me/preview-image")
         self.assertEqual(response.data, b"png preview")
         response.close()
