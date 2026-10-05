@@ -11,11 +11,140 @@ from trailprint.water_geometry import (
     WATER_MIN_WIDTH_MM,
     _shoreline_surface,
     prepare_integrated_water,
+    projected_footprint,
     repair_terrain_for_water_boolean,
+    trail_corridor,
+    validate_trail_fit,
 )
 
 
 class IntegratedWaterTests(unittest.TestCase):
+    def test_water_geometry_preserves_buffered_trail_corridor(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            terrain = root / "terrain.stl"
+            raw = root / "raw_WATER.stl"
+            trail = root / "Trail.stl"
+            cap = root / "integrated_WATER.stl"
+            cutter = root / "cutter.stl"
+            support = root / "support.stl"
+            trimesh.creation.box(
+                extents=(30, 30, 4),
+                transform=trimesh.transformations.translation_matrix(
+                    (0, 0, 2))).export(terrain)
+            trimesh.creation.box(
+                extents=(12, 20, 2),
+                transform=trimesh.transformations.translation_matrix(
+                    (0, 0, 4))).export(raw)
+            trimesh.creation.box(
+                extents=(2, 24, 2),
+                transform=trimesh.transformations.translation_matrix(
+                    (0, 0, 4))).export(trail)
+
+            report = prepare_integrated_water(
+                terrain, [raw], cap, cutter, support,
+                trail_path=trail, trail_clearance_mm=0.1)
+            corridor = trail_corridor(trail, 0.1)
+
+            self.assertTrue(report["available"])
+            self.assertEqual(report["trail_clearance_mm"], 0.1)
+            self.assertGreater(report["trail_excluded_water_area_mm2"], 0)
+            for path in (cap, cutter, support):
+                footprint = projected_footprint(
+                    trimesh.load_mesh(path, process=True))
+                self.assertLessEqual(footprint.intersection(corridor).area, 1e-6)
+
+    def test_trail_cut_does_not_pull_water_down_to_groove_floor(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            terrain = root / "terrain-with-groove.stl"
+            raw = root / "raw_WATER.stl"
+            trail = root / "Trail.stl"
+            cap = root / "integrated_WATER.stl"
+            cutter = root / "cutter.stl"
+            support = root / "support.stl"
+            floor = trimesh.creation.box(
+                extents=(30, 30, 3),
+                transform=trimesh.transformations.translation_matrix(
+                    (0, 0, 1.5)))
+            left = trimesh.creation.box(
+                extents=(13.9, 30, 1),
+                transform=trimesh.transformations.translation_matrix(
+                    (-8.05, 0, 3.5)))
+            right = left.copy()
+            right.apply_translation((16.1, 0, 0))
+            trimesh.util.concatenate((floor, left, right)).export(terrain)
+            trimesh.creation.box(
+                extents=(3.2, 20, 2),
+                transform=trimesh.transformations.translation_matrix(
+                    (0, 0, 4))).export(raw)
+            trimesh.creation.box(
+                extents=(2, 24, 2),
+                transform=trimesh.transformations.translation_matrix(
+                    (0, 0, 4))).export(trail)
+
+            report = prepare_integrated_water(
+                terrain, [raw], cap, cutter, support,
+                trail_path=trail, trail_clearance_mm=0.1)
+
+            self.assertTrue(report["available"])
+            self.assertGreaterEqual(report["body_count"], 2)
+            self.assertTrue(all(
+                body["surface_min_z_mm"] == 4.0
+                and body["surface_max_z_mm"] == 4.0
+                for body in report["bodies"]))
+
+    def test_trail_fit_validation_rejects_refilled_water_groove(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            trail = root / "Trail.stl"
+            valid_terrain = root / "valid-terrain.stl"
+            invalid_terrain = root / "invalid-terrain.stl"
+            valid_water = root / "valid-water.stl"
+            invalid_water = root / "invalid-water.stl"
+            trimesh.creation.box(
+                extents=(2, 20, 2),
+                transform=trimesh.transformations.translation_matrix(
+                    (0, 0, 4))).export(trail)
+            floor = trimesh.creation.box(
+                extents=(30, 30, 3),
+                transform=trimesh.transformations.translation_matrix(
+                    (0, 0, 1.5)))
+            left = trimesh.creation.box(
+                extents=(13.9, 30, 1),
+                transform=trimesh.transformations.translation_matrix(
+                    (-8.05, 0, 3.5)))
+            right = left.copy()
+            right.apply_translation((16.1, 0, 0))
+            trimesh.util.concatenate((floor, left, right)).export(valid_terrain)
+            trimesh.creation.box(
+                extents=(30, 30, 4),
+                transform=trimesh.transformations.translation_matrix(
+                    (0, 0, 2))).export(invalid_terrain)
+            water_left = trimesh.creation.box(
+                extents=(4.9, 20, 0.4),
+                transform=trimesh.transformations.translation_matrix(
+                    (-3.55, 0, 3.8)))
+            water_right = water_left.copy()
+            water_right.apply_translation((7.1, 0, 0))
+            trimesh.util.concatenate((water_left, water_right)).export(valid_water)
+            trimesh.creation.box(
+                extents=(12, 20, 0.4),
+                transform=trimesh.transformations.translation_matrix(
+                    (0, 0, 3.8))).export(invalid_water)
+
+            valid = validate_trail_fit(
+                valid_terrain, trail, valid_water, clearance_mm=0.1)
+            invalid = validate_trail_fit(
+                invalid_terrain, trail, invalid_water, clearance_mm=0.1)
+
+            self.assertTrue(valid["valid"], valid["errors"])
+            self.assertLessEqual(valid["maximum_terrain_intrusion_mm"], 0.05)
+            self.assertLessEqual(valid["water_overlap_area_mm2"], 0.01)
+            self.assertFalse(invalid["valid"])
+            self.assertGreater(invalid["maximum_terrain_intrusion_mm"], 0.05)
+            self.assertGreater(invalid["water_overlap_area_mm2"], 0.01)
+
     def test_terrain_repair_removes_opposed_duplicate_sheet(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
