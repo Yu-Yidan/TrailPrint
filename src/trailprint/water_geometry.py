@@ -22,6 +22,9 @@ WATER_SHORE_INNER_MM = 0.2
 WATER_SHORE_OUTER_MM = 0.8
 WATER_OUTLINE_MARGIN_MM = 0.4
 WATER_FLAT_RANGE_MM = 0.6
+TRAIL_FIT_AREA_TOLERANCE_MM2 = 0.01
+TRAIL_FIT_Z_TOLERANCE_MM = 0.05
+TRAIL_WATER_PRECISION_MARGIN_MM = 0.02
 
 
 def polygon_items(geometry):
@@ -41,6 +44,17 @@ def projected_footprint(mesh):
         if not polygon.is_empty and polygon.area > 1e-8:
             polygons.append(polygon)
     return unary_union(polygons).buffer(0) if polygons else Polygon()
+
+
+def trail_corridor(trail_path: Path, clearance_mm: float):
+    """Return the exact trail footprint plus its configured side clearance."""
+    trail = trimesh.load_mesh(trail_path, process=True)
+    if trail.is_empty:
+        raise ValueError("Trail mesh is empty.")
+    footprint = projected_footprint(trail)
+    if footprint.is_empty:
+        raise ValueError("Trail mesh has no usable projected footprint.")
+    return footprint.buffer(float(clearance_mm), join_style=1).buffer(0)
 
 
 def repair_terrain_for_water_boolean(terrain_path: Path, output_path: Path) -> dict:
@@ -193,9 +207,12 @@ def _stable_polygon(polygon):
     float32_spacing = float(np.spacing(np.float32(maximum)))
     grid = max(WATER_COORDINATE_GRID_MM, float32_spacing * 2.0)
     stable = set_precision(polygon, grid, mode="valid_output")
-    stable = stable.simplify(grid,
+    # Slightly exceed the storage grid so Earcut does not retain nearly
+    # collinear shoreline vertices which collapse into an open edge in STL.
+    stable = stable.simplify(grid * 1.5,
                              preserve_topology=True).buffer(0)
-    items = polygon_items(stable)
+    items = [item for item in polygon_items(stable)
+             if item.area >= WATER_MIN_COMPONENT_AREA_MM2]
     if len(items) != 1:
         raise ValueError("Water precision cleanup unexpectedly split a connected body.")
     return items[0]
@@ -283,9 +300,33 @@ def _sample_shoreline(polygon, surface, terrain_outline):
     return np.asarray(samples, dtype=float)
 
 
+def _natural_shoreline_samples(samples, polygon, trail_exclusion):
+    """Keep nearby original-shore samples while ignoring the carved trail."""
+    clean = samples
+    if not trail_exclusion.is_empty:
+        outside_trail = ~contains_xy(
+            trail_exclusion, samples[:, 0], samples[:, 1])
+        clean = samples[outside_trail]
+    if len(clean) < 3:
+        raise ValueError(
+            "Could not sample the natural shoreline outside the trail groove.")
+    for margin in (WATER_SHORE_OUTER_MM + WATER_SURFACE_SAMPLE_MM,
+                   2.0, 4.0, 8.0):
+        nearby = polygon.buffer(margin, join_style=1)
+        selected = contains_xy(nearby, clean[:, 0], clean[:, 1])
+        if np.count_nonzero(selected) >= 3:
+            return clean[selected]
+    raise ValueError("Could not associate natural shoreline samples with water.")
+
+
 def _snap_down(values, step=WATER_LAYER_HEIGHT_MM):
     values = np.asarray(values, dtype=float)
     return np.floor((values + 1e-7) / step) * step
+
+
+def _snap_up(values, step=WATER_LAYER_HEIGHT_MM):
+    values = np.asarray(values, dtype=float)
+    return np.ceil((values - 1e-7) / step) * step
 
 
 def _dominant_shoreline_samples(samples):
@@ -306,7 +347,9 @@ def _shoreline_surface(top_vertices, samples):
     low, median, high = np.percentile(heights, (10, 50, 90))
     spread = float(high - low)
     if spread <= WATER_FLAT_RANGE_MM:
-        level = float(_snap_down([median])[0])
+        # Use the first printable layer at or above the robust low shoreline.
+        # This avoids a visible trench without letting high banks lift a lake.
+        level = float(_snap_up([low])[0])
         return np.full(len(top_vertices), level), "shoreline-flat", {
             "shoreline_p10_z_mm": float(low),
             "shoreline_median_z_mm": float(median),
@@ -386,7 +429,9 @@ def _terrain_shell(top_vertices, faces, bottom_z=None, top_z=None,
 
 
 def prepare_integrated_water(terrain_path: Path, water_paths, cap_path: Path,
-                             cutter_path: Path, support_path: Path = None) -> dict:
+                             cutter_path: Path, support_path: Path = None,
+                             trail_path: Path = None,
+                             trail_clearance_mm: float = 0.0) -> dict:
     """Create shoreline-driven water inlays and matching terrain geometry."""
     terrain = trimesh.load_mesh(terrain_path, process=True)
     if terrain.is_empty:
@@ -412,23 +457,47 @@ def prepare_integrated_water(terrain_path: Path, water_paths, cap_path: Path,
     entries = []
     if inland_footprints:
         inland = _printable_water(unary_union(inland_footprints).buffer(0), outline)
-        entries.extend((polygon, None, WATER_DEPTH_MM)
+        entries.extend((polygon, None, WATER_DEPTH_MM, None)
                        for polygon in polygon_items(inland))
     for ocean, level in ocean_footprints:
         printable = _printable_water(ocean, outline)
-        entries.extend((polygon, level, OCEAN_DEPTH_MM)
+        entries.extend((polygon, level, OCEAN_DEPTH_MM, None)
                        for polygon in polygon_items(printable))
+    trail_exclusion = Polygon()
+    excluded_water_area = 0.0
+    if trail_path is not None:
+        trail_exclusion = trail_corridor(
+            trail_path,
+            float(trail_clearance_mm) + TRAIL_WATER_PRECISION_MARGIN_MM)
+        protected_entries = []
+        for polygon, level, depth, _samples in entries:
+            natural_samples = (None if level is not None else
+                               _sample_shoreline(polygon, surface, outline))
+            clipped = polygon.difference(trail_exclusion).buffer(0)
+            excluded_water_area += max(0.0, float(polygon.area - clipped.area))
+            for item in polygon_items(clipped):
+                if item.area < WATER_MIN_COMPONENT_AREA_MM2:
+                    continue
+                local_samples = (None if natural_samples is None else
+                                 _natural_shoreline_samples(
+                                     natural_samples, item, trail_exclusion))
+                protected_entries.append((item, level, depth, local_samples))
+        entries = protected_entries
     if not entries:
-        return {"available": False, "reason": "no printable water footprint"}
+        return {"available": False, "reason": "no printable water footprint",
+                "trail_clearance_mm": float(trail_clearance_mm),
+                "trail_precision_margin_mm": TRAIL_WATER_PRECISION_MARGIN_MM,
+                "trail_excluded_water_area_mm2": excluded_water_area}
     caps, cutters, supports, bodies = [], [], [], []
     cutter_top = float(terrain.bounds[1, 2] + 1.0)
     support_base = float(terrain.bounds[0, 2])
-    for source_polygon, ocean_level, depth in entries:
+    for source_polygon, ocean_level, depth, natural_samples in entries:
         polygon = _stable_polygon(source_polygon)
         top_vertices, faces = _surface_triangulation(polygon, surface)
         shoreline = None
         if ocean_level is None:
-            samples = _sample_shoreline(polygon, surface, outline)
+            samples = (natural_samples if natural_samples is not None else
+                       _sample_shoreline(polygon, surface, outline))
             levels, mode, shoreline = _shoreline_surface(top_vertices, samples)
             top_vertices[:, 2] = levels
         else:
@@ -494,6 +563,63 @@ def prepare_integrated_water(terrain_path: Path, water_paths, cap_path: Path,
             "depth_mm": WATER_DEPTH_MM,
             "surface_sample_mm": WATER_SURFACE_SAMPLE_MM,
             "surface_mode": "shoreline-driven",
+            "trail_clearance_mm": float(trail_clearance_mm),
+            "trail_precision_margin_mm": TRAIL_WATER_PRECISION_MARGIN_MM,
+            "trail_excluded_water_area_mm2": excluded_water_area,
             "cap_watertight": True,
             "cutter_watertight": True,
             "support_watertight": True}
+
+
+def validate_trail_fit(terrain_path: Path, trail_path: Path,
+                       water_path: Path = None, clearance_mm: float = 0.0) -> dict:
+    """Check that integrated terrain and water leave the trail pocket open."""
+    terrain = trimesh.load_mesh(terrain_path, process=True)
+    trail = trimesh.load_mesh(trail_path, process=True)
+    if terrain.is_empty or trail.is_empty:
+        raise ValueError("Trail snap-fit validation received an empty mesh.")
+
+    corridor = trail_corridor(trail_path, clearance_mm)
+    water_overlap = 0.0
+    if water_path is not None:
+        water = trimesh.load_mesh(water_path, process=True)
+        if not water.is_empty:
+            water_overlap = float(projected_footprint(water).intersection(corridor).area)
+
+    triangles = trail.vertices[trail.faces]
+    normals = np.cross(triangles[:, 1] - triangles[:, 0],
+                       triangles[:, 2] - triangles[:, 0])
+    floor_z = float(trail.bounds[0, 2])
+    top_faces = triangles[(normals[:, 2] > 1e-8)
+                          & (triangles[:, :, 2].mean(axis=1)
+                             > floor_z + TRAIL_FIT_Z_TOLERANCE_MM)]
+    if not len(top_faces):
+        raise ValueError("Trail mesh has no usable upper surface for fit validation.")
+    points = np.unique(np.round(top_faces[:, :, :2].mean(axis=1), 4), axis=0)
+    if len(points) > 5000:
+        indices = np.linspace(0, len(points) - 1, 5000, dtype=int)
+        points = points[indices]
+    surface = UpperSurface(terrain)
+    sampled = [surface.z(point) for point in points]
+    sampled = [value for value in sampled if value is not None]
+    if not sampled:
+        raise ValueError("Terrain has no surface beneath the trail.")
+    maximum_surface_z = float(max(sampled))
+    intrusion = max(0.0, maximum_surface_z - floor_z)
+    errors = []
+    if intrusion > TRAIL_FIT_Z_TOLERANCE_MM:
+        errors.append(
+            f"Terrain rises {intrusion:.3f} mm above the trail pocket floor.")
+    if water_overlap > TRAIL_FIT_AREA_TOLERANCE_MM2:
+        errors.append(
+            f"Water overlaps {water_overlap:.3f} mm² of the protected trail corridor.")
+    return {
+        "valid": not errors,
+        "clearance_mm": float(clearance_mm),
+        "trail_floor_z_mm": floor_z,
+        "maximum_terrain_z_in_trail_mm": maximum_surface_z,
+        "maximum_terrain_intrusion_mm": intrusion,
+        "water_overlap_area_mm2": water_overlap,
+        "sample_count": len(sampled),
+        "errors": errors,
+    }

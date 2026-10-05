@@ -37,6 +37,7 @@ from .water_geometry import (
     WATER_BOOLEAN_BOUNDS_TOLERANCE_MM,
     prepare_integrated_water,
     repair_terrain_for_water_boolean,
+    validate_trail_fit,
 )
 
 
@@ -208,15 +209,21 @@ def _integrate_generated_water(stage: Path, project_slug: str, blender_path: Pat
     paths = list(stage.glob("*.stl"))
     terrain = next((path for path in paths
                     if mesh_role(path, project_slug) == "terrain"), None)
+    trail = next((path for path in paths
+                  if mesh_role(path, project_slug) == "trail"), None)
     water = [path for path in paths if mesh_role(path, project_slug) == "water"]
     if terrain is None or not water:
         return None, None
+    if trail is None:
+        raise ValueError("Could not protect the trail groove because no Trail STL was generated.")
     work = stage / "water-integration"
     work.mkdir()
     cap = work / f"{project_slug}_WATER.stl"
     cutter = work / "water-cutter.stl"
     support = work / "water-terrain-support.stl"
-    report = prepare_integrated_water(terrain, water, cap, cutter, support)
+    report = prepare_integrated_water(
+        terrain, water, cap, cutter, support,
+        trail_path=trail, trail_clearance_mm=TRAIL_CLEARANCE_MM)
     if not report.get("available"):
         for path in water:
             path.unlink(missing_ok=True)
@@ -261,6 +268,12 @@ def _integrate_generated_water(stage: Path, project_slug: str, blender_path: Pat
         "cutter_roof_absent": True, "net_removed_volume_mm3": removed_volume,
         "output_bounds_mm": integrated_bounds.tolist(),
     }
+    fit = validate_trail_fit(
+        output, trail, cap, clearance_mm=TRAIL_CLEARANCE_MM)
+    report["trail_fit"] = fit
+    if not fit["valid"]:
+        raise ValueError("Trail snap-fit validation failed: "
+                         + " ".join(fit["errors"]))
     os.replace(output, terrain)
     for path in water:
         path.unlink(missing_ok=True)
