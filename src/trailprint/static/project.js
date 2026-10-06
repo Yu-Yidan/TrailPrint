@@ -28,7 +28,7 @@ function measureTitleWidthMm(value) {
   titleMeasure.font = '1000px "Arial Black", Arial, sans-serif';
   const reference = titleMeasure.measureText('Name');
   const referenceHeight = reference.actualBoundingBoxAscent + reference.actualBoundingBoxDescent || 720;
-  return titleMeasure.measureText(value).width / referenceHeight * 5;
+  return titleMeasure.measureText(value).width / referenceHeight * 5 * window.TRAILPRINT_TITLE_WIDTH_SCALE;
 }
 
 function validateTitleFit() {

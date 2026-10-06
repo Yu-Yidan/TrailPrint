@@ -747,9 +747,17 @@ class WebTests(unittest.TestCase):
         create_project(self.root / "prints", "Build Me", GPX)
         response = self.client.post("/projects/build-me/build", data={
             "shape": "HEXAGON", "shape_extra": "OUTER TEXT", "resolution": "8",
-            "plate_title": "WWWWWWWWWW"}, follow_redirects=True)
+            "plate_title": "W" * 15}, follow_redirects=True)
         self.assertIn(b"Shorten the title before building", response.data)
         self.assertIsNone(self.build_manager.started)
+
+    def test_build_accepts_grindstone_title(self):
+        create_project(self.root / "prints", "Build Me", GPX)
+        response = self.client.post("/projects/build-me/build", data={
+            "shape": "HEXAGON", "shape_extra": "OUTER TEXT", "resolution": "4",
+            "plate_title": "UTMB Grindstone"})
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(self.build_manager.started.settings.plate_title, "UTMB Grindstone")
 
     def test_dashboard_shows_delete_control_except_for_example(self):
         create_project(self.root / "prints", "Example Trail", GPX)

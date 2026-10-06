@@ -1,6 +1,7 @@
 """Resolve printable project titles and validate their physical plate fit."""
 
 from functools import lru_cache
+from math import sqrt
 from pathlib import Path
 from typing import Optional
 
@@ -8,6 +9,12 @@ from PIL import ImageFont
 
 FONT_PATH = Path("/System/Library/Fonts/Supplemental/Arial Black.ttf")
 TEXT_HEIGHT_MM = 5.0
+# Measured unscaled `Name` height in Blender with the installed Arial Black font.
+# The generator scales X/Y to 5 mm and leaves Z at 1. Applying a FONT object's
+# scale sets its font size using the RMS of all three axes, reducing X/Y size.
+BLENDER_REFERENCE_HEIGHT = 0.5233579874038696
+_TITLE_AXIS_SCALE = TEXT_HEIGHT_MM / BLENDER_REFERENCE_HEIGHT
+TITLE_WIDTH_SCALE = sqrt((2 * _TITLE_AXIS_SCALE ** 2 + 1) / 3) / _TITLE_AXIS_SCALE
 TITLE_LIMITS_MM = {
     "HEXAGON": {"INNER TEXT": 45.0, "OUTER TEXT": 60.5, "FRONT TEXT": 60.5},
     "OCTAGON": {"OUTER TEXT": 41.3},
@@ -31,13 +38,14 @@ def _font():
 
 
 def measure_title_width_mm(value: str) -> float:
-    """Match EmGi's Arial Black width after scaling its `Name` placeholder to 5 mm."""
+    """Estimate Arial Black width after Blender applies the generator's font scale."""
     font = _font()
     reference = font.getbbox("Name")
     reference_height = reference[3] - reference[1]
     if reference_height <= 0:
         raise ValueError("Could not measure the title font.")
-    return float(font.getlength(str(value))) / reference_height * TEXT_HEIGHT_MM
+    return (float(font.getlength(str(value))) / reference_height
+            * TEXT_HEIGHT_MM * TITLE_WIDTH_SCALE)
 
 
 def title_limit_mm(shape: str, shape_extra: str) -> Optional[float]:
