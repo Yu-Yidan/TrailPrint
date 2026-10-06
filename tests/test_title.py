@@ -31,8 +31,20 @@ class TitleTests(unittest.TestCase):
         self.assertLess(validate_title_fit("Harding Icefield", "HEXAGON", "OUTER TEXT"), 60.5)
         self.assertLess(validate_title_fit("Harding Icefield", "HEXAGON", "FRONT TEXT"), 60.5)
         with self.assertRaisesRegex(ValueError, "Shorten the title"):
-            validate_title_fit("WWWWWWWWWW", "HEXAGON", "OUTER TEXT")
+            validate_title_fit("W" * 15, "HEXAGON", "OUTER TEXT")
         validate_title_fit("A Very Long Trail Name", "HEXAGON", "NONE")
+
+    def test_grindstone_matches_generated_title_width(self):
+        width = validate_title_fit("UTMB Grindstone", "HEXAGON", "OUTER TEXT")
+        # Actual installed-generator mesh is 53.48 mm; advance width includes
+        # glyph bearings and remains a slightly conservative estimate.
+        self.assertGreaterEqual(width, 53.48)
+        self.assertLess(width, 54.5)
+
+    def test_titles_on_either_side_of_hexagon_limit(self):
+        self.assertLess(validate_title_fit("W" * 10, "HEXAGON", "OUTER TEXT"), 60.5)
+        with self.assertRaisesRegex(ValueError, "Shorten the title"):
+            validate_title_fit("W" * 11, "HEXAGON", "OUTER TEXT")
 
 
 if __name__ == "__main__":
