@@ -6,6 +6,7 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import trimesh
@@ -26,6 +27,7 @@ from trailprint.blender_worker import (
     COPYRIGHT_MIN_FEATURE_MM,
     attribution_text_scale,
     classify_osm_samples,
+    configure_model_font,
     configure_water,
     copyright_mark_geometry,
     dot_magnet_backing_extension,
@@ -36,10 +38,20 @@ from trailprint.blender_worker import (
     terrain_relief_scaling,
     with_plate_clearance,
 )
+from trailprint.fonts import MODEL_FONT_PATH
 from trailprint.gpx import read_gpx_trip_date
 
 
 class SettingsTests(unittest.TestCase):
+    def test_model_font_overrides_addon_default_and_rejects_missing_font(self):
+        props = SimpleNamespace(textFont="Arial Black.ttf")
+        configure_model_font(props)
+        self.assertEqual(props.textFont, str(MODEL_FONT_PATH))
+        with tempfile.TemporaryDirectory() as temp:
+            with self.assertRaisesRegex(ValueError, "Model font was not found"):
+                configure_model_font(props, Path(temp) / "missing.ttf")
+        self.assertEqual(props.textFont, str(MODEL_FONT_PATH))
+
     def test_attribution_uses_one_edge_text_reference_scale(self):
         self.assertAlmostEqual(attribution_text_scale(0.5), 9.0)
         self.assertTrue(ATTRIBUTION_FONT_PATH.endswith("Arial Bold.ttf"))
@@ -303,6 +315,7 @@ class SettingsTests(unittest.TestCase):
                     Path(config["output_path"]).write_bytes(b"\x89PNG\r\n\x1a\n" + b"0" * 1200)
                     return subprocess.CompletedProcess(command, 0, "preview ok", "")
                 self.assertEqual(config["plate_title"], "Project")
+                self.assertEqual(config["model_font_path"], str(MODEL_FONT_PATH))
                 self.assertEqual(config["plate_text_2"], "{date}")
                 self.assertEqual(config["plate_text_3"], "{duration}")
                 self.assertEqual(config["trip_date"], "2022.09.21")

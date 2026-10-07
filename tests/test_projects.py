@@ -233,6 +233,7 @@ class WebTests(unittest.TestCase):
         self.assertEqual(response.headers["Location"], "/projects/0001-coastal-run")
         page = self.client.get(response.headers["Location"])
         self.assertIn(b"Coastal Run", page.data)
+        self.assertIn(b'TRAILPRINT_MODEL_FONT_CSS = "bold 1000px Arial, sans-serif"', page.data)
 
     def test_analytics_page_visualizes_statuses_and_creation_history(self):
         response = self.client.post("/projects", data={

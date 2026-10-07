@@ -16,6 +16,7 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import trimesh
 
+from .fonts import require_model_font
 from .gpx import (
     AUTO_RELIEF_LIMIT_MM,
     format_trip_stats,
@@ -383,6 +384,7 @@ def _run_attempt(project: Path, settings: BuildSettings, stage: Path, blender_pa
     config_path.write_text(json.dumps({
         "gpx_file": str(route), "export_path": str(stage), "project_name": project.name,
         "shape": settings.shape, "shape_extra": settings.shape_extra,
+        "model_font_path": str(require_model_font()),
         "resolution": settings.resolution,
         "plate_title": settings.plate_title, "plate_text_1": settings.plate_text_1,
         "plate_text_2": settings.plate_text_2, "plate_text_3": settings.plate_text_3,
@@ -441,6 +443,7 @@ def _render_preview(stls: List[Path], project_slug: str, output: Path, config_pa
 def run_blender_build(project: Path, settings: BuildSettings, blender: Optional[Path] = None,
                       timeout: int = 3600, cancel_event=None) -> List[Path]:
     project = project.resolve()
+    require_model_font()
     route = project / "route.gpx"
     if not route.is_file():
         raise ValueError(f"missing GPX input: {route}")
