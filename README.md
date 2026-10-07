@@ -12,6 +12,12 @@ daily project creation in Pacific time without an external chart service.
 
 Python 3.9+, Blender 5.2, and an enabled TrailPrint3D add-on are required.
 
+Generated titles and model text use Arial Bold from the installed macOS font
+file. Builds fail with a clear error if it is missing. Title-fit warnings use
+the same font metrics. Existing exports keep their current lettering; rebuilding
+a project uses Arial Bold. The font change preserves the existing text-size
+normalization and does not change print settings.
+
 ```sh
 python3 -m venv .venv
 .venv/bin/pip install .

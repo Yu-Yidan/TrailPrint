@@ -20,6 +20,7 @@ from .analytics import RAISED_MAP, AnalyticsStore
 from .bambu import BambuSettings, default_filament_mapping, discover_environment
 from .bambu_jobs import BambuJobManager
 from .blender_bridge import EXTRA_LABELS, SHAPE_EXTRAS, SHAPE_LABELS, BuildSettings
+from .fonts import MODEL_FONT_BROWSER_CSS
 from .gpx import (
     AUTO_RELIEF_LIMIT_MM,
     estimate_print_relief_mm,
@@ -196,7 +197,7 @@ def create_app(repo_root: Path = None, build_manager: BuildManager = None,
             expected_relief=expected_relief,
             relief_limit=AUTO_RELIEF_LIMIT_MM,
             plate_title=human_name(project), title_limits=TITLE_LIMITS_MM,
-            title_width_scale=TITLE_WIDTH_SCALE,
+            title_width_scale=TITLE_WIDTH_SCALE, model_font_css=MODEL_FONT_BROWSER_CSS,
             has_preview=preview_path.is_file(),
             validation=read_report(project / "build/validation.json"))
 

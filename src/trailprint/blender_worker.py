@@ -11,6 +11,15 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+try:
+    from .fonts import require_model_font
+except ImportError:  # Worker is executed as a standalone script by Blender.
+    from fonts import require_model_font
+
+
+def configure_model_font(props, path=None):
+    props.textFont = str(require_model_font(path) if path is not None else require_model_font())
+
 
 def resolve_text(value, config):
     replacements = {
@@ -600,6 +609,7 @@ def main():
             raise RuntimeError("Installed TrailPrint3D version has no compatible generator")
 
         props.generation_mode = "GENERATION"
+        configure_model_font(props, config.get("model_font_path"))
         props.file_path = config["gpx_file"]
         props.export_path = config["export_path"] + os.sep
         props.trailName = config["project_name"]

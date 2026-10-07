@@ -25,7 +25,7 @@ const orientationNotes = {
 };
 
 function measureTitleWidthMm(value) {
-  titleMeasure.font = '1000px "Arial Black", Arial, sans-serif';
+  titleMeasure.font = window.TRAILPRINT_MODEL_FONT_CSS;
   const reference = titleMeasure.measureText('Name');
   const referenceHeight = reference.actualBoundingBoxAscent + reference.actualBoundingBoxDescent || 720;
   return titleMeasure.measureText(value).width / referenceHeight * 5 * window.TRAILPRINT_TITLE_WIDTH_SCALE;
