@@ -57,6 +57,96 @@ def trail_corridor(trail_path: Path, clearance_mm: float):
     return footprint.buffer(float(clearance_mm), join_style=1).buffer(0)
 
 
+def _stitch_collinear_boundaries(mesh):
+    """Split existing edges at numerical T junctions; never cap actual holes."""
+    splits = 0
+    for _ in range(10):
+        counts = np.bincount(mesh.edges_unique_inverse)
+        graph = {}
+        for a, b in mesh.edges_unique[counts == 1]:
+            graph.setdefault(int(a), set()).add(int(b))
+            graph.setdefault(int(b), set()).add(int(a))
+        groups = []
+        while graph:
+            pending = [next(iter(graph))]
+            group = set()
+            while pending:
+                vertex = pending.pop()
+                if vertex in group:
+                    continue
+                group.add(vertex)
+                pending.extend(graph.get(vertex, set()) - group)
+            for vertex in group:
+                graph.pop(vertex, None)
+            groups.append(group)
+        faces = mesh.faces.copy()
+        removed, added = set(), []
+        for group in groups:
+            if len(group) != 3:
+                continue
+            vertices = list(group)
+            pairs = [(vertices[i], vertices[j])
+                     for i in range(3) for j in range(i + 1, 3)]
+            a, c = max(pairs, key=lambda pair: np.linalg.norm(
+                mesh.vertices[pair[0]] - mesh.vertices[pair[1]]))
+            b = next(vertex for vertex in group if vertex not in (a, c))
+            delta = mesh.vertices[c] - mesh.vertices[a]
+            fraction = np.dot(mesh.vertices[b] - mesh.vertices[a], delta) / np.dot(delta, delta)
+            distance = np.linalg.norm(mesh.vertices[b] - mesh.vertices[a] - fraction * delta)
+            if not 0 < fraction < 1 or distance > 1e-6:
+                continue
+            adjacent = np.flatnonzero(np.any(faces == a, axis=1)
+                                      & np.any(faces == c, axis=1))
+            for index in adjacent:
+                if index in removed:
+                    continue
+                face = faces[index]
+                for position in range(3):
+                    x, y, z = (face[position], face[(position + 1) % 3],
+                               face[(position + 2) % 3])
+                    if {x, y} == {a, c}:
+                        added.extend(((x, b, z), (b, y, z)))
+                        removed.add(int(index))
+                        break
+        if not removed:
+            break
+        splits += len(removed)
+        mesh = trimesh.Trimesh(
+            mesh.vertices, np.concatenate((np.delete(faces, list(removed), axis=0), added)),
+            process=True)
+    return mesh, splits
+
+
+def _cancel_opposed_horizontal_facets(mesh, levels):
+    """Cancel zero-thickness groove floor sheets with different triangulations."""
+    repaired = 0
+    for level in levels:
+        triangles = mesh.triangles
+        selected = np.all(np.abs(triangles[:, :, 2] - level) < 1e-8, axis=1)
+        up, down = [], []
+        for triangle, normal in zip(triangles[selected], mesh.face_normals[selected]):
+            polygon = Polygon(triangle[:, :2])
+            if polygon.area > 0:
+                (up if normal[2] > 0 else down).append(polygon)
+        if not up or not down:
+            continue
+        upward, downward = unary_union(up), unary_union(down)
+        if upward.intersection(downward).area <= 0:
+            continue
+        parts = [trimesh.Trimesh(mesh.vertices, mesh.faces[~selected], process=False)]
+        for region, reverse in ((upward.difference(downward), False),
+                                (downward.difference(upward), True)):
+            for polygon in polygon_items(region):
+                vertices, faces = trimesh.creation.triangulate_polygon(polygon, engine="earcut")
+                vertices = np.column_stack((vertices, np.full(len(vertices), level)))
+                parts.append(trimesh.Trimesh(vertices, faces[:, ::-1] if reverse else faces,
+                                            process=False))
+        repaired += int(selected.sum())
+        mesh = trimesh.util.concatenate(parts)
+        mesh.merge_vertices()
+    return mesh, repaired
+
+
 def repair_terrain_for_water_boolean(terrain_path: Path, output_path: Path) -> dict:
     """Remove coincident zero-thickness facets before Blender's manifold Boolean."""
     mesh = trimesh.load_mesh(terrain_path, process=True)
@@ -64,6 +154,11 @@ def repair_terrain_for_water_boolean(terrain_path: Path, output_path: Path) -> d
         raise ValueError("Terrain mesh is empty.")
     input_watertight = bool(mesh.is_watertight)
     input_bounds = np.asarray(mesh.bounds, dtype=float)
+    input_volume = float(mesh.volume)
+    counts = np.bincount(mesh.edges_unique_inverse)
+    edges = mesh.edges_unique[counts > 2]
+    levels = np.unique([mesh.vertices[a, 2] for a, b in edges
+                        if abs(mesh.vertices[a, 2] - mesh.vertices[b, 2]) < 1e-8])
     canonical = np.sort(np.asarray(mesh.faces, dtype=np.int64), axis=1)
     _, inverse, counts = np.unique(
         canonical, axis=0, return_inverse=True, return_counts=True)
@@ -86,9 +181,26 @@ def repair_terrain_for_water_boolean(terrain_path: Path, output_path: Path) -> d
     if removed_faces:
         mesh.update_faces(keep)
         mesh.remove_unreferenced_vertices()
+    degenerate_faces = 0
+    planar_faces = 0
+    edge_splits = 0
+    if not mesh.is_watertight:
+        usable = mesh.nondegenerate_faces()
+        degenerate_faces = int(np.count_nonzero(~usable))
+        mesh.update_faces(usable)
+        mesh, planar_faces = _cancel_opposed_horizontal_facets(mesh, levels)
+        # Match STL's float32 coordinates before joining triangulated boundaries.
+        mesh.vertices = mesh.vertices.astype(np.float32).astype(float)
+        mesh.merge_vertices()
+        usable = mesh.nondegenerate_faces()
+        degenerate_faces += int(np.count_nonzero(~usable))
+        mesh.update_faces(usable)
+        mesh, edge_splits = _stitch_collinear_boundaries(mesh)
     if not mesh.is_watertight or not mesh.is_winding_consistent:
         raise ValueError(
             "Terrain could not be made manifold for integrated water basins.")
+    if abs(float(mesh.volume) - input_volume) > .01:
+        raise ValueError("Terrain repair unexpectedly changed its volume.")
     output_path.parent.mkdir(parents=True, exist_ok=True)
     mesh.export(output_path)
     exported = trimesh.load_mesh(output_path, process=True)
@@ -103,6 +215,9 @@ def repair_terrain_for_water_boolean(terrain_path: Path, output_path: Path) -> d
         "output_watertight": True,
         "duplicate_groups": int(len(duplicate_groups)),
         "removed_faces": removed_faces,
+        "degenerate_faces_removed": degenerate_faces,
+        "horizontal_faces_retriangulated": planar_faces,
+        "collinear_edge_splits": edge_splits,
         "bounds_mm": input_bounds.tolist(),
         "volume_mm3": float(abs(exported.volume)),
     }
@@ -319,6 +434,36 @@ def _natural_shoreline_samples(samples, polygon, trail_exclusion):
     raise ValueError("Could not associate natural shoreline samples with water.")
 
 
+def _expanded_shoreline_samples(original, fragment, surface, terrain_outline,
+                                water_exclusion, trail_exclusion):
+    """Find nearby natural land when the route occupies the narrow shore band."""
+    safe_outline = terrain_outline.buffer(-WATER_OUTLINE_MARGIN_MM)
+    for radius in (2.0, 4.0, 8.0):
+        ring = (original.buffer(radius, join_style=1)
+                .difference(original.buffer(WATER_SHORE_INNER_MM, join_style=1))
+                .difference(water_exclusion)
+                .difference(trail_exclusion)
+                .intersection(safe_outline)
+                .intersection(fragment.buffer(radius, join_style=1)).buffer(0))
+        if ring.is_empty:
+            continue
+        min_x, min_y, max_x, max_y = ring.bounds
+        xs = np.arange(min_x, max_x + WATER_SURFACE_SAMPLE_MM, WATER_SURFACE_SAMPLE_MM)
+        ys = np.arange(min_y, max_y + WATER_SURFACE_SAMPLE_MM, WATER_SURFACE_SAMPLE_MM)
+        xx, yy = np.meshgrid(xs, ys)
+        selected = contains_xy(ring, xx.ravel(), yy.ravel())
+        points = np.column_stack((xx.ravel()[selected], yy.ravel()[selected]))
+        samples = []
+        for point in points:
+            value = surface.z(point)
+            if value is not None and math.isfinite(value):
+                samples.append((float(point[0]), float(point[1]), float(value)))
+        if len(samples) >= 3:
+            return np.asarray(samples, dtype=float), radius
+    raise ValueError("Could not sample reliable natural shoreline outside water, "
+                     "the trail groove, and the model perimeter within 8 mm.")
+
+
 def _snap_down(values, step=WATER_LAYER_HEIGHT_MM):
     values = np.asarray(values, dtype=float)
     return np.floor((values + 1e-7) / step) * step
@@ -465,29 +610,48 @@ def prepare_integrated_water(terrain_path: Path, water_paths, cap_path: Path,
                        for polygon in polygon_items(printable))
     trail_exclusion = Polygon()
     excluded_water_area = 0.0
+    shoreline_fallbacks = []
+    water_exclusion = unary_union([entry[0] for entry in entries])
     if trail_path is not None:
         trail_exclusion = trail_corridor(
             trail_path,
             float(trail_clearance_mm) + TRAIL_WATER_PRECISION_MARGIN_MM)
         protected_entries = []
         for polygon, level, depth, _samples in entries:
-            natural_samples = (None if level is not None else
-                               _sample_shoreline(polygon, surface, outline))
             clipped = polygon.difference(trail_exclusion).buffer(0)
             excluded_water_area += max(0.0, float(polygon.area - clipped.area))
+            natural_samples = None
+            if level is None:
+                try:
+                    natural_samples = _sample_shoreline(polygon, surface, outline)
+                except ValueError:
+                    # The bounded fallback below still requires actual nearby land.
+                    pass
             for item in polygon_items(clipped):
                 if item.area < WATER_MIN_COMPONENT_AREA_MM2:
                     continue
-                local_samples = (None if natural_samples is None else
-                                 _natural_shoreline_samples(
-                                     natural_samples, item, trail_exclusion))
+                local_samples = None
+                if level is None:
+                    try:
+                        if natural_samples is None:
+                            raise ValueError("No narrow-band shoreline samples.")
+                        local_samples = _natural_shoreline_samples(
+                            natural_samples, item, trail_exclusion)
+                    except ValueError:
+                        local_samples, radius = _expanded_shoreline_samples(
+                            polygon, item, surface, outline, water_exclusion, trail_exclusion)
+                        shoreline_fallbacks.append({
+                            "radius_mm": radius, "sample_count": len(local_samples),
+                            "water_fragment_area_mm2": float(item.area),
+                        })
                 protected_entries.append((item, level, depth, local_samples))
         entries = protected_entries
     if not entries:
         return {"available": False, "reason": "no printable water footprint",
                 "trail_clearance_mm": float(trail_clearance_mm),
                 "trail_precision_margin_mm": TRAIL_WATER_PRECISION_MARGIN_MM,
-                "trail_excluded_water_area_mm2": excluded_water_area}
+                "trail_excluded_water_area_mm2": excluded_water_area,
+                "shoreline_fallbacks": shoreline_fallbacks}
     caps, cutters, supports, bodies = [], [], [], []
     cutter_top = float(terrain.bounds[1, 2] + 1.0)
     support_base = float(terrain.bounds[0, 2])
@@ -566,6 +730,7 @@ def prepare_integrated_water(terrain_path: Path, water_paths, cap_path: Path,
             "trail_clearance_mm": float(trail_clearance_mm),
             "trail_precision_margin_mm": TRAIL_WATER_PRECISION_MARGIN_MM,
             "trail_excluded_water_area_mm2": excluded_water_area,
+            "shoreline_fallbacks": shoreline_fallbacks,
             "cap_watertight": True,
             "cutter_watertight": True,
             "support_watertight": True}

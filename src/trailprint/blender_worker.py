@@ -635,12 +635,36 @@ def main():
         props.disable_3mf_export = True
         props.exportformat = "STL"
         terrain_utils = importlib.import_module(module_root + ".utils.terrain")
+        generation_utils = importlib.import_module(module_root + ".utils.generation")
+        original_color_mode = generation_utils._rg_apply_single_color_mode
         original_plate_insert = terrain_utils.plateInsert
         original_elevation = elevation_utils.get_tile_elevation
         elevation_values = []
         elevation_scaling = {}
         terrain_samples = []
         terrain_bounds = {}
+
+        def local_color_mode(terrain, *args, **kwargs):
+            # Geographic fetching is complete at this point. Perform the groove
+            # and water Booleans near the origin: projected map coordinates can
+            # exceed 100,000 Blender units and quantize small shared edges.
+            from mathutils import Vector
+
+            bounds = [terrain.matrix_world @ Vector(corner)
+                      for corner in terrain.bound_box]
+            translation = Vector((
+                -(min(point.x for point in bounds) + max(point.x for point in bounds)) / 2,
+                -(min(point.y for point in bounds) + max(point.y for point in bounds)) / 2,
+                0,
+            ))
+            for generated in bpy.data.objects:
+                if generated.type in {"MESH", "CURVE", "FONT"}:
+                    generated.location += translation
+            bpy.context.view_layer.update()
+            Path(config["export_path"]).joinpath("generation-local-origin.json").write_text(
+                json.dumps({"translation_mm": list(translation),
+                            "phase": "before groove and water Booleans"}, indent=2))
+            return original_color_mode(terrain, *args, **kwargs)
 
         def capture_elevation(*args, **kwargs):
             values, difference = original_elevation(*args, **kwargs)
@@ -688,11 +712,13 @@ def main():
         terrain_utils.plateInsert = with_plate_clearance(
             original_plate_insert, props, config.get("plate_recess_clearance", 0))
         elevation_utils.get_tile_elevation = capture_elevation
+        generation_utils._rg_apply_single_color_mode = local_color_mode
         try:
             utils.runGeneration(0)
         finally:
             terrain_utils.plateInsert = original_plate_insert
             elevation_utils.get_tile_elevation = original_elevation
+            generation_utils._rg_apply_single_color_mode = original_color_mode
         export_dir = Path(config["export_path"])
         normalization_translation = None
         plate = bpy.data.objects.get(config["project_name"] + "_Plate")

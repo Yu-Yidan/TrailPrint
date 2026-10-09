@@ -4,11 +4,14 @@ from pathlib import Path
 
 import numpy as np
 import trimesh
+from shapely.geometry import Point, box
 
 from trailprint.mesh_validation import inspect_stl
 from trailprint.water_geometry import (
     WATER_DEPTH_MM,
     WATER_MIN_WIDTH_MM,
+    _cancel_opposed_horizontal_facets,
+    _expanded_shoreline_samples,
     _shoreline_surface,
     prepare_integrated_water,
     projected_footprint,
@@ -19,6 +22,65 @@ from trailprint.water_geometry import (
 
 
 class IntegratedWaterTests(unittest.TestCase):
+    def test_expanded_shoreline_excludes_water_groove_and_perimeter(self):
+        original = box(-2, -2, 2, 2)
+        neighbor = box(3, -3, 8, 3)
+        water = original.union(neighbor)
+        groove = original.buffer(2.2)
+        outline = box(-10, -10, 10, 10)
+
+        class Surface:
+            def z(self, xy):
+                point = Point(xy)
+                self_test.assertFalse(water.covers(point))
+                self_test.assertFalse(groove.covers(point))
+                self_test.assertTrue(outline.buffer(-.4).contains(point))
+                return 4.0
+
+        self_test = self
+        samples, radius = _expanded_shoreline_samples(
+            original, original, Surface(), outline, water, groove)
+        self.assertEqual(radius, 4)
+        self.assertGreaterEqual(len(samples), 3)
+        np.testing.assert_array_equal(samples[:, 2], 4)
+
+    def test_expanded_shoreline_fails_when_no_safe_land_exists(self):
+        class Surface:
+            def z(self, xy):
+                raise AssertionError("Must not sample excluded terrain")
+
+        original = box(-2, -2, 2, 2)
+        outline = box(-10, -10, 10, 10)
+        with self.assertRaisesRegex(ValueError, "within 8 mm"):
+            _expanded_shoreline_samples(original, original, Surface(), outline,
+                                       original, outline)
+
+    def test_route_covering_entire_narrow_shore_band_uses_fallback(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            terrain, water, trail = [root / name for name in
+                                     ("terrain.stl", "raw_WATER.stl", "Trail.stl")]
+            base = trimesh.creation.box((30, 30, 4))
+            base.apply_translation((0, 0, 2))
+            base.export(terrain)
+            raw = trimesh.creation.box((10, 10, 1))
+            raw.apply_translation((0, 0, 3.5))
+            raw.export(water)
+            route = trimesh.creation.extrude_polygon(
+                box(-7, -7, 7, 7).difference(box(-5, -5, 5, 5)), 1, engine="earcut")
+            route.apply_translation((0, 0, 3))
+            route.export(trail)
+            report = prepare_integrated_water(
+                terrain, [water], root / "cap.stl", root / "cutter.stl",
+                root / "support.stl", trail_path=trail, trail_clearance_mm=.1)
+            self.assertTrue(report["available"])
+            self.assertTrue(report["shoreline_fallbacks"])
+            self.assertEqual(report["bodies"][0]["surface_min_z_mm"], 4)
+            cap = trimesh.load_mesh(root / "cap.stl")
+            self.assertTrue(cap.is_watertight)
+            self.assertLess(projected_footprint(cap).intersection(
+                trail_corridor(trail, .1)).area, .01)
+
     def test_water_geometry_preserves_buffered_trail_corridor(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -144,6 +206,49 @@ class IntegratedWaterTests(unittest.TestCase):
             self.assertFalse(invalid["valid"])
             self.assertGreater(invalid["maximum_terrain_intrusion_mm"], 0.05)
             self.assertGreater(invalid["water_overlap_area_mm2"], 0.01)
+
+    def test_opposed_floor_sheet_with_different_diagonals_is_cancelled(self):
+        solid = trimesh.creation.box((10, 10, 4))
+        sheet = trimesh.Trimesh(
+            vertices=((0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)),
+            faces=((0, 1, 2), (0, 2, 3), (3, 1, 0), (3, 2, 1)),
+            process=False)
+        mesh, repaired = _cancel_opposed_horizontal_facets(
+            trimesh.util.concatenate((solid, sheet)), [0])
+        self.assertEqual(repaired, 4)
+        self.assertTrue(mesh.is_watertight)
+        self.assertEqual(len(mesh.faces), len(solid.faces))
+        self.assertAlmostEqual(mesh.volume, solid.volume)
+        np.testing.assert_array_equal(mesh.bounds, solid.bounds)
+
+    def test_terrain_repair_stitches_collinear_t_junction(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            box_mesh = trimesh.creation.box((10, 10, 4))
+            a, b, c = box_mesh.faces[0]
+            midpoint = (box_mesh.vertices[a] + box_mesh.vertices[b]) / 2
+            vertices = np.vstack((box_mesh.vertices, midpoint))
+            middle = len(vertices) - 1
+            faces = np.vstack((box_mesh.faces[1:], (a, middle, c), (middle, b, c)))
+            source = root / "junction.stl"
+            trimesh.Trimesh(vertices, faces, process=False).export(source)
+            repaired = root / "repaired.stl"
+            report = repair_terrain_for_water_boolean(source, repaired)
+            self.assertEqual(report["collinear_edge_splits"], 1)
+            mesh = trimesh.load_mesh(repaired)
+            self.assertTrue(mesh.is_watertight)
+            self.assertAlmostEqual(mesh.volume, box_mesh.volume)
+            np.testing.assert_array_equal(mesh.bounds, box_mesh.bounds)
+
+    def test_terrain_repair_rejects_actual_hole(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            mesh = trimesh.creation.box((10, 10, 4))
+            mesh.update_faces(np.arange(len(mesh.faces)) != 0)
+            source = root / "hole.stl"
+            mesh.export(source)
+            with self.assertRaisesRegex(ValueError, "made manifold"):
+                repair_terrain_for_water_boolean(source, root / "repaired.stl")
 
     def test_terrain_repair_removes_opposed_duplicate_sheet(self):
         with tempfile.TemporaryDirectory() as temp:

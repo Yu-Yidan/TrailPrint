@@ -35,13 +35,15 @@ from .naming import canonical_3mf_name, human_name, read_project_meta
 from .osm_colors import load_palette
 from .projects import (
     FUNNEL_STAGES,
-    create_project,
+    MAX_GPX_BYTES,
+    create_project_from_uploads,
     list_deleted_projects,
     list_projects,
     migrate_active_project,
     migrate_active_projects,
     permanently_delete_projects,
     purge_trash,
+    read_gpx_sources,
     read_upload,
     resolve_project,
     restore_project,
@@ -145,13 +147,22 @@ def create_app(repo_root: Path = None, build_manager: BuildManager = None,
     @app.post("/projects")
     def save_project():
         name = request.form.get("name", "").strip()
-        upload = request.files.get("gpx")
+        uploads = request.files.getlist("gpx")
         try:
-            if upload is None:
-                raise ValueError("Choose a GPX file.")
-            data = read_upload(upload.stream, upload.filename or "")
+            if not uploads:
+                raise ValueError("Choose at least one GPX file.")
+            sources = []
+            for upload in uploads:
+                filename = upload.filename or ""
+                try:
+                    data = read_upload(upload.stream, filename)
+                except ValueError as exc:
+                    raise ValueError(f"{filename or 'GPX upload'}: {exc}") from exc
+                sources.append((filename, data))
+            if sum(len(data) for _filename, data in sources) > MAX_GPX_BYTES:
+                raise ValueError("Combined GPX uploads must be 10 MB or smaller.")
             analytics.next_project_id()
-            project = create_project(app.config["PRINTS_DIR"], name, data)
+            project = create_project_from_uploads(app.config["PRINTS_DIR"], name, sources)
             analytics.register_project(
                 project, name, is_test=request.form.get("is_test") == "on")
             project = migrate_active_project(project)
@@ -190,6 +201,7 @@ def create_app(repo_root: Path = None, build_manager: BuildManager = None,
             project_title=human_name(project),
             is_test=bool(read_project_meta(project).get("dim_is_test", False)),
             has_gpx=(project / "route.gpx").is_file(),
+            gpx_sources=read_gpx_sources(project),
             stl_files=sorted(path.name for path in deliverables.glob("*.stl")) if deliverables.is_dir() else [],
             shapes=SHAPE_LABELS, extras=SHAPE_EXTRAS, extra_labels=EXTRA_LABELS,
             job=job, location=location, has_location_cache=has_location_cache(project),
@@ -489,6 +501,6 @@ def create_app(repo_root: Path = None, build_manager: BuildManager = None,
 
     @app.errorhandler(413)
     def upload_too_large(_error):
-        return render_template("new_project.html", error="The GPX file must be 10 MB or smaller."), 413
+        return render_template("new_project.html", error="Combined GPX uploads must be 10 MB or smaller."), 413
 
     return app

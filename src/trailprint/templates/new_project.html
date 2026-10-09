@@ -4,15 +4,16 @@
 <a class="back" href="{{ url_for('dashboard') }}">← All projects</a>
 <section class="form-shell">
   <div class="form-heading"><p class="eyebrow">NEW PRINT</p><h1>Create a project</h1>
-  <p>Add a GPX recording. We’ll validate it and prepare a complete project folder.</p></div>
+  <p>Add one or more GPX recordings. All routes will share one map and trail colour.</p></div>
   {% if error %}<div class="notice error">{{ error }}</div>{% endif %}
   <form method="post" action="{{ url_for('save_project') }}" enctype="multipart/form-data" id="project-form">
-    <label class="field-label" for="gpx">GPX route</label>
+    <label class="field-label" for="gpx">GPX routes</label>
     <label class="drop-zone" id="drop-zone" for="gpx">
-      <input id="gpx" name="gpx" type="file" accept=".gpx,application/gpx+xml" required>
-      <span class="upload-icon">⇧</span><strong id="file-title">Drop your GPX file here</strong>
-      <span id="file-help">or click to choose a file · maximum 10 MB</span>
+      <input id="gpx" name="gpx" type="file" accept=".gpx,application/gpx+xml" multiple required>
+      <span class="upload-icon">⇧</span><strong id="file-title">Drop your GPX files here</strong>
+      <span id="file-help">or click to choose files · maximum 10 MB total</span>
     </label>
+    <ul id="selected-files" aria-live="polite" hidden></ul>
     <label class="field-label" for="name">Project name</label>
     <input class="text-input" id="name" name="name" value="{{ name or '' }}" placeholder="Mount Tam loop" required>
     <p class="path-preview">Folder: <code>prints/&lt;####&gt;-<span id="slug-preview">project-name</span>/</code></p>

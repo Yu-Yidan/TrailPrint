@@ -56,6 +56,16 @@ for permanent deletion after typing `DELETE`; permanent deletion cannot be
 undone. The bundled `example-trail` project is protected. Run the command from the
 repository root so it can find `prints/`.
 
+Select or drop multiple GPX files to put swim, bike, and run recordings on one
+fridge magnet. Uploads may total up to 10 MB. Original files are retained under
+`inputs/gpx/`, with their names recorded in `gpx_sources.json`; `route.gpx` holds
+the combined tracks without connecting separate segments. All routes use the
+existing trail colour and share one terrain footprint. A long route may make
+shorter routes appear small. Distance and elevation gain are summed within
+segments, and duration adds recorded segment times without gaps between them.
+If any segment lacks usable start/end timestamps, automatic duration is blank.
+The earliest recorded date is used. Plate text remains editable.
+
 The dashboard uses compact, sticky tabs for Project created, STL generated, 3MF
 generated, Printing started, and Print completed. Tab badges show live counts
 and the last selected tab is remembered. Each project row can open its complete

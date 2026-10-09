@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import BinaryIO, List, Optional
 
-from .gpx import read_gpx
+from .gpx import combine_gpx, read_gpx
 from .naming import canonical_3mf_name, human_name, logical_slug, read_project_meta, storage_name
 
 MAX_GPX_BYTES = 10 * 1024 * 1024
@@ -163,7 +163,32 @@ def read_upload(stream: BinaryIO, filename: str, limit: int = MAX_GPX_BYTES) -> 
     return data
 
 
-def create_project(prints_dir: Path, name: str, gpx_data: bytes) -> Path:
+def create_project_from_uploads(prints_dir: Path, name: str, sources) -> Path:
+    """Validate and retain all originals before atomically creating a project."""
+    sources = list(sources)
+    if not sources:
+        raise ValueError("Choose at least one GPX file.")
+    if sum(len(data) for _filename, data in sources) > MAX_GPX_BYTES:
+        raise ValueError("Combined GPX uploads must be 10 MB or smaller.")
+    for filename, data in sources:
+        if not filename or Path(filename).suffix.lower() != ".gpx":
+            raise ValueError(f"{filename}: choose a file with a .gpx extension.")
+        if not data:
+            raise ValueError(f"{filename}: the GPX file is empty.")
+    combined = combine_gpx(sources)
+    return create_project(prints_dir, name, combined, gpx_sources=sources)
+
+
+def read_gpx_sources(project: Path) -> list:
+    """Older projects have no source manifest and need no migration."""
+    try:
+        data = json.loads((project / "gpx_sources.json").read_text())
+        return data if isinstance(data, list) else []
+    except (OSError, ValueError):
+        return []
+
+
+def create_project(prints_dir: Path, name: str, gpx_data: bytes, *, gpx_sources=None) -> Path:
     slug = slugify(name)
     prints_dir.mkdir(parents=True, exist_ok=True)
     destination = resolve_project(prints_dir, slug)
@@ -175,6 +200,18 @@ def create_project(prints_dir: Path, name: str, gpx_data: bytes) -> Path:
         route = temporary / "route.gpx"
         route.write_bytes(gpx_data)
         read_gpx(route)
+        if gpx_sources is not None:
+            originals = temporary / "inputs/gpx"
+            originals.mkdir(parents=True)
+            manifest = []
+            for index, (filename, data) in enumerate(gpx_sources, 1):
+                filename = filename.replace("\\", "/").rsplit("/", 1)[-1]
+                stored = originals / f"{index:03d}.gpx"
+                stored.write_bytes(data)
+                manifest.append({"filename": filename,
+                                 "path": str(stored.relative_to(temporary))})
+            (temporary / "gpx_sources.json").write_text(
+                json.dumps(manifest, indent=2, ensure_ascii=False) + "\n")
         (temporary / "README.md").write_text(
             f"# {name.strip()}\n\nCreated with the TrailPrint web interface.\n", encoding="utf-8")
         (temporary / "build").mkdir()
