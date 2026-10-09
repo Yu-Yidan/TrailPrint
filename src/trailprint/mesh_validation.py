@@ -63,7 +63,8 @@ def _load(path: Path) -> trimesh.Trimesh:
     return loaded
 
 
-def inspect_stl(path: Path, project_slug: str, map_span: float = None) -> dict:
+def inspect_stl(path: Path, project_slug: str, map_span: float = None,
+                expected_trail_segments: int = 1) -> dict:
     role = mesh_role(path, project_slug)
     result = {"filename": path.name, "role": role, "valid": False, "errors": [], "warnings": []}
     try:
@@ -114,7 +115,12 @@ def inspect_stl(path: Path, project_slug: str, map_span: float = None) -> dict:
         significant_components = sum(size >= max(10, len(faces) * 0.001) for size in components)
         result["largest_component_share"] = round(largest_share, 6)
         result["significant_components"] = significant_components
-        if significant_components != 1 or largest_share < 0.99:
+        allowed = max(1, expected_trail_segments)
+        represented_share = sum(size for size in components
+                                if size >= max(10, len(faces) * 0.001)) / len(faces)
+        if (significant_components < 1 or significant_components > allowed
+                or represented_share < 0.99
+                or (allowed == 1 and largest_share < 0.99)):
             result["errors"].append(
                 f"Trail is fragmented into {len(components)} disconnected components.")
         trail_span = float(max(extents[0], extents[1]))
@@ -213,9 +219,10 @@ def align_core_to_terrain(source_paths: Iterable[Path], reference_paths: Iterabl
             "translation_mm": [round(float(value), 4) for value in translation]}
 
 
-def validate_stls(paths: Iterable[Path], project_slug: str, repair=True) -> dict:
+def validate_stls(paths: Iterable[Path], project_slug: str, repair=True, expected_trail_segments=1) -> dict:
     paths = sorted(paths, key=lambda item: item.name.lower())
-    first_pass = [inspect_stl(path, project_slug) for path in paths]
+    first_pass = [inspect_stl(path, project_slug, expected_trail_segments=expected_trail_segments)
+                  for path in paths]
     corrections = []
     if repair:
         corrections = normalize_anomalous_assembly(paths, first_pass, project_slug)
@@ -224,7 +231,7 @@ def validate_stls(paths: Iterable[Path], project_slug: str, repair=True) -> dict
     map_span = None
     if terrain_result and "dimensions_mm" in terrain_result:
         map_span = max(terrain_result["dimensions_mm"][:2])
-    files = [inspect_stl(path, project_slug, map_span) for path in paths]
+    files = [inspect_stl(path, project_slug, map_span, expected_trail_segments) for path in paths]
     roles = {item["role"] for item in files if item["valid"]}
     errors = []
     if not corrections and any(_is_anomalous(item) for item in files):

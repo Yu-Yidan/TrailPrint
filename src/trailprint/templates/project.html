@@ -7,6 +7,9 @@
 <section class="detail-grid">
   <article class="panel"><h2>Project status</h2>
     <div class="status-row"><span>GPX route</span><strong class="{{ 'good' if has_gpx else 'bad' }}">{{ 'Ready' if has_gpx else 'Missing' }}</strong></div>
+    {% if gpx_sources %}<div class="file-list"><strong>{{ gpx_sources|length }} GPX file(s)</strong>
+      {% for source in gpx_sources %}<span>{{ source.filename }}</span>{% endfor %}
+    </div><p class="fine-print">Routes share one map and trail colour. Recorded durations are added together, excluding gaps between recordings.</p>{% endif %}
     <div class="status-row"><span>Printable STL</span><strong class="{{ 'good' if stl_files else '' }}">{{ stl_files|length ~ ' file(s)' if stl_files else 'Not built' }}</strong></div>
     {% if stl_files %}<div class="file-list">{% for filename in stl_files %}
       <a href="{{ url_for('download_file', slug=project.name, filename=filename) }}">↓ {{ filename }}</a>

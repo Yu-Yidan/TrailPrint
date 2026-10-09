@@ -20,6 +20,7 @@ from .fonts import require_model_font
 from .gpx import (
     AUTO_RELIEF_LIMIT_MM,
     format_trip_stats,
+    read_gpx_segments,
     read_gpx_trip_date,
     read_gpx_trip_stats,
 )
@@ -199,6 +200,16 @@ def _promote_stls(staged: List[Path], deliverables: Path, build_dir: Path) -> Li
 
 
 def _prefix_staged_outputs(project: Path, stage: Path) -> None:
+    trails = [path for path in stage.glob("*.stl")
+              if mesh_role(path, project.name) == "trail"]
+    if len(trails) > 1:
+        raise ValueError("Generator exported multiple Trail STLs instead of one combined trail.")
+    if trails:
+        # Joined GPX splines can leave Blender's numeric suffix on the object.
+        # Keep one stable Trail filename for 3MF role detection.
+        canonical = stage / f"{project.name}_Trail.stl"
+        if trails[0] != canonical:
+            trails[0].rename(canonical)
     prefix = deliverable_prefix(project)
     for path in list(stage.glob("*.stl")):
         if prefix and not path.name.startswith(prefix):
@@ -447,6 +458,7 @@ def run_blender_build(project: Path, settings: BuildSettings, blender: Optional[
     route = project / "route.gpx"
     if not route.is_file():
         raise ValueError(f"missing GPX input: {route}")
+    expected_trail_segments = len(read_gpx_segments(route))
     resolved_title = resolve_project_title(settings.plate_title, human_name(project))
     validate_title_fit(resolved_title, settings.shape, settings.shape_extra)
     settings = BuildSettings.validated(
@@ -521,7 +533,8 @@ def run_blender_build(project: Path, settings: BuildSettings, blender: Optional[
             raise
         raise ValueError(f"Water integration failed: {exc}") from exc
     primary_paths = list(primary_stage.glob("*.stl"))
-    primary_validation = validate_stls(primary_paths, project.name)
+    primary_validation = validate_stls(primary_paths, project.name,
+                                       expected_trail_segments=expected_trail_segments)
     if pre_water_corrections:
         primary_validation["corrections"] = (
             pre_water_corrections + primary_validation.get("corrections", []))
@@ -585,7 +598,8 @@ def run_blender_build(project: Path, settings: BuildSettings, blender: Optional[
                         water_integration = fallback_water
                 fallback_paths = list(fallback_stage.glob("*.stl"))
                 if fallback_validation is None:
-                    fallback_validation = validate_stls(fallback_paths, project.name)
+                    fallback_validation = validate_stls(fallback_paths, project.name,
+                                                        expected_trail_segments=expected_trail_segments)
                     if fallback_pre_water_corrections:
                         fallback_validation["corrections"] = (
                             fallback_pre_water_corrections
@@ -599,7 +613,8 @@ def run_blender_build(project: Path, settings: BuildSettings, blender: Optional[
                     for path in fallback_paths:
                         if mesh_role(path, project.name) in {"terrain", "trail", "water"}:
                             shutil.copy2(path, primary_stage / path.name)
-                    final_validation = validate_stls(list(primary_stage.glob("*.stl")), project.name)
+                    final_validation = validate_stls(list(primary_stage.glob("*.stl")), project.name,
+                                                     expected_trail_segments=expected_trail_segments)
                     fallback_used = final_validation["valid"]
                     if fallback_used:
                         elevation_stage = fallback_stage
@@ -630,6 +645,11 @@ def run_blender_build(project: Path, settings: BuildSettings, blender: Optional[
         "water_integration": water_integration,
         "terrain_elevation": elevation,
     }
+    try:
+        report["boolean_origin"] = json.loads(
+            (primary_stage / "generation-local-origin.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        pass
     try:
         report["dot_magnets"] = json.loads(
             (primary_stage / "plate-dot-magnets.json").read_text(encoding="utf-8"))

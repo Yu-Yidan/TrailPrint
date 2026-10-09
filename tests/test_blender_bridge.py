@@ -117,7 +117,7 @@ class SettingsTests(unittest.TestCase):
             project = Path(temp) / "project"
             (project / "deliverables").mkdir(parents=True)
             (project / "build").mkdir()
-            (project / "route.gpx").write_text("<gpx/>", encoding="utf-8")
+            (project / "route.gpx").write_text('<gpx><trk><trkseg><trkpt lat="1" lon="2"/><trkpt lat="1.01" lon="2.01"/></trkseg></trk></gpx>', encoding="utf-8")
             previous = {
                 project / "deliverables/previous.stl": b"previous stl",
                 project / "deliverables/keep.3mf": b"previous 3mf",
@@ -297,7 +297,7 @@ class SettingsTests(unittest.TestCase):
             (project / "build").mkdir()
             (project / "route.gpx").write_text(
                 '<gpx><trk><trkseg><trkpt lat="1" lon="2"><time>2022-09-21T20:23:23-06:00</time>'
-                '</trkpt></trkseg></trk></gpx>', encoding="utf-8")
+                '</trkpt><trkpt lat="1.01" lon="2.01"/></trkseg></trk></gpx>', encoding="utf-8")
             (project / "deliverables/old.stl").write_text("old", encoding="ascii")
             (project / "deliverables/keep.3mf").write_text("keep", encoding="ascii")
             old_customer = project / "deliverables/Old Title-preview.png"
@@ -376,7 +376,7 @@ class SettingsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             project = Path(temp) / "project"
             (project / "deliverables").mkdir(parents=True)
-            (project / "route.gpx").write_text("<gpx/>", encoding="utf-8")
+            (project / "route.gpx").write_text('<gpx><trk><trkseg><trkpt lat="1" lon="2"/><trkpt lat="1.01" lon="2.01"/></trkseg></trk></gpx>', encoding="utf-8")
             blender = Path(temp) / "blender"
             blender.touch()
             attempts = []
@@ -436,7 +436,7 @@ class SettingsTests(unittest.TestCase):
                 "valid": True,
                 "preview": {"valid": True, "customer_filename": old_customer.name},
             }), encoding="utf-8")
-            (project / "route.gpx").write_text("<gpx/>", encoding="utf-8")
+            (project / "route.gpx").write_text('<gpx><trk><trkseg><trkpt lat="1" lon="2"/><trkpt lat="1.01" lon="2.01"/></trkseg></trk></gpx>', encoding="utf-8")
             blender = Path(temp) / "blender"
             blender.touch()
 
@@ -464,7 +464,7 @@ class SettingsTests(unittest.TestCase):
             project = Path(temp) / "project"
             (project / "deliverables").mkdir(parents=True)
             (project / "build").mkdir()
-            (project / "route.gpx").write_text("<gpx/>", encoding="utf-8")
+            (project / "route.gpx").write_text('<gpx><trk><trkseg><trkpt lat="1" lon="2"/><trkpt lat="1.01" lon="2.01"/></trkseg></trk></gpx>', encoding="utf-8")
             previous = project / "deliverables/previous.stl"
             previous.write_text("old", encoding="ascii")
             customer_preview = project / "deliverables/Previous-preview.png"
@@ -505,7 +505,7 @@ class SettingsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             project = Path(temp) / "project"
             (project / "deliverables").mkdir(parents=True)
-            (project / "route.gpx").touch()
+            (project / "route.gpx").write_text('<gpx><trk><trkseg><trkpt lat="1" lon="2"/><trkpt lat="1.01" lon="2.01"/></trkseg></trk></gpx>')
             old = project / "deliverables/old.stl"
             old.write_text("old", encoding="ascii")
             blender = Path(temp) / "blender"
