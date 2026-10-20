@@ -37,7 +37,8 @@ class BuildManager:
 
     def start(self, project: Path, settings: BuildSettings) -> BuildJob:
         with self._lock:
-            if self._active and self._jobs[self._active].state in {"queued", "running"}:
+            if (self._active and self._jobs[self._active].state
+                    in {"queued", "running", "cancelling"}):
                 raise BuildBusy("Another map is currently building. Wait for it to finish.")
             job = BuildJob(uuid.uuid4().hex, project.resolve(), settings)
             self._jobs[job.id] = job

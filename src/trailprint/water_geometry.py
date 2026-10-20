@@ -1,14 +1,17 @@
 """Convert generated water solids into shallow, printable terrain inlays."""
 
+import io
 import math
 from pathlib import Path
 
 import numpy as np
 import trimesh
-from shapely import contains_xy, set_precision
+from shapely import contains_xy, polygons, set_precision, union_all
+from shapely.errors import ShapelyError
 from shapely.geometry import MultiPoint, Polygon
-from shapely.ops import unary_union
+from shapely.ops import nearest_points, unary_union
 
+WATER_TOPOLOGY_INSET_MM = 0.001
 WATER_DEPTH_MM = 0.4
 OCEAN_DEPTH_MM = 0.2
 WATER_MIN_WIDTH_MM = 1.0
@@ -25,6 +28,11 @@ WATER_FLAT_RANGE_MM = 0.6
 TRAIL_FIT_AREA_TOLERANCE_MM2 = 0.01
 TRAIL_FIT_Z_TOLERANCE_MM = 0.05
 TRAIL_WATER_PRECISION_MARGIN_MM = 0.02
+TRAIL_WALL_NUMERICAL_TOLERANCE_MM = 0.005
+TRAIL_SMALL_WATER_OPENING_MM2 = 10.0
+TRAIL_SMALL_WATER_CLEARANCE_MM = 0.25
+TRAIL_NUMERICAL_OPENING_MM2 = 0.01
+TRAIL_PROJECTION_GRID_MM = 1e-9
 
 
 def polygon_items(geometry):
@@ -51,10 +59,79 @@ def trail_corridor(trail_path: Path, clearance_mm: float):
     trail = trimesh.load_mesh(trail_path, process=True)
     if trail.is_empty:
         raise ValueError("Trail mesh is empty.")
-    footprint = projected_footprint(trail)
+    footprint = _material_above_floor(trail, float(trail.bounds[0, 2]))
     if footprint.is_empty:
         raise ValueError("Trail mesh has no usable projected footprint.")
     return footprint.buffer(float(clearance_mm), join_style=1).buffer(0)
+
+
+def generation_trail_corridor(trail_path, water_paths=(), clearance_mm=0.1):
+    """Protect actual raised trail walls, including small enclosed water islands."""
+    trail = trimesh.load_mesh(trail_path, process=True)
+    floor = float(trail.bounds[0, 2])
+    footprint = _material_above_floor(trail, floor)
+    if footprint.is_empty:
+        raise ValueError("Trail has no raised wall footprint for groove correction.")
+    water = unary_union([projected_footprint(trimesh.load_mesh(path, process=True))
+                         for path in water_paths])
+    ordinary = float(clearance_mm) + TRAIL_WATER_PRECISION_MARGIN_MM
+    corridor = footprint.buffer(ordinary, quad_segs=16)
+    small = []
+    for polygon in polygon_items(footprint):
+        for ring in polygon.interiors:
+            opening = Polygon(ring)
+            if (TRAIL_NUMERICAL_OPENING_MM2 <= opening.area
+                    <= TRAIL_SMALL_WATER_OPENING_MM2
+                    and opening.intersection(water).area > TRAIL_NUMERICAL_OPENING_MM2):
+                target = max(clearance_mm, TRAIL_SMALL_WATER_CLEARANCE_MM)
+                target += TRAIL_WATER_PRECISION_MARGIN_MM
+                corridor = corridor.union(ring.buffer(target, quad_segs=16))
+                small.append({"opening_area_mm2": float(opening.area),
+                              "target_clearance_mm": target})
+    return corridor.buffer(0), {"ordinary_target_clearance_mm": ordinary,
+                               "small_water_openings": small, "floor_z_mm": floor}
+
+
+def export_groove_cutter(corridor, floor_z, top_z, output_path):
+    """Extrude the wall footprint with a one-float32-step floor separation.
+
+    Coincident cutter and pocket floors can leave opposed sheets in Blender's
+    Boolean output. A representable downward step avoids those sheets without
+    filling holes or changing the trail. Near zero, use float32 epsilon at 1 mm
+    so mesh transforms do not treat the translation as identity. Bound the
+    separation to one micron.
+    """
+    cutter_floor = float(np.nextafter(np.float32(floor_z), np.float32(-np.inf)))
+    if abs(cutter_floor) < np.finfo(np.float32).eps:
+        cutter_floor = -float(np.finfo(np.float32).eps)
+    separation = float(floor_z) - cutter_floor
+    if not math.isfinite(separation) or not 0 < separation <= 0.001:
+        raise ValueError("Groove cutter floor cannot be separated safely at STL precision.")
+    pieces = []
+    for polygon in polygon_items(corridor):
+        # STL stores float32 coordinates; avoid sub-micron slivers in buffered rings.
+        polygon = set_precision(polygon, 0.001).simplify(0.001, preserve_topology=True)
+        for part in polygon_items(polygon):
+            mesh = trimesh.creation.extrude_polygon(part, top_z - cutter_floor, engine="earcut")
+            mesh.apply_translation((0, 0, cutter_floor))
+            pieces.append(mesh)
+    if not pieces:
+        raise ValueError("Groove correction produced no cutter geometry.")
+    cutter = trimesh.util.concatenate(pieces)
+    cutter.export(output_path)
+    exported = trimesh.load_mesh(output_path, process=True)
+    if not exported.is_watertight or not exported.is_winding_consistent:
+        raise ValueError("Groove cutter did not remain manifold after STL export.")
+    actual_floor = float(exported.bounds[0, 2])
+    if actual_floor != cutter_floor:
+        raise ValueError("Groove cutter floor separation was lost during STL export.")
+    return {"reference_floor_z_mm": float(floor_z), "cutter_floor_z_mm": actual_floor,
+            "floor_separation_mm": separation}
+
+
+def groove_material_overlap(terrain_path, corridor, floor_z):
+    terrain = trimesh.load_mesh(terrain_path, process=True)
+    return float(_material_above_floor(terrain, floor_z).intersection(corridor).area)
 
 
 def _stitch_collinear_boundaries(mesh):
@@ -63,7 +140,7 @@ def _stitch_collinear_boundaries(mesh):
     for _ in range(10):
         counts = np.bincount(mesh.edges_unique_inverse)
         graph = {}
-        for a, b in mesh.edges_unique[counts == 1]:
+        for a, b in mesh.edges_unique[counts != 2]:
             graph.setdefault(int(a), set()).add(int(b))
             graph.setdefault(int(b), set()).add(int(a))
         groups = []
@@ -79,40 +156,76 @@ def _stitch_collinear_boundaries(mesh):
             for vertex in group:
                 graph.pop(vertex, None)
             groups.append(group)
+        seen_groups = {frozenset(group) for group in groups}
         faces = mesh.faces.copy()
         removed, added = set(), []
         for group in groups:
-            if len(group) != 3:
+            if not 3 <= len(group) <= 1024:
                 continue
-            vertices = list(group)
-            pairs = [(vertices[i], vertices[j])
-                     for i in range(3) for j in range(i + 1, 3)]
-            a, c = max(pairs, key=lambda pair: np.linalg.norm(
-                mesh.vertices[pair[0]] - mesh.vertices[pair[1]]))
-            b = next(vertex for vertex in group if vertex not in (a, c))
+            vertices = np.asarray(sorted(group))
+            coordinates = mesh.vertices[vertices]
+            axis = int(np.argmax(np.ptp(coordinates, axis=0)))
+            a = int(vertices[np.argmin(coordinates[:, axis])])
+            c = int(vertices[np.argmax(coordinates[:, axis])])
             delta = mesh.vertices[c] - mesh.vertices[a]
-            fraction = np.dot(mesh.vertices[b] - mesh.vertices[a], delta) / np.dot(delta, delta)
-            distance = np.linalg.norm(mesh.vertices[b] - mesh.vertices[a] - fraction * delta)
-            if not 0 < fraction < 1 or distance > 1e-6:
+            length_squared = np.dot(delta, delta)
+            if length_squared < 1e-16:
                 continue
-            adjacent = np.flatnonzero(np.any(faces == a, axis=1)
-                                      & np.any(faces == c, axis=1))
+            fractions = (coordinates - mesh.vertices[a]) @ delta / length_squared
+            distances = np.linalg.norm(
+                coordinates - mesh.vertices[a] - fractions[:, None] * delta, axis=1)
+            # Only repair one-dimensional numerical seams, never surface holes.
+            if distances.max() > 1e-5:
+                # Several T junctions can meet at a bend in the terrain roof.
+                # Split each straight edge independently rather than filling
+                # the enclosing two-dimensional boundary.
+                for x, y in mesh.edges_unique[counts != 2]:
+                    if int(x) not in group or int(y) not in group:
+                        continue
+                    edge = mesh.vertices[y] - mesh.vertices[x]
+                    length = np.dot(edge, edge)
+                    if length < 1e-16:
+                        continue
+                    along = (coordinates - mesh.vertices[x]) @ edge / length
+                    away = np.linalg.norm(
+                        coordinates - mesh.vertices[x] - along[:, None] * edge, axis=1)
+                    middle = vertices[(along > 0) & (along < 1) & (away <= 5e-6)]
+                    local = frozenset([int(x), int(y), *map(int, middle)])
+                    if len(local) >= 3 and local not in seen_groups:
+                        seen_groups.add(local)
+                        groups.append(set(local))
+                continue
+            ordered = vertices[np.argsort(fractions)].tolist()
+            positions = {vertex: index for index, vertex in enumerate(ordered)}
+            adjacent = np.flatnonzero(np.count_nonzero(np.isin(faces, vertices), axis=1) >= 2)
             for index in adjacent:
                 if index in removed:
                     continue
                 face = faces[index]
+                if all(int(vertex) in group for vertex in face):
+                    # A face whose three vertices lie on this edge is a
+                    # quantization sliver, with no physical surface area.
+                    removed.add(int(index))
+                    continue
                 for position in range(3):
-                    x, y, z = (face[position], face[(position + 1) % 3],
-                               face[(position + 2) % 3])
-                    if {x, y} == {a, c}:
-                        added.extend(((x, b, z), (b, y, z)))
-                        removed.add(int(index))
-                        break
+                    x, y, z = (int(face[position]), int(face[(position + 1) % 3]),
+                               int(face[(position + 2) % 3]))
+                    if x not in positions or y not in positions:
+                        continue
+                    left, right = positions[x], positions[y]
+                    if abs(right - left) <= 1:
+                        continue
+                    chain = (ordered[left:right + 1] if left < right
+                             else ordered[right:left + 1][::-1])
+                    added.extend((first, second, z) for first, second in zip(chain, chain[1:]))
+                    removed.add(int(index))
+                    break
         if not removed:
             break
         splits += len(removed)
         mesh = trimesh.Trimesh(
-            mesh.vertices, np.concatenate((np.delete(faces, list(removed), axis=0), added)),
+            mesh.vertices, np.concatenate((np.delete(faces, list(removed), axis=0),
+                                           np.asarray(added, dtype=np.int64).reshape(-1, 3))),
             process=True)
     return mesh, splits
 
@@ -147,14 +260,14 @@ def _cancel_opposed_horizontal_facets(mesh, levels):
     return mesh, repaired
 
 
-def repair_terrain_for_water_boolean(terrain_path: Path, output_path: Path) -> dict:
-    """Remove coincident zero-thickness facets before Blender's manifold Boolean."""
-    mesh = trimesh.load_mesh(terrain_path, process=True)
-    if mesh.is_empty:
-        raise ValueError("Terrain mesh is empty.")
-    input_watertight = bool(mesh.is_watertight)
-    input_bounds = np.asarray(mesh.bounds, dtype=float)
-    input_volume = float(mesh.volume)
+class TerrainRepairError(ValueError):
+    def __init__(self, message, report):
+        super().__init__(message)
+        self.repair_report = report
+
+
+def _terrain_repair_pass(mesh):
+    """Clean one generation of coincident facets and numerical edge seams."""
     counts = np.bincount(mesh.edges_unique_inverse)
     edges = mesh.edges_unique[counts > 2]
     levels = np.unique([mesh.vertices[a, 2] for a, b in edges
@@ -196,28 +309,61 @@ def repair_terrain_for_water_boolean(terrain_path: Path, output_path: Path) -> d
         degenerate_faces += int(np.count_nonzero(~usable))
         mesh.update_faces(usable)
         mesh, edge_splits = _stitch_collinear_boundaries(mesh)
+    return mesh, {
+        "duplicate_groups": int(len(duplicate_groups)), "removed_faces": removed_faces,
+        "degenerate_faces_removed": degenerate_faces,
+        "horizontal_faces_retriangulated": planar_faces, "collinear_edge_splits": edge_splits,
+    }
+
+
+def _terrain_repair_defects(mesh):
+    counts = np.bincount(mesh.edges_unique_inverse)
+    edges = mesh.edges_unique[counts != 2]
+    return {"watertight": bool(mesh.is_watertight),
+            "winding_consistent": bool(mesh.is_winding_consistent),
+            "remaining_non_manifold_edges": len(edges),
+            "defect_locations_mm": mesh.vertices[edges[:5]].mean(axis=1).tolist()}
+
+
+def repair_terrain_for_water_boolean(terrain_path: Path, output_path: Path) -> dict:
+    """Repair numerical sheets without filling holes or changing solid volume."""
+    mesh = trimesh.load_mesh(terrain_path, process=True)
+    if mesh.is_empty:
+        raise ValueError("Terrain mesh is empty.")
+    input_watertight = bool(mesh.is_watertight)
+    input_bounds = np.asarray(mesh.bounds, dtype=float)
+    input_volume = float(mesh.volume)
+    passes = []
+    for number in range(1, 4):
+        mesh, counts = _terrain_repair_pass(mesh)
+        passes.append({"pass": number, **counts, **_terrain_repair_defects(mesh)})
+        if mesh.is_watertight and mesh.is_winding_consistent:
+            break
+    diagnostics = {"valid": False, "passes": passes, "source": terrain_path.name}
     if not mesh.is_watertight or not mesh.is_winding_consistent:
-        raise ValueError(
-            "Terrain could not be made manifold for integrated water basins.")
-    if abs(float(mesh.volume) - input_volume) > .01:
-        raise ValueError("Terrain repair unexpectedly changed its volume.")
+        defects = passes[-1]
+        raise TerrainRepairError(
+            "Terrain could not be made manifold for integrated water basins "
+            f"after {len(passes)} repair passes "
+            f"({defects['remaining_non_manifold_edges']} non-manifold edges; "
+            f"winding consistent: {defects['winding_consistent']}).",
+            diagnostics)
+    if float(mesh.volume) <= 0 or abs(float(mesh.volume) - input_volume) > .01:
+        raise TerrainRepairError("Terrain repair unexpectedly changed its volume.", diagnostics)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     mesh.export(output_path)
     exported = trimesh.load_mesh(output_path, process=True)
     if not exported.is_watertight or not exported.is_winding_consistent:
-        raise ValueError("Repaired Terrain did not remain manifold after STL export.")
+        raise TerrainRepairError("Repaired Terrain did not remain manifold after STL export.", diagnostics)
     output_bounds = np.asarray(exported.bounds, dtype=float)
     if not np.allclose(input_bounds, output_bounds,
                        atol=WATER_BOOLEAN_BOUNDS_TOLERANCE_MM, rtol=0):
-        raise ValueError("Terrain repair unexpectedly changed its bounds.")
+        raise TerrainRepairError("Terrain repair unexpectedly changed its bounds.", diagnostics)
     return {
         "input_watertight": input_watertight,
         "output_watertight": True,
-        "duplicate_groups": int(len(duplicate_groups)),
-        "removed_faces": removed_faces,
-        "degenerate_faces_removed": degenerate_faces,
-        "horizontal_faces_retriangulated": planar_faces,
-        "collinear_edge_splits": edge_splits,
+        **{key: sum(item[key] for item in passes) for key in counts},
+        "passes": passes,
         "bounds_mm": input_bounds.tolist(),
         "volume_mm3": float(abs(exported.volume)),
     }
@@ -573,10 +719,75 @@ def _terrain_shell(top_vertices, faces, bottom_z=None, top_z=None,
     return mesh
 
 
+
+def _water_body_meshes(polygon, surface, samples, ocean_level, depth, cutter_top, support_base):
+    top, faces = _surface_triangulation(polygon, surface)
+    shoreline = None
+    if ocean_level is None:
+        levels, mode, shoreline = _shoreline_surface(top, samples)
+        top[:, 2] = levels
+    else:
+        mode = "ocean-flat"
+        top[:, 2] = ocean_level
+    bottom = top[:, 2] - depth
+    cap = _terrain_shell(top, faces, depth=depth)
+    cutter = _terrain_shell(top, faces, bottom, top_z=cutter_top, depth=depth)
+    support_top = top.copy()
+    support_top[:, 2] = bottom
+    support = _terrain_shell(support_top, faces, support_base, depth=depth)
+    layers = set()
+    for value in top[:, 2]:
+        top_layer = int(round(value / WATER_LAYER_HEIGHT_MM))
+        bottom_layer = int(round((value - depth) / WATER_LAYER_HEIGHT_MM))
+        layers.update(range(bottom_layer + 1, top_layer + 1))
+    body = {"area_mm2": float(polygon.area), "surface_min_z_mm": float(top[:, 2].min()),
+            "surface_max_z_mm": float(top[:, 2].max()), "depth_mm": float(depth),
+            "surface_mode": mode, "layer_bands": sorted(layers)}
+    if shoreline:
+        body.update(shoreline)
+    return (cap, cutter, support), body
+
+
+def _water_shells_valid(meshes):
+    """Check the real float32 STL representation as well as the in-memory shell."""
+    for mesh in meshes:
+        if (mesh.is_empty or not np.isfinite(mesh.vertices).all()
+                or not mesh.is_watertight or not mesh.is_winding_consistent):
+            return False
+        exported = trimesh.load_mesh(io.BytesIO(mesh.export(file_type="stl")),
+                                     file_type="stl", process=True)
+        if not exported.is_watertight or not exported.is_winding_consistent:
+            return False
+    return True
+
+
+def _regularize_water_polygon(polygon, enforce_width=False):
+    # A coarse Shapely precision model would snap this tiny inset back onto
+    # itself. Retain full precision after the initial shoreline cleanup.
+    original = set_precision(polygon, 0)
+    # Straight joins avoid adding sub-micron arc segments at this tiny scale,
+    # which can create overlapping floor facets in the subsequent Boolean.
+    corrected = original.buffer(-WATER_TOPOLOGY_INSET_MM, join_style=2)
+    if corrected.difference(original).area > 1e-8:
+        raise ValueError("Water topology correction unexpectedly expanded the shoreline.")
+    kept, omitted = [], []
+    for part in polygon_items(corrected):
+        if (part.area < WATER_MIN_COMPONENT_AREA_MM2
+                or (enforce_width and part.buffer(-WATER_MIN_WIDTH_MM / 2).is_empty)):
+            omitted.append({"area_mm2": float(part.area),
+                            "reason": "below printable area or width after topology correction",
+                            "replacement": "existing terrain"})
+        else:
+            kept.append(part)
+    return kept, omitted, {"inset_mm": WATER_TOPOLOGY_INSET_MM,
+                           "removed_area_mm2": float(original.area - corrected.area),
+                           "resulting_body_count": len(kept)}
+
 def prepare_integrated_water(terrain_path: Path, water_paths, cap_path: Path,
                              cutter_path: Path, support_path: Path = None,
                              trail_path: Path = None,
-                             trail_clearance_mm: float = 0.0) -> dict:
+                             trail_clearance_mm: float = 0.0,
+                             protected_corridor=None) -> dict:
     """Create shoreline-driven water inlays and matching terrain geometry."""
     terrain = trimesh.load_mesh(terrain_path, process=True)
     if terrain.is_empty:
@@ -601,7 +812,8 @@ def prepare_integrated_water(terrain_path: Path, water_paths, cap_path: Path,
         return {"available": False, "reason": "no visible water footprint"}
     entries = []
     if inland_footprints:
-        inland = _printable_water(unary_union(inland_footprints).buffer(0), outline)
+        inland = (_printable_water(unary_union(inland_footprints).buffer(0), outline)
+                  if inland_footprints else Polygon())
         entries.extend((polygon, None, WATER_DEPTH_MM, None)
                        for polygon in polygon_items(inland))
     for ocean, level in ocean_footprints:
@@ -611,9 +823,10 @@ def prepare_integrated_water(terrain_path: Path, water_paths, cap_path: Path,
     trail_exclusion = Polygon()
     excluded_water_area = 0.0
     shoreline_fallbacks = []
+    omitted_fragments = []
     water_exclusion = unary_union([entry[0] for entry in entries])
     if trail_path is not None:
-        trail_exclusion = trail_corridor(
+        trail_exclusion = protected_corridor if protected_corridor is not None else trail_corridor(
             trail_path,
             float(trail_clearance_mm) + TRAIL_WATER_PRECISION_MARGIN_MM)
         protected_entries = []
@@ -628,7 +841,12 @@ def prepare_integrated_water(terrain_path: Path, water_paths, cap_path: Path,
                     # The bounded fallback below still requires actual nearby land.
                     pass
             for item in polygon_items(clipped):
-                if item.area < WATER_MIN_COMPONENT_AREA_MM2:
+                if (item.area < WATER_MIN_COMPONENT_AREA_MM2
+                        or (protected_corridor is not None
+                            and item.buffer(-WATER_MIN_WIDTH_MM / 2).is_empty)):
+                    omitted_fragments.append({"area_mm2": float(item.area),
+                                              "reason": "below printable area or width",
+                                              "replacement": "existing terrain"})
                     continue
                 local_samples = None
                 if level is None:
@@ -651,48 +869,56 @@ def prepare_integrated_water(terrain_path: Path, water_paths, cap_path: Path,
                 "trail_clearance_mm": float(trail_clearance_mm),
                 "trail_precision_margin_mm": TRAIL_WATER_PRECISION_MARGIN_MM,
                 "trail_excluded_water_area_mm2": excluded_water_area,
+                "omitted_fragments": omitted_fragments,
                 "shoreline_fallbacks": shoreline_fallbacks}
     caps, cutters, supports, bodies = [], [], [], []
     cutter_top = float(terrain.bounds[1, 2] + 1.0)
     support_base = float(terrain.bounds[0, 2])
-    for source_polygon, ocean_level, depth, natural_samples in entries:
+    topology_corrections = []
+    for source_index, (source_polygon, ocean_level, depth, natural_samples) in enumerate(entries, 1):
         polygon = _stable_polygon(source_polygon)
-        top_vertices, faces = _surface_triangulation(polygon, surface)
-        shoreline = None
+        samples = None
         if ocean_level is None:
             samples = (natural_samples if natural_samples is not None else
                        _sample_shoreline(polygon, surface, outline))
-            levels, mode, shoreline = _shoreline_surface(top_vertices, samples)
-            top_vertices[:, 2] = levels
-        else:
-            mode = "ocean-flat"
-            top_vertices[:, 2] = ocean_level
-        bottom = top_vertices[:, 2] - depth
-        cap = _terrain_shell(top_vertices, faces, depth=depth)
-        cutter = _terrain_shell(top_vertices, faces, bottom, top_z=cutter_top,
-                                depth=depth)
-        support_top = top_vertices.copy()
-        support_top[:, 2] = bottom
-        support = _terrain_shell(support_top, faces, support_base, depth=depth)
-        caps.append(cap)
-        cutters.append(cutter)
-        supports.append(support)
-        occupied_layers = set()
-        for value in top_vertices[:, 2]:
-            top_layer = int(round(value / WATER_LAYER_HEIGHT_MM))
-            bottom_layer = int(round((value - depth) / WATER_LAYER_HEIGHT_MM))
-            occupied_layers.update(range(bottom_layer + 1, top_layer + 1))
-        body = {
-            "area_mm2": float(polygon.area),
-            "surface_min_z_mm": float(top_vertices[:, 2].min()),
-            "surface_max_z_mm": float(top_vertices[:, 2].max()),
-            "depth_mm": float(depth),
-            "surface_mode": mode,
-            "layer_bands": sorted(occupied_layers),
-        }
-        if shoreline:
-            body.update(shoreline)
-        bodies.append(body)
+        try:
+            meshes, body = _water_body_meshes(
+                polygon, surface, samples, ocean_level, depth, cutter_top, support_base)
+            valid = _water_shells_valid(meshes)
+        except ValueError as exc:
+            if "non-manifold" not in str(exc):
+                raise
+            valid = False
+        if valid:
+            cap, cutter, support = meshes
+            caps.append(cap)
+            cutters.append(cutter)
+            supports.append(support)
+            bodies.append(body)
+            continue
+        parts, omitted, correction = _regularize_water_polygon(
+            polygon, enforce_width=protected_corridor is not None)
+        correction["source_body"] = source_index
+        topology_corrections.append(correction)
+        omitted_fragments.extend(omitted)
+        for part in parts:
+            meshes, body = _water_body_meshes(
+                part, surface, samples, ocean_level, depth, cutter_top, support_base)
+            if not _water_shells_valid(meshes):
+                raise ValueError(
+                    f"Integrated water body {source_index} is not watertight after "
+                    f"a {WATER_TOPOLOGY_INSET_MM:.3f} mm topology correction.")
+            cap, cutter, support = meshes
+            caps.append(cap)
+            cutters.append(cutter)
+            supports.append(support)
+            body["topology_correction_source_body"] = source_index
+            bodies.append(body)
+    if not caps:
+        return {"available": False, "reason": "no printable water footprint",
+                "omitted_fragments": omitted_fragments,
+                "water_topology_corrections": topology_corrections,
+                "shoreline_fallbacks": shoreline_fallbacks}
     cap_mesh = trimesh.util.concatenate(caps)
     cutter_mesh = trimesh.util.concatenate(cutters)
     support_mesh = trimesh.util.concatenate(supports)
@@ -711,14 +937,15 @@ def prepare_integrated_water(terrain_path: Path, water_paths, cap_path: Path,
     cutter_mesh.export(cutter_path)
     if support_path is not None:
         support_mesh.export(support_path)
-    exported_cap = trimesh.load_mesh(cap_path, process=True)
-    exported_cutter = trimesh.load_mesh(cutter_path, process=True)
-    if not exported_cap.is_watertight or not exported_cutter.is_watertight:
-        failures = []
-        if not exported_cap.is_watertight:
-            failures.append("water")
-        if not exported_cutter.is_watertight:
-            failures.append("cutter")
+    failures = []
+    exports = [("water", cap_path), ("cutter", cutter_path)]
+    if support_path is not None:
+        exports.append(("support", support_path))
+    for label, path in exports:
+        exported = trimesh.load_mesh(path, process=True)
+        if not exported.is_watertight or not exported.is_winding_consistent:
+            failures.append(label)
+    if failures:
         raise ValueError(
             "Integrated water geometry did not remain watertight after STL export: "
             + ", ".join(failures) + ".")
@@ -730,10 +957,143 @@ def prepare_integrated_water(terrain_path: Path, water_paths, cap_path: Path,
             "trail_clearance_mm": float(trail_clearance_mm),
             "trail_precision_margin_mm": TRAIL_WATER_PRECISION_MARGIN_MM,
             "trail_excluded_water_area_mm2": excluded_water_area,
+            "omitted_fragments": omitted_fragments,
             "shoreline_fallbacks": shoreline_fallbacks,
             "cap_watertight": True,
             "cutter_watertight": True,
-            "support_watertight": True}
+            "support_watertight": True,
+            "water_topology_corrections": topology_corrections}
+
+
+def _union_projected_material(pieces, mesh):
+    """Retry numerical overlay failures at bounded, sub-STL precision.
+
+    The sum of input boundary lengths bounds the area affected by snapping;
+    checking inputs first keeps this from disguising invalid source polygons.
+    STL coordinates and clearance thresholds are never changed.
+    """
+    if not pieces:
+        return Polygon()
+    try:
+        return unary_union(pieces).buffer(0)
+    except ShapelyError as error:
+        if any(not piece.is_valid or not np.isfinite(piece.bounds).all() for piece in pieces):
+            raise ValueError("Trail projection contains invalid input polygons.") from error
+        displacement = math.sqrt(2) * TRAIL_PROJECTION_GRID_MM
+        area_bound = (2 * sum(piece.length for piece in pieces) * displacement
+                      + 2 * len(pieces) * math.pi * displacement ** 2)
+        if not math.isfinite(area_bound) or area_bound > TRAIL_FIT_AREA_TOLERANCE_MM2:
+            raise ValueError("Trail projection precision repair exceeds its area budget.") from error
+        projected = union_all(pieces, grid_size=TRAIL_PROJECTION_GRID_MM)
+        if projected.is_empty or not projected.is_valid or not math.isfinite(projected.area):
+            raise ValueError("Trail projection precision repair did not produce valid material.")
+        mesh.metadata["projection_precision_correction"] = {
+            "grid_mm": TRAIL_PROJECTION_GRID_MM,
+            "maximum_coordinate_displacement_mm": displacement,
+            "area_error_bound_mm2": area_bound,
+            "input_polygons": len(pieces), "original_error": str(error),
+        }
+        return projected
+
+
+def _material_above_floor(mesh, floor_z):
+    """Project material above the pocket floor, including clipped sloping faces."""
+    if mesh.is_empty or not np.isfinite(mesh.vertices).all():
+        raise ValueError("Wall clearance received empty or non-finite geometry.")
+    triangles = mesh.triangles
+    high = triangles[:, :, 2] > floor_z + TRAIL_FIT_Z_TOLERANCE_MM
+    complete = triangles[np.all(high, axis=1), :, :2]
+    if len(complete):
+        a, b = complete[:, 1] - complete[:, 0], complete[:, 2] - complete[:, 0]
+        area = np.abs(a[:, 0] * b[:, 1] - a[:, 1] * b[:, 0])
+        pieces = list(polygons(complete[area > 1e-10]))
+    else:
+        pieces = []
+    level = floor_z + TRAIL_FIT_Z_TOLERANCE_MM
+    for triangle in triangles[np.any(high, axis=1) & ~np.all(high, axis=1)]:
+        vertices = []
+        for index, a in enumerate(triangle):
+            b = triangle[(index + 1) % 3]
+            if a[2] > level:
+                vertices.append(a[:2])
+            if (a[2] > level) != (b[2] > level):
+                vertices.append((a + (b - a) * (level - a[2]) / (b[2] - a[2]))[:2])
+        if len(vertices) >= 3:
+            polygon = Polygon(vertices)
+            if polygon.area > 1e-10:
+                pieces.append(polygon)
+    return _union_projected_material(pieces, mesh)
+
+
+def _validate_wall_clearance(terrain, trail, water, clearance_mm):
+    if trail.is_empty or not np.isfinite(trail.vertices).all():
+        raise ValueError("Could not evaluate the trail wall footprint reliably.")
+    floor_z = float(trail.bounds[0, 2])
+    # Flat contact facets at the floor are not inserted walls. Some exported
+    # meshes contain floor-only triangulation extending beyond the raised strip.
+    footprint = _material_above_floor(trail, floor_z)
+    if footprint.is_empty:
+        raise ValueError("Could not evaluate the trail wall footprint reliably.")
+    footprint = unary_union([
+        Polygon(polygon.exterior, [ring for ring in polygon.interiors
+                                  if Polygon(ring).area >= TRAIL_NUMERICAL_OPENING_MM2])
+        for polygon in polygon_items(footprint)
+        if polygon.area >= TRAIL_NUMERICAL_OPENING_MM2
+    ])
+    terrain_material = _material_above_floor(terrain, floor_z)
+    water_material = (_material_above_floor(water, floor_z)
+                      if water is not None else Polygon())
+    material = terrain_material.union(water_material)
+    boundaries, errors = [], []
+    for component, polygon in enumerate(polygon_items(footprint), 1):
+        rings = [("outer", polygon.exterior, None)]
+        rings.extend(("inner", ring, Polygon(ring)) for ring in polygon.interiors)
+        for index, (kind, ring, opening) in enumerate(rings):
+            small_water = (opening is not None
+                           and opening.area <= TRAIL_SMALL_WATER_OPENING_MM2
+                           and opening.intersection(water_material).area
+                           > TRAIL_NUMERICAL_OPENING_MM2)
+            required = max(float(clearance_mm), TRAIL_SMALL_WATER_CLEARANCE_MM
+                           if small_water else float(clearance_mm))
+            # No raised material means this is an exposed edge, without a wall
+            # restricting insertion. Keep that distinction explicit in the report.
+            distance = float(ring.distance(material)) if not material.is_empty else None
+            location = (list(nearest_points(ring, material)[0].coords[0])
+                        if distance is not None else None)
+            valid = (distance is None or distance + TRAIL_WALL_NUMERICAL_TOLERANCE_MM
+                     >= required)
+            boundary = {
+                "component": component, "boundary": index, "type": kind,
+                "small_water_opening": bool(small_water),
+                "opening_area_mm2": float(opening.area) if opening is not None else None,
+                "required_clearance_mm": required,
+                "measured_clearance_mm": distance, "tightest_xy_mm": location,
+                "valid": bool(valid),
+            }
+            boundaries.append(boundary)
+            if not valid:
+                label = "small enclosed water opening" if small_water else f"{kind} wall"
+                errors.append(
+                    f"Trail component {component} {label} {index} has {distance:.3f} mm "
+                    f"clearance; requires {required:.3f} mm near "
+                    f"({location[0]:.3f}, {location[1]:.3f}) mm.")
+    if not boundaries:
+        raise ValueError("Could not evaluate any trail walls reliably.")
+    return {
+        "valid": not errors, "boundaries": boundaries,
+        "minimum_clearance_mm": min((item["measured_clearance_mm"] for item in boundaries
+                                     if item["measured_clearance_mm"] is not None), default=None),
+        "numerical_tolerance_mm": TRAIL_WALL_NUMERICAL_TOLERANCE_MM,
+        "floor_contact_tolerance_mm": TRAIL_FIT_Z_TOLERANCE_MM,
+        "numerical_footprint_area_mm2": TRAIL_NUMERICAL_OPENING_MM2,
+        "small_water_opening_max_area_mm2": TRAIL_SMALL_WATER_OPENING_MM2,
+        "small_water_required_clearance_mm": TRAIL_SMALL_WATER_CLEARANCE_MM,
+        "projection_precision_corrections": [
+            {"role": role, **part.metadata["projection_precision_correction"]}
+            for role, part in (("terrain", terrain), ("trail", trail), ("water", water))
+            if part is not None and "projection_precision_correction" in part.metadata],
+        "errors": errors,
+    }
 
 
 def validate_trail_fit(terrain_path: Path, trail_path: Path,
@@ -743,9 +1103,14 @@ def validate_trail_fit(terrain_path: Path, trail_path: Path,
     trail = trimesh.load_mesh(trail_path, process=True)
     if terrain.is_empty or trail.is_empty:
         raise ValueError("Trail snap-fit validation received an empty mesh.")
+    if not np.isfinite(terrain.vertices).all() or not np.isfinite(trail.vertices).all():
+        raise ValueError("Trail snap-fit validation received non-finite geometry.")
+    if not math.isfinite(clearance_mm) or clearance_mm < 0:
+        raise ValueError("Trail clearance must be finite and non-negative.")
 
     corridor = trail_corridor(trail_path, clearance_mm)
     water_overlap = 0.0
+    water = None
     if water_path is not None:
         water = trimesh.load_mesh(water_path, process=True)
         if not water.is_empty:
@@ -778,8 +1143,11 @@ def validate_trail_fit(terrain_path: Path, trail_path: Path,
     if water_overlap > TRAIL_FIT_AREA_TOLERANCE_MM2:
         errors.append(
             f"Water overlaps {water_overlap:.3f} mm² of the protected trail corridor.")
+    walls = _validate_wall_clearance(terrain, trail, water, clearance_mm)
+    errors.extend(walls["errors"])
     return {
         "valid": not errors,
+        "wall_clearance": walls,
         "clearance_mm": float(clearance_mm),
         "trail_floor_z_mm": floor_z,
         "maximum_terrain_z_in_trail_mm": maximum_surface_z,

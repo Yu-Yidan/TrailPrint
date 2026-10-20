@@ -29,27 +29,28 @@
     <form method="post" action="{{ url_for('build_project', slug=project.name) }}" id="build-form" {% if build_active %}hidden{% endif %}>
       <label class="field-label" for="shape">Shape</label>
       <select class="text-input" id="shape" name="shape">
-        {% for value, label in shapes.items() %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+        {% for value, label in shapes.items() %}<option value="{{ value }}"{% if value == form_settings.shape %} selected{% endif %}>{{ label }}</option>{% endfor %}
       </select>
       <label class="field-label" for="shape-extra">Shape extras</label>
-      <select class="text-input" id="shape-extra" name="shape_extra"></select>
-      <label class="field-label" for="resolution">Resolution <strong id="resolution-value">8</strong></label>
-      <input class="range-input" id="resolution" name="resolution" type="range" min="1" max="10" value="8">
+      <select class="text-input" id="shape-extra" name="shape_extra" data-initial-value="{{ form_settings.shape_extra }}"></select>
+      <label class="field-label" for="resolution">Resolution <strong id="resolution-value">{{ form_settings.resolution }}</strong></label>
+      <input class="range-input" id="resolution" name="resolution" type="range" min="1" max="10" value="{{ form_settings.resolution }}">
       <p class="fine-print" id="resolution-note">Higher values add terrain detail but take longer. A resolution of 8 or lower is recommended.</p>
       <fieldset class="settings-group" id="plate-text-settings"
+        data-restored="{{ 'true' if settings_restored else 'false' }}"
         data-cached="{{ 'true' if has_location_cache else 'false' }}"
         data-endpoint="{{ url_for('project_location', slug=project.name) }}">
         <legend>Plate text</legend>
         <p class="fine-print">These are the actual values planned for printing. You can edit any field before building.</p>
-        <label class="toggle-setting unit-toggle"><input id="use-metric" type="checkbox" name="use_metric"><span><strong>Use metric units</strong><small>Off: miles, feet, and mph · On: kilometres, metres, and km/h</small></span></label>
+        <label class="toggle-setting unit-toggle"><input id="use-metric" type="checkbox" name="use_metric"{% if form_settings.unit_system == 'METRIC' %} checked{% endif %}><span><strong>Use metric units</strong><small>Off: miles, feet, and mph · On: kilometres, metres, and km/h</small></span></label>
         <div id="plate-recess-setting">
           <label class="field-label" for="plate-recess-depth">Terrain alignment recess</label>
-          <input class="text-input" id="plate-recess-depth" name="plate_recess_depth" type="number" value="1.5" min="0" max="4" step="0.1">
+          <input class="text-input" id="plate-recess-depth" name="plate_recess_depth" type="number" value="{{ form_settings.plate_recess_depth }}" min="0" max="4" step="0.1">
           <p class="fine-print">Depth in millimetres. The pocket follows the exact terrain outline with zero clearance; enter 0 to disable it.</p>
         </div>
         <div id="dot-magnet-setting">
           <input type="hidden" name="dot_magnet_recess" value="off">
-          <label class="toggle-setting"><input id="dot-magnet-recess" type="checkbox" name="dot_magnet_recess" value="on" checked><span><strong>Three dot magnet recesses</strong><small>18.2 mm diameter × 3.0 mm deep, centered on the backing plate</small></span></label>
+          <label class="toggle-setting"><input id="dot-magnet-recess" type="checkbox" name="dot_magnet_recess" value="on"{% if form_settings.dot_magnet_recess %} checked{% endif %}><span><strong>Three dot magnet recesses</strong><small>18.2 mm diameter × 3.0 mm deep, centered on the backing plate</small></span></label>
         </div>
         <div class="text-orientation" id="text-orientation" hidden>
           <strong>Text orientation</strong><small>Face-up view, with the title at the top</small>
@@ -63,14 +64,14 @@
         <input class="text-input" id="plate-title" name="plate_title" value="{{ plate_title }}" maxlength="200" aria-describedby="title-fit-warning">
         <p class="field-warning" id="title-fit-warning" hidden></p>
         <div class="compact-grid">
-          <label data-text-field="1"><span>Text 1</span><input class="text-input" id="plate-text-1" name="plate_text_1" value="{{ trip_values.IMPERIAL.length }}" maxlength="200"></label>
-          <label data-text-field="2"><span>Text 2</span><input class="text-input" name="plate_text_2" value="{{ trip_values.IMPERIAL.date }}" maxlength="200"></label>
-          <label data-text-field="3"><span>Text 3</span><input class="text-input" name="plate_text_3" value="{{ trip_values.IMPERIAL.duration }}" maxlength="200"></label>
-          <label data-text-field="4"><span>Text 4</span><input class="text-input" id="plate-text-4" name="plate_text_4" value="" maxlength="200"></label>
-          <label data-text-field="5"><span>Text 5</span><input class="text-input" id="plate-text-5" name="plate_text_5" value="" maxlength="200"></label>
+          <label data-text-field="1"><span>Text 1</span><input class="text-input" id="plate-text-1" name="plate_text_1" value="{{ form_settings.plate_text_1 }}" maxlength="200"></label>
+          <label data-text-field="2"><span>Text 2</span><input class="text-input" name="plate_text_2" value="{{ form_settings.plate_text_2 }}" maxlength="200"></label>
+          <label data-text-field="3"><span>Text 3</span><input class="text-input" name="plate_text_3" value="{{ form_settings.plate_text_3 }}" maxlength="200"></label>
+          <label data-text-field="4"><span>Text 4</span><input class="text-input" id="plate-text-4" name="plate_text_4" value="{{ form_settings.plate_text_4 }}" maxlength="200"></label>
+          <label data-text-field="5"><span>Text 5</span><input class="text-input" id="plate-text-5" name="plate_text_5" value="{{ form_settings.plate_text_5 }}" maxlength="200"></label>
         </div>
-        <div class="location-status"><small id="location-status">{{ 'Saved location' if has_location_cache else 'Detecting location…' }}</small>
-          <button class="link-button" id="retry-location" type="button" {% if not has_location_cache %}hidden{% endif %}>Detect again</button></div>
+        <div class="location-status"><small id="location-status">{{ 'Saved location' if (has_location_cache or settings_restored) else 'Detecting location…' }}</small>
+          <button class="link-button" id="retry-location" type="button" {% if not (has_location_cache or settings_restored) %}hidden{% endif %}>Detect again</button></div>
         <input id="location-city" name="city" type="hidden" value="{{ location.city }}">
         <input id="location-state" name="state" type="hidden" value="{{ location.state }}">
         <input id="location-country" name="country" type="hidden" value="{{ location.country }}">
@@ -78,10 +79,12 @@
       <fieldset class="settings-group">
         <legend>Terrain placement</legend>
         <div class="compact-grid two-columns">
-          <label><span>X offset</span><input class="text-input" name="x_offset" type="number" value="0" step="any"></label>
-          <label><span>Y offset</span><input class="text-input" name="y_offset" type="number" value="0" step="any"></label>
+          <label><span>X offset</span><input class="text-input" name="x_offset" type="number" value="{{ form_settings.x_offset }}" step="any"></label>
+          <label><span>Y offset</span><input class="text-input" name="y_offset" type="number" value="{{ form_settings.y_offset }}" step="any"></label>
         </div>
         <div class="terrain-elevation">
+          <input name="terrain_elevation_multiplier" type="hidden" value="{{ form_settings.terrain_elevation_multiplier }}">
+          {% if form_settings.terrain_elevation_multiplier != 1.0 %}<p class="fine-print">Saved terrain elevation scale: {{ form_settings.terrain_elevation_multiplier }}×</p>{% endif %}
           <strong>Generated terrain relief capped at {{ '%.0f'|format(relief_limit) }} mm</strong>
           <p class="fine-print">The cap uses the complete downloaded terrain, not only the GPX route. Flatter terrain retains its natural scale. Maximum terrain thickness is approximately {{ '%.0f'|format(relief_limit + 2) }} mm including the standard 2 mm base.{% if expected_relief is not none %} Route-only preliminary estimate: {{ '%.1f'|format(expected_relief) }} mm.{% endif %}</p>
         </div>

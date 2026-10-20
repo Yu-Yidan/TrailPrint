@@ -329,6 +329,7 @@ class SettingsTests(unittest.TestCase):
                 terrain = trimesh.creation.box(extents=[100, 80, 5])
                 trail = trimesh.creation.box(extents=[60, 3, 2]).subdivide()
                 terrain.export(Path(config["export_path"], "project.stl"))
+                trail.apply_translation([0, 0, terrain.bounds[1, 2] - trail.bounds[0, 2]])
                 trail.export(Path(config["export_path"], "project_Trail.stl"))
                 Path(config["export_path"], "terrain-elevation.json").write_text(json.dumps({
                     "source_min_m": 100, "source_max_m": 200,
@@ -403,6 +404,7 @@ class SettingsTests(unittest.TestCase):
                     right.apply_translation([40, 0, 0])
                     trail = trimesh.util.concatenate([left, right])
                     trimesh.creation.box(extents=[110, 90, 2]).export(output / "project_Plate.stl")
+                trail.apply_translation([0, 0, terrain.bounds[1, 2] - trail.bounds[0, 2]])
                 trail.export(output / "project_Trail.stl")
                 return subprocess.CompletedProcess(command, 0, "ok", "")
 
@@ -416,13 +418,15 @@ class SettingsTests(unittest.TestCase):
                               "project_Plate.stl"})
             report = json.loads((project / "build/validation.json").read_text(encoding="utf-8"))
             self.assertTrue(report["fallback_used"])
+            self.assertTrue(report["trail_fit"]["valid"])
+            self.assertTrue(report["fallback"]["trail_fit"]["valid"])
             self.assertTrue(report["valid"])
             self.assertTrue(report["preview"]["valid"])
             self.assertEqual(report["fallback_alignment"]["translation_mm"], [0.0, 0.0, 5.0])
             terrain = trimesh.load(project / "deliverables/project.stl", force="mesh")
             trail = trimesh.load(project / "deliverables/project_Trail.stl", force="mesh")
             self.assertAlmostEqual(terrain.bounds[0][2], 2.5)
-            self.assertAlmostEqual(trail.bounds[0][2], 4.0)
+            self.assertAlmostEqual(trail.bounds[0][2], 7.5)
 
     def test_preview_failure_keeps_new_stls_and_removes_stale_image(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -446,8 +450,9 @@ class SettingsTests(unittest.TestCase):
                     return subprocess.CompletedProcess(command, 1, "", "render failed")
                 output = Path(config["export_path"])
                 trimesh.creation.box(extents=[100, 80, 5]).export(output / "project.stl")
-                trimesh.creation.box(extents=[60, 3, 2]).subdivide().export(
-                    output / "project_Trail.stl")
+                trail = trimesh.creation.box(extents=[60, 3, 2]).subdivide()
+                trail.apply_translation([0, 0, 3.5])
+                trail.export(output / "project_Trail.stl")
                 return subprocess.CompletedProcess(command, 0, "ok", "")
 
             with patch("trailprint.blender_bridge.subprocess.run", side_effect=fake_run):
@@ -515,6 +520,37 @@ class SettingsTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "generation failed"):
                     run_blender_build(project, BuildSettings(), blender=blender)
             self.assertEqual(old.read_text(encoding="ascii"), "old")
+
+    def test_missing_elevation_preserves_previous_models_and_preview(self):
+        with tempfile.TemporaryDirectory() as temp:
+            project = Path(temp) / "project"
+            (project / "deliverables").mkdir(parents=True)
+            (project / "build").mkdir()
+            (project / "route.gpx").write_text(
+                '<gpx><trk><trkseg><trkpt lat="1" lon="2"/>'
+                '<trkpt lat="1.01" lon="2.01"/></trkseg></trk></gpx>')
+            preserved = [project / "deliverables/old.stl", project / "deliverables/old.3mf",
+                         project / "build/preview.png", project / "deliverables/old-preview.png"]
+            for path in preserved:
+                path.write_bytes(b"previous successful build")
+            (project / "build/validation.json").write_text(json.dumps({
+                "valid": True, "preview": {"customer_filename": "old-preview.png"}}))
+            blender = Path(temp) / "blender"
+            blender.touch()
+
+            def fail(project, settings, stage, *args):
+                stage.mkdir(parents=True, exist_ok=True)
+                (stage / "terrain-data-validation.json").write_text(json.dumps({
+                    "valid": False, "errors": ["Missing tile 12/981/1612"]}))
+                return subprocess.CompletedProcess([], 1, "", "Missing tile 12/981/1612")
+
+            with patch("trailprint.blender_bridge._run_attempt", side_effect=fail):
+                with self.assertRaisesRegex(ValueError, "Missing tile 12/981/1612"):
+                    run_blender_build(project, BuildSettings(), blender=blender)
+            assert all(path.read_bytes() == b"previous successful build" for path in preserved)
+            report = json.loads((project / "build/validation.json").read_text())
+            assert not report["valid"] and not report["terrain_data"]["valid"]
+            assert report["preview"]["customer_filename"] == "old-preview.png"
 
 
 if __name__ == "__main__":

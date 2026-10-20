@@ -16,16 +16,17 @@ def main():
         bpy.ops.wm.stl_import(filepath=config["terrain_path"])
         terrain = bpy.context.active_object
         terrain.name = "Terrain with shallow water basins"
-        bpy.ops.wm.stl_import(filepath=config["support_path"])
-        support = bpy.context.active_object
-        support.name = "Terrain support beneath shallow water"
-        modifier = terrain.modifiers.new(name="Integrated water support", type="BOOLEAN")
-        modifier.operation = "UNION"
-        modifier.solver = "MANIFOLD"
-        modifier.object = support
-        bpy.context.view_layer.objects.active = terrain
-        bpy.ops.object.modifier_apply(modifier=modifier.name)
-        bpy.data.objects.remove(support, do_unlink=True)
+        if config.get("support_path"):
+            bpy.ops.wm.stl_import(filepath=config["support_path"])
+            support = bpy.context.active_object
+            support.name = "Terrain support beneath shallow water"
+            modifier = terrain.modifiers.new(name="Integrated water support", type="BOOLEAN")
+            modifier.operation = "UNION"
+            modifier.solver = "MANIFOLD"
+            modifier.object = support
+            bpy.context.view_layer.objects.active = terrain
+            bpy.ops.object.modifier_apply(modifier=modifier.name)
+            bpy.data.objects.remove(support, do_unlink=True)
         bpy.ops.wm.stl_import(filepath=config["cutter_path"])
         cutter = bpy.context.active_object
         cutter.name = "Shallow water basin cutter"

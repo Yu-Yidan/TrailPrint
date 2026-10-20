@@ -41,7 +41,8 @@ Start the project dashboard and open <http://127.0.0.1:5000>:
 The interface lists existing projects, accepts GPX files by drag-and-drop, and
 can run TrailPrint3D from a project detail page. The reduced interface exposes
 shape, shape extras, plate text, terrain offsets, and resolution while always
-enabling water and single-color trail mode. The complete downloaded DEM is
+enabling water and single-color trail mode. Ponds, major rivers, and oceans
+remain enabled; minor waterways are excluded. The complete downloaded DEM is
 measured before displacement; relief above 15 mm is scaled down exactly while
 flatter terrain retains its natural scale. With the standard 2 mm base, terrain
 is therefore at most about 17 mm thick. Projects can be
@@ -65,6 +66,26 @@ shorter routes appear small. Distance and elevation gain are summed within
 segments, and duration adds recorded segment times without gaps between them.
 If any segment lacks usable start/end timestamps, automatic duration is blank.
 The earliest recorded date is used. Plate text remains editable.
+
+Water bodies with non-manifold shoreline point contacts receive a single
+0.001 mm inward correction. The matching water, basin cutter, and support
+are checked both before and after STL export. Corrections are recorded under
+`water_topology_corrections` in the water integration report.
+
+Generation widens terrain grooves from the actual raised trail footprint, targeting
+0.12 mm ordinary clearance and 0.27 mm around small enclosed water openings.
+The Trail STL is preserved. Water fragments below the existing printable area
+or width limits are omitted, leaving terrain in their place. Corrections and
+omissions are recorded in the validation report; correction is limited to two
+passes and never relaxes the fit requirements.
+
+Generated trails undergo a blocking fit check before replacing deliverables.
+The check requires 0.1 mm clearance along outer and inner walls, increased to
+0.25 mm around enclosed water openings up to 10 mm², with a 0.005 mm numerical
+tolerance. A failed check reports the measured gap and model XY location and
+preserves previous outputs. Printed fit still depends on printer accuracy.
+Details are recorded under `trail_fit`
+in the build validation report, including for models without water.
 
 The dashboard uses compact, sticky tabs for Project created, STL generated, 3MF
 generated, Printing started, and Print completed. Tab badges show live counts
@@ -103,6 +124,25 @@ magnet centers form a 62.354 mm equilateral triangle centered on the backing pla
 The option can be disabled before building, and TrailPrint automatically thickens the
 bed-facing backing only as much as needed to retain at least 0.8 mm beneath the
 terrain alignment recess.
+
+Missing or unreadable elevation tiles block generation instead of becoming flat
+zero-height patches. Mapterhorn tile downloads have bounded retries and use the
+provider's supported parent-tile fallback on a 404 above zoom 12. Genuine zero
+and negative elevations remain valid. Legacy compiled elevation caches are
+bypassed; verified tile coverage and content fingerprints are recorded in the
+validation report and a separate versioned cache under the project's build folder.
+A failed elevation check preserves existing STL, 3MF, and preview files.
+Programmatic builds can set `terrain_elevation_multiplier` for elevation
+comparisons; its default is 1.0. The requested exaggeration is applied before
+the relief cap, with both requested and effective multipliers recorded in the
+validation report. Terrain, the matching trail, and water are rebuilt together;
+plate dimensions and water inlay depth retain their configured values.
+
+Terrain cleanup uses at most three passes to resolve numerical overlaps left by
+the water Boolean. Each pass records repair counts and remaining non-manifold
+edges; the Boolean output is checked before groove correction. Genuine holes,
+inconsistent winding, or changes beyond existing volume and bounds tolerances
+still block generation and preserve previous deliverables.
 
 Every Blender output is checked before it replaces prior deliverables. Clearly
 misplaced meshes are centered using the included Bambu-boundary correction. If
