@@ -37,44 +37,26 @@
       <input class="range-input" id="resolution" name="resolution" type="range" min="1" max="10" value="{{ form_settings.resolution }}">
       <p class="fine-print" id="resolution-note">Higher values add terrain detail but take longer. A resolution of 8 or lower is recommended.</p>
       <fieldset class="settings-group" id="plate-text-settings"
-        data-restored="{{ 'true' if settings_restored else 'false' }}"
-        data-cached="{{ 'true' if has_location_cache else 'false' }}"
-        data-endpoint="{{ url_for('project_location', slug=project.name) }}">
+        data-restored="{{ 'true' if settings_restored else 'false' }}">
         <legend>Plate text</legend>
         <p class="fine-print">These are the actual values planned for printing. You can edit any field before building.</p>
-        <label class="toggle-setting unit-toggle"><input id="use-metric" type="checkbox" name="use_metric"{% if form_settings.unit_system == 'METRIC' %} checked{% endif %}><span><strong>Use metric units</strong><small>Off: miles, feet, and mph · On: kilometres, metres, and km/h</small></span></label>
-        <div id="plate-recess-setting">
-          <label class="field-label" for="plate-recess-depth">Terrain alignment recess</label>
-          <input class="text-input" id="plate-recess-depth" name="plate_recess_depth" type="number" value="{{ form_settings.plate_recess_depth }}" min="0" max="4" step="0.1">
-          <p class="fine-print">Depth in millimetres. The pocket follows the exact terrain outline with zero clearance; enter 0 to disable it.</p>
-        </div>
         <div id="dot-magnet-setting">
           <input type="hidden" name="dot_magnet_recess" value="off">
           <label class="toggle-setting"><input id="dot-magnet-recess" type="checkbox" name="dot_magnet_recess" value="on"{% if form_settings.dot_magnet_recess %} checked{% endif %}><span><strong>Three dot magnet recesses</strong><small>18.2 mm diameter × 3.0 mm deep, centered on the backing plate</small></span></label>
         </div>
-        <div class="text-orientation" id="text-orientation" hidden>
-          <strong>Text orientation</strong><small>Face-up view, with the title at the top</small>
-          <div class="orientation-shape" id="orientation-shape">
-            <span data-slot="title">Title</span><span data-slot="1">1</span><span data-slot="2">2</span>
-            <span data-slot="3">3</span><span data-slot="4">4</span><span data-slot="5">5</span>
-          </div>
-          <p class="fine-print" id="orientation-note"></p>
-        </div>
         <label class="field-label" for="plate-title">Title</label>
         <input class="text-input" id="plate-title" name="plate_title" value="{{ plate_title }}" maxlength="200" aria-describedby="title-fit-warning">
         <p class="field-warning" id="title-fit-warning" hidden></p>
-        <div class="compact-grid">
-          <label data-text-field="1"><span>Text 1</span><input class="text-input" id="plate-text-1" name="plate_text_1" value="{{ form_settings.plate_text_1 }}" maxlength="200"></label>
-          <label data-text-field="2"><span>Text 2</span><input class="text-input" name="plate_text_2" value="{{ form_settings.plate_text_2 }}" maxlength="200"></label>
-          <label data-text-field="3"><span>Text 3</span><input class="text-input" name="plate_text_3" value="{{ form_settings.plate_text_3 }}" maxlength="200"></label>
-          <label data-text-field="4"><span>Text 4</span><input class="text-input" id="plate-text-4" name="plate_text_4" value="{{ form_settings.plate_text_4 }}" maxlength="200"></label>
-          <label data-text-field="5"><span>Text 5</span><input class="text-input" id="plate-text-5" name="plate_text_5" value="{{ form_settings.plate_text_5 }}" maxlength="200"></label>
+        <label class="field-label" data-text-field="2" for="plate-text-2">Bottom edge</label>
+        <input class="text-input" id="plate-text-2" name="plate_text_2" value="{{ form_settings.plate_text_2 }}" maxlength="200">
+        <div class="compact-grid text-edge-pair">
+          <label data-text-field="1"><span>Lower left</span><input class="text-input" id="plate-text-1" name="plate_text_1" value="{{ form_settings.plate_text_1 }}" maxlength="200"></label>
+          <label data-text-field="3"><span>Lower right</span><input class="text-input" id="plate-text-3" name="plate_text_3" value="{{ form_settings.plate_text_3 }}" maxlength="200"></label>
         </div>
-        <div class="location-status"><small id="location-status">{{ 'Saved location' if (has_location_cache or settings_restored) else 'Detecting location…' }}</small>
-          <button class="link-button" id="retry-location" type="button" {% if not (has_location_cache or settings_restored) %}hidden{% endif %}>Detect again</button></div>
-        <input id="location-city" name="city" type="hidden" value="{{ location.city }}">
-        <input id="location-state" name="state" type="hidden" value="{{ location.state }}">
-        <input id="location-country" name="country" type="hidden" value="{{ location.country }}">
+        <div class="compact-grid text-edge-pair" data-upper-text-row>
+          <label data-text-field="5"><span>Upper left</span><input class="text-input" id="plate-text-5" name="plate_text_5" value="{{ form_settings.plate_text_5 }}" maxlength="200"></label>
+          <label data-text-field="4"><span>Upper right</span><input class="text-input" id="plate-text-4" name="plate_text_4" value="{{ form_settings.plate_text_4 }}" maxlength="200"></label>
+        </div>
       </fieldset>
       <fieldset class="settings-group">
         <legend>Terrain placement</legend>
@@ -94,6 +76,6 @@
     </form>
   </article>
 </section>
-<script>window.TRAILPRINT_EXTRAS = {{ extras|tojson }}; window.TRAILPRINT_EXTRA_LABELS = {{ extra_labels|tojson }}; window.TRAILPRINT_TITLE_LIMITS = {{ title_limits|tojson }}; window.TRAILPRINT_TITLE_WIDTH_SCALE = {{ title_width_scale|tojson }}; window.TRAILPRINT_MODEL_FONT_CSS = {{ model_font_css|tojson }}; window.TRAILPRINT_TRIP_VALUES = {{ trip_values|tojson }};</script>
+<script>window.TRAILPRINT_EXTRAS = {{ extras|tojson }}; window.TRAILPRINT_EXTRA_LABELS = {{ extra_labels|tojson }}; window.TRAILPRINT_TITLE_LIMITS = {{ title_limits|tojson }}; window.TRAILPRINT_TITLE_WIDTH_SCALE = {{ title_width_scale|tojson }}; window.TRAILPRINT_MODEL_FONT_CSS = {{ model_font_css|tojson }};</script>
 <script src="{{ url_for('static', filename='project.js') }}"></script>
 {% endblock %}

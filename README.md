@@ -18,6 +18,18 @@ the same font metrics. Existing exports keep their current lettering; rebuilding
 a project uses Arial Bold. The font change preserves the existing text-size
 normalization and does not change print settings.
 
+Each build prepares a private font copy with a thicker comma tail, matching the
+approved print coupon. Comma heads, lengths, spacing, and all other characters
+retain their original design. The installed Arial Bold font is never modified.
+
+TrailPrint remembers its own project filament palette. Opening a single-color
+project in Bambu Studio does not remove these choices. To update the palette,
+sync the AMS in Bambu Studio, then click **Import filaments from Bambu Studio**
+on the model preview page. Saved choices follow matching profiles and colors;
+removed colors require a replacement selection. These project filaments are
+independent of physical AMS slots. Background exports use isolated Bambu data
+and the palette captured when submitted, without changing Studio preferences.
+
 ```sh
 python3 -m venv .venv
 .venv/bin/pip install .
@@ -65,7 +77,7 @@ existing trail colour and share one terrain footprint. A long route may make
 shorter routes appear small. Distance and elevation gain are summed within
 segments, and duration adds recorded segment times without gaps between them.
 If any segment lacks usable start/end timestamps, automatic duration is blank.
-The earliest recorded date is used. Plate text remains editable.
+GPX timing metadata is retained independently of manually entered plate text.
 
 Water bodies with non-manifold shoreline point contacts receive a single
 0.001 mm inward correction. The matching water, basin cutter, and support
@@ -112,13 +124,14 @@ Documents, the LaunchAgent may also need permission to read that folder. App
 startup and the manual refresh command still run the same idempotent catch-up
 pipeline safely.
 
-Text 2 shows the GPX trip date in `YYYY.MM.DD` format. Country and state are
-detected in the background from the first GPX point using OpenStreetMap
-Nominatim and cached per project as location metadata. Text 4 and Text 5 are
-blank by default and remain independently editable. Title defaults to the
-readable project name and is measured against the selected plate layout before a build can start. Terrain
-resolution defaults to 8. Plate-generating layouts default to an adjustable
-1.5 mm terrain-shaped alignment recess with zero digital clearance. They also default
+Plate text is entered manually and printed literally. New edge fields start
+blank; the title defaults to the readable project name. Existing model text is
+restored without conversion or placeholder expansion. The form places Bottom
+edge below Title, then Lower left/Lower right and Upper left/Upper right pairs.
+Title width is checked against the selected layout before building. Terrain
+resolution defaults to 8. App builds use a fixed 1.5 mm terrain-shaped alignment
+recess with zero digital clearance where supported. Programmatic builds can
+still customize the recess. Plate-generating layouts also default
 to three bed-facing recesses for 18.2 mm diameter by 3.0 mm deep dot magnets. The
 magnet centers form a 62.354 mm equilateral triangle centered on the backing plate.
 The option can be disabled before building, and TrailPrint automatically thickens the

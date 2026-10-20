@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 from trailprint.bambu import BambuEnvironment
 from trailprint.blender_bridge import BuildSettings
+from trailprint.filament_palette import palette_revision
 from trailprint.location import save_location
 from trailprint.projects import (
     create_project,
@@ -194,6 +195,23 @@ class ProjectServiceTests(unittest.TestCase):
 
 
 class WebTests(unittest.TestCase):
+    def test_import_changes_palette_and_rejects_an_old_export_form(self):
+        project = create_project(self.root / "prints", "Colors", GPX)
+        self.client.post(f"/projects/{project.name}/import-filaments")
+        old_revision = palette_revision(self.bambu_environment)
+        with patch("trailprint.web.discover_environment", return_value=BambuEnvironment(
+                self.bambu_environment.binary, self.bambu_environment.data_dir,
+                self.bambu_environment.machine, self.bambu_environment.process,
+                ({"number": 1, "name": "Green PLA", "color": "#00AA00"},),
+                flush_volumes_matrix=(0.,), flush_volumes_vector=(140., 140.))):
+            self.client.post(f"/projects/{project.name}/import-filaments")
+        response = self.client.post(f"/projects/{project.name}/bambu", data={
+            "palette_revision": old_revision})
+        self.assertEqual(response.status_code, 302)
+        self.assertIsNone(self.bambu_manager.started)
+        with self.client.session_transaction() as session:
+            self.assertIn("palette changed", session["_flashes"][-1][1])
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
@@ -206,7 +224,9 @@ class WebTests(unittest.TestCase):
             ({"number": 1, "name": "Black PLA", "color": "#000000"},
              {"number": 2, "name": "White PLA", "color": "#FFFFFF"},
              {"number": 3, "name": "Red PLA", "color": "#FF0000"},
-             {"number": 4, "name": "Green PLA", "color": "#00AA00"}))
+             {"number": 4, "name": "Green PLA", "color": "#00AA00"}),
+            flush_volumes_matrix=tuple(0 if i == j else 140 for i in range(4) for j in range(4)),
+            flush_volumes_vector=(140.,)*8)
         self.environment_patch = patch(
             "trailprint.web.discover_environment", return_value=self.bambu_environment)
         self.environment_patch.start()
@@ -297,41 +317,38 @@ class WebTests(unittest.TestCase):
         self.assertEqual((settings.shape, settings.shape_extra, settings.resolution),
                          ("CIRCLE", "OUTER TEXT", 6))
         self.assertEqual(settings.plate_title, "Volcano Loop")
-        self.assertEqual(settings.plate_text_1, "0.41 mi")
-        self.assertEqual(settings.plate_text_2, "Gain 105 ft")
+        self.assertEqual(settings.plate_text_1, "{length}")
+        self.assertEqual(settings.plate_text_2, "Gain {elevation}")
         self.assertEqual(settings.plate_text_5, "2026")
         self.assertEqual((settings.x_offset, settings.y_offset), (1.25, -0.5))
         self.assertEqual(settings.max_terrain_relief_mm, 15.0)
         self.assertEqual(settings.plate_recess_depth, 1.5)
         self.assertTrue(settings.dot_magnet_recess)
         self.assertEqual((settings.city, settings.state, settings.country),
-                         ("Volcano", "Hawaii", "United States"))
-        self.assertTrue((self.root / "prints/build-me/location.json").is_file())
+                         ("", "", ""))
+        self.assertFalse((self.root / "prints/build-me/location.json").is_file())
 
     def test_project_page_surfaces_emgi_defaults(self):
         project = create_project(self.root / "prints", "Build Me", GPX)
         save_location(project, "Volcano", "Hawaii", "United States")
         page = self.client.get("/projects/build-me").data
         for expected in (b'name="plate_title" value="Build Me"',
-                         b'name="plate_text_1" value="0.41 mi"',
+                         b'name="plate_text_1" value=""',
                          b'name="plate_text_2" value=""',
                          b'name="plate_text_3" value=""',
                          b'name="plate_text_4" value=""',
                          b'name="plate_text_5" value=""',
-                         b'name="city" type="hidden" value="Volcano"',
-                         b'name="state" type="hidden" value="Hawaii"',
-                         b'name="country" type="hidden" value="USA"',
                          b'name="x_offset" type="number" value="0.0"',
                          b'name="y_offset" type="number" value="0.0"'):
             self.assertIn(expected, page)
         self.assertIn(b'id="resolution-value">8', page)
         self.assertIn(b'name="resolution" type="range" min="1" max="10" value="8"', page)
-        self.assertIn(b'id="text-orientation"', page)
+        self.assertNotIn(b'id="text-orientation"', page)
         self.assertIn(b'id="plate-text-settings"', page)
-        self.assertIn(b'data-cached="true"', page)
+        self.assertNotIn(b'data-cached', page)
         self.assertNotIn(b"Trail location", page)
-        self.assertIn(b'id="use-metric" type="checkbox" name="use_metric"', page)
-        self.assertIn(b'name="plate_recess_depth" type="number" value="1.5"', page)
+        self.assertNotIn(b'use-metric', page)
+        self.assertNotIn(b'name="plate_recess_depth"', page)
         self.assertIn(b'id="dot-magnet-recess" type="checkbox"', page)
         self.assertIn(b'name="dot_magnet_recess" value="on" checked', page)
         self.assertNotIn(b'name="include_water"', page)
@@ -356,15 +373,15 @@ class WebTests(unittest.TestCase):
 
         self.assertEqual(self.build_manager.started.settings.max_terrain_relief_mm, 15.0)
 
-    def test_project_page_surfaces_literal_gpx_trip_date(self):
+    def test_project_page_does_not_autofill_gpx_trip_date(self):
         project = create_project(self.root / "prints", "Dated Trip", GPX)
         (project / "route.gpx").write_text(
             '<gpx><trk><trkseg><trkpt lat="1" lon="2"><time>2025-07-04T08:30:00Z</time>'
             '</trkpt><trkpt lat="1.1" lon="2.1"/></trkseg></trk></gpx>', encoding="utf-8")
         page = self.client.get("/projects/dated-trip").data
-        self.assertIn(b'name="plate_text_2" value="2025.07.04"', page)
+        self.assertIn(b'name="plate_text_2" value=""', page)
 
-    def test_metric_build_resolves_measurement_tokens(self):
+    def test_obsolete_metric_input_cannot_convert_manual_text(self):
         create_project(self.root / "prints", "Metric", GPX)
         self.client.post("/projects/metric/build", data={
             "shape": "HEXAGON", "shape_extra": "OUTER TEXT", "resolution": "8",
@@ -372,10 +389,10 @@ class WebTests(unittest.TestCase):
             "plate_text_2": "{elevation}", "plate_text_3": "{speed}",
             "plate_text_4": "", "plate_text_5": "", "use_metric": "on"})
         settings = self.build_manager.started.settings
-        self.assertEqual(settings.unit_system, "METRIC")
-        self.assertEqual(settings.plate_text_1, "0.66 km")
-        self.assertEqual(settings.plate_text_2, "32 m")
-        self.assertEqual(settings.plate_text_3, "0.00 km/h")
+        self.assertEqual(settings.unit_system, "IMPERIAL")
+        self.assertEqual(settings.plate_text_1, "{length}")
+        self.assertEqual(settings.plate_text_2, "{elevation}")
+        self.assertEqual(settings.plate_text_3, "{speed}")
 
     def test_project_script_defaults_outer_text_and_hides_plate_text_for_none(self):
         response = self.client.get("/static/project.js")
@@ -384,7 +401,7 @@ class WebTests(unittest.TestCase):
         self.assertIn(b"extras.includes('OUTER TEXT') ? 'OUTER TEXT' : 'NONE'", script)
         self.assertIn(b"plateTextSettings.hidden = !hasText", script)
         self.assertIn(b"field.hidden = !usesFive", script)
-        self.assertIn(b"plateRecessSetting.hidden = !hasPlate", script)
+        self.assertNotIn(b"plateRecessSetting", script)
         self.assertIn(b"dotMagnetSetting.hidden = !hasPlate", script)
 
     def test_dot_magnet_checkbox_can_disable_recesses(self):
@@ -421,21 +438,9 @@ class WebTests(unittest.TestCase):
         self.assertIn(b'/builds/running-job/cancel', page)
         self.assertIn(b'id="build-form" hidden', page)
 
-    def test_location_endpoint_returns_detected_values(self):
-        project = create_project(self.root / "prints", "Build Me", GPX)
-        detected = {"city": "Volcano", "state": "Hawaii", "country": "United States"}
-        with patch("trailprint.web.detect_location", return_value=detected) as lookup:
-            response = self.client.post("/projects/build-me/location")
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.get_json(), {"status": "resolved", **detected})
-        lookup.assert_called_once_with(project)
-
-    def test_location_endpoint_failure_is_nonfatal(self):
+    def test_retired_location_endpoint_is_absent(self):
         create_project(self.root / "prints", "Build Me", GPX)
-        with patch("trailprint.web.detect_location", side_effect=OSError("offline")):
-            response = self.client.post("/projects/build-me/location")
-        self.assertEqual(response.status_code, 502)
-        self.assertEqual(response.get_json()["status"], "failed")
+        self.assertEqual(self.client.post("/projects/build-me/location").status_code, 404)
 
     def test_preview_page_and_image_are_project_scoped(self):
         project = create_project(self.root / "prints", "Build Me", GPX)
@@ -494,6 +499,7 @@ class WebTests(unittest.TestCase):
         self.assertIn(b"Bambu Lab P1S 0.4 nozzle", page.data)
         self.assertNotIn(b"Export unavailable", page.data)
         response = self.client.post("/projects/build-me/bambu", data={
+            "palette_revision": palette_revision(self.bambu_environment),
             "trail_filament": "3", "land_filament": "4",
             "mountain_filament": "1", "summit_filament": "2",
             "plate_filament": "1", "text_filament": "2",
@@ -544,6 +550,7 @@ class WebTests(unittest.TestCase):
         self.assertNotIn(b"Sentinel", page)
 
         response = self.client.post("/projects/osm-map/bambu", data={
+            "palette_revision": palette_revision(self.bambu_environment),
             "terrain_mode": "osm", "trail_filament": "3", "land_filament": "4",
             "mountain_filament": "1", "summit_filament": "2",
             "plate_filament": "1", "text_filament": "2",
@@ -578,6 +585,7 @@ class WebTests(unittest.TestCase):
         self.assertNotIn(b'name="water_placement"', page.data)
 
         response = self.client.post("/projects/wet-route/bambu", data={
+            "palette_revision": palette_revision(self.bambu_environment),
             "terrain_mode": "manual", "trail_filament": "3",
             "land_filament": "4", "mountain_filament": "1",
             "summit_filament": "2", "plate_filament": "1",
@@ -831,9 +839,10 @@ class FakeBuildManager:
 
 
 class FakeBambuManager(FakeBuildManager):
-    def start(self, project, settings):
+    def start(self, project, settings, environment=None):
         self.started = SimpleNamespace(id="bambu-job", project=project.resolve(), settings=settings,
-                                       state="queued", message="Waiting to start", output="")
+                                       state="queued", message="Waiting to start", output="",
+                                       environment=environment)
         return self.started
 
 

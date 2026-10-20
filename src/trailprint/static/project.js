@@ -3,26 +3,13 @@ const extra = document.querySelector('#shape-extra');
 const resolution = document.querySelector('#resolution');
 const resolutionValue = document.querySelector('#resolution-value');
 const resolutionNote = document.querySelector('#resolution-note');
-const orientation = document.querySelector('#text-orientation');
-const orientationShape = document.querySelector('#orientation-shape');
-const orientationNote = document.querySelector('#orientation-note');
 const plateTextSettings = document.querySelector('#plate-text-settings');
-const locationStatus = document.querySelector('.location-status');
 const titleInput = document.querySelector('#plate-title');
 const titleWarning = document.querySelector('#title-fit-warning');
 const buildButton = document.querySelector('.build-button');
 const buildInitiallyAllowed = !buildButton.disabled;
 const titleMeasure = document.createElement('canvas').getContext('2d');
-const metricToggle = document.querySelector('#use-metric');
-const distanceText = document.querySelector('#plate-text-1');
-const plateRecessSetting = document.querySelector('#plate-recess-setting');
 const dotMagnetSetting = document.querySelector('#dot-magnet-setting');
-
-const orientationNotes = {
-  HEXAGON: 'Text 1 lower-left · Text 2 bottom · Text 3 lower-right',
-  OCTAGON: 'Text 1 lower-left · Text 2 bottom · Text 3 lower-right',
-  CIRCLE: 'Text 1 left · Text 2 bottom · Text 3 right',
-};
 
 function measureTitleWidthMm(value) {
   titleMeasure.font = window.TRAILPRINT_MODEL_FONT_CSS;
@@ -45,22 +32,17 @@ function validateTitleFit() {
   buildButton.disabled = !buildInitiallyAllowed || overflowing;
 }
 
-function refreshOrientation() {
+function refreshTextFields() {
   const hasText = extra.value.includes('TEXT');
   plateTextSettings.hidden = !hasText;
-  orientation.hidden = !hasText;
   validateTitleFit();
   if (!hasText) return;
-  orientationShape.className = `orientation-shape ${shape.value.toLowerCase()}`;
   const usesFive = shape.value === 'HEXAGON' && extra.value === 'OUTER TEXT';
   const hasPlate = extra.value === 'OUTER TEXT' || (shape.value === 'HEXAGON' && extra.value === 'FRONT TEXT');
-  plateRecessSetting.hidden = !hasPlate;
   dotMagnetSetting.hidden = !hasPlate;
   plateTextSettings.querySelectorAll('[data-text-field="4"], [data-text-field="5"]')
     .forEach(field => { field.hidden = !usesFive; });
-  locationStatus.hidden = !usesFive;
-  orientationShape.querySelectorAll('[data-slot="4"], [data-slot="5"]').forEach(label => { label.hidden = !usesFive; });
-  orientationNote.textContent = `${orientationNotes[shape.value] || ''}${usesFive ? ' · Text 4 upper-right · Text 5 upper-left' : ' · Text 4–5 unused'}`;
+  plateTextSettings.querySelector('[data-upper-text-row]').hidden = !usesFive;
 }
 
 function refreshExtras(initialValue = null) {
@@ -70,10 +52,10 @@ function refreshExtras(initialValue = null) {
     option.textContent = window.TRAILPRINT_EXTRA_LABELS[value]; return option;
   }));
   extra.value = extras.includes(initialValue) ? initialValue : (extras.includes('OUTER TEXT') ? 'OUTER TEXT' : 'NONE');
-  refreshOrientation();
+  refreshTextFields();
 }
 shape.addEventListener('change', () => refreshExtras());
-extra.addEventListener('change', refreshOrientation);
+extra.addEventListener('change', refreshTextFields);
 refreshExtras(extra.dataset.initialValue);
 titleInput.addEventListener('input', validateTitleFit);
 if (document.fonts) document.fonts.ready.then(validateTitleFit);
@@ -83,51 +65,6 @@ function refreshResolution() {
 }
 resolution.addEventListener('input', refreshResolution);
 refreshResolution();
-
-if (metricToggle && distanceText) {
-  const initialSystem = metricToggle.checked ? 'METRIC' : 'IMPERIAL';
-  let generatedDistance = window.TRAILPRINT_TRIP_VALUES[initialSystem].length;
-  distanceText.dataset.edited = distanceText.value === generatedDistance ? 'false' : 'true';
-  distanceText.addEventListener('input', () => { distanceText.dataset.edited = 'true'; });
-  metricToggle.addEventListener('change', () => {
-    const system = metricToggle.checked ? 'METRIC' : 'IMPERIAL';
-    const nextDistance = window.TRAILPRINT_TRIP_VALUES[system].length;
-    if (distanceText.dataset.edited !== 'true' || distanceText.value === generatedDistance) {
-      distanceText.value = nextDistance;
-      distanceText.dataset.edited = 'false';
-    }
-    generatedDistance = nextDistance;
-  });
-}
-
-if (plateTextSettings) {
-  const countryText = document.querySelector('#plate-text-4');
-  const stateText = document.querySelector('#plate-text-5');
-  const cityValue = document.querySelector('#location-city');
-  const stateValue = document.querySelector('#location-state');
-  const countryValue = document.querySelector('#location-country');
-  const status = document.querySelector('#location-status');
-  const retry = document.querySelector('#retry-location');
-  [countryText, stateText].forEach((field) => {
-    field.addEventListener('input', () => { field.dataset.edited = 'true'; });
-  });
-  const detect = async () => {
-    status.textContent = 'Detecting location…'; retry.hidden = true;
-    try {
-      const response = await fetch(plateTextSettings.dataset.endpoint, { method: 'POST' });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error || 'Location lookup failed');
-      cityValue.value = result.city || '';
-      countryValue.value = result.country || '';
-      stateValue.value = result.state || '';
-      status.textContent = 'Detected from the first GPX point';
-    } catch (error) {
-      status.textContent = `${error.message}. You can enter the location manually.`;
-    } finally { retry.hidden = false; }
-  };
-  retry.addEventListener('click', detect);
-  if (plateTextSettings.dataset.cached !== 'true' && plateTextSettings.dataset.restored !== 'true') detect();
-}
 
 const statusBox = document.querySelector('#build-status');
 if (statusBox && ['queued', 'running', 'cancelling'].includes(statusBox.classList[1])) {

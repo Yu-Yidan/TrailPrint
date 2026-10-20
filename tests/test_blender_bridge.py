@@ -28,13 +28,13 @@ from trailprint.blender_worker import (
     attribution_text_scale,
     classify_osm_samples,
     configure_model_font,
+    configure_plate_text,
     configure_water,
     copyright_mark_geometry,
     dot_magnet_backing_extension,
     dot_magnet_centers,
     fetch_lava_osm,
     lava_osm_query,
-    resolve_text,
     terrain_relief_scaling,
     with_plate_clearance,
 )
@@ -314,11 +314,12 @@ class SettingsTests(unittest.TestCase):
                 if Path(command[-3]).name == "preview_worker.py":
                     Path(config["output_path"]).write_bytes(b"\x89PNG\r\n\x1a\n" + b"0" * 1200)
                     return subprocess.CompletedProcess(command, 0, "preview ok", "")
-                self.assertEqual(config["plate_title"], "Project")
-                self.assertEqual(config["model_font_path"], str(MODEL_FONT_PATH))
-                self.assertEqual(config["plate_text_2"], "{date}")
-                self.assertEqual(config["plate_text_3"], "{duration}")
-                self.assertEqual(config["trip_date"], "2022.09.21")
+                self.assertEqual(config["plate_title"], "")
+                self.assertEqual(Path(config["model_font_path"]).name, "Arial-Bold-print.ttf")
+                self.assertTrue(Path(config["model_font_path"]).is_file())
+                self.assertEqual(config["plate_text_2"], "")
+                self.assertEqual(config["plate_text_3"], "")
+                self.assertNotIn("trip_date", config)
                 self.assertEqual(config["x_offset"], 0.0)
                 self.assertEqual(config["max_terrain_relief_mm"], 15.0)
                 self.assertEqual(config["plate_recess_depth"], 0.0)
@@ -358,7 +359,7 @@ class SettingsTests(unittest.TestCase):
             self.assertEqual((elevation["source_min_m"], elevation["source_max_m"]), (100, 200))
             self.assertEqual(elevation["unit_system"], "IMPERIAL")
 
-    def test_trip_date_and_location_tokens_are_resolved(self):
+    def test_gpx_date_remains_readable_but_plate_tokens_are_literal(self):
         with tempfile.TemporaryDirectory() as temp:
             route = Path(temp) / "route.gpx"
             route.write_text(
@@ -368,8 +369,16 @@ class SettingsTests(unittest.TestCase):
             self.assertEqual(read_gpx_trip_date(route), "2024.01.03")
             config = {"trip_date": "2024.01.03", "city": "Volcano", "state": "Hawaii",
                       "country": "United States"}
-            self.assertEqual(resolve_text("{date} · {city}, {state}", config),
-                             "2024.01.03 · Volcano, Hawaii")
+            config.update(plate_title="{name}", **{f"plate_text_{i}": token for i, token in
+                          enumerate(("{length}", "{date}", "{duration}", "{city}", ""), 1)})
+            props = type("Props", (), {})()
+            configure_plate_text(props, config)
+            self.assertEqual(props.titlefield, "{name}")
+            self.assertEqual(props.textfield1, "{length}")
+            self.assertEqual(props.textfield2, "{date}")
+            self.assertEqual(props.textfield3, "{duration}")
+            self.assertEqual(props.textfield4, "{city}")
+            self.assertEqual(props.textfield5, "")
             route.write_text("<gpx/>", encoding="utf-8")
             self.assertEqual(read_gpx_trip_date(route), "")
 

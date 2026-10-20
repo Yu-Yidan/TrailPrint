@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 from .blender_bridge import SHAPE_EXTRAS, BuildSettings, run_blender_build
+from .naming import human_name
 
 
 def main(argv=None) -> int:
@@ -41,7 +42,8 @@ def main(argv=None) -> int:
         print(f"Installed {target}")
         return 0
     try:
-        settings = BuildSettings.validated(args.shape, args.shape_extra, args.resolution)
+        settings = BuildSettings.validated(args.shape, args.shape_extra, args.resolution,
+                                           plate_title=human_name(args.print_directory))
         outputs = run_blender_build(args.print_directory, settings)
     except (OSError, ValueError) as exc:
         parser.error(str(exc))
