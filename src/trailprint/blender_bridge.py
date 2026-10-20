@@ -22,10 +22,7 @@ from shapely.wkb import loads as load_wkb
 from .fonts import require_model_font
 from .gpx import (
     AUTO_RELIEF_LIMIT_MM,
-    format_trip_stats,
     read_gpx_segments,
-    read_gpx_trip_date,
-    read_gpx_trip_stats,
 )
 from .mesh_validation import (
     align_core_to_terrain,
@@ -38,7 +35,8 @@ from .mesh_validation import (
 )
 from .naming import customer_preview_name, deliverable_prefix, human_name
 from .osm_colors import analyze_project
-from .title import resolve_project_title, validate_title_fit
+from .print_font import prepare_print_font
+from .title import validate_title_fit
 from .water_geometry import (
     WATER_BOOLEAN_BOUNDS_TOLERANCE_MM,
     export_groove_cutter,
@@ -81,10 +79,10 @@ class BuildSettings:
     shape: str = "HEXAGON"
     shape_extra: str = "NONE"
     resolution: int = 8
-    plate_title: str = "{name}"
-    plate_text_1: str = "{length}"
-    plate_text_2: str = "{date}"
-    plate_text_3: str = "{duration}"
+    plate_title: str = ""
+    plate_text_1: str = ""
+    plate_text_2: str = ""
+    plate_text_3: str = ""
     plate_text_4: str = ""
     plate_text_5: str = ""
     x_offset: float = 0.0
@@ -100,8 +98,8 @@ class BuildSettings:
 
     @classmethod
     def validated(cls, shape="HEXAGON", shape_extra="NONE", resolution=8,
-                  plate_title="{name}", plate_text_1="{length}",
-                  plate_text_2="{date}", plate_text_3="{duration}",
+                  plate_title="", plate_text_1="",
+                  plate_text_2="", plate_text_3="",
                   plate_text_4="", plate_text_5="", x_offset=0, y_offset=0,
                   max_terrain_relief_mm=AUTO_RELIEF_LIMIT_MM,
                   city="", state="", country="",
@@ -508,12 +506,11 @@ def _run_attempt(project: Path, settings: BuildSettings, stage: Path, blender_pa
     stage.mkdir()
     route = project / "route.gpx"
     config_path = stage / "job.json"
-    trip_values = format_trip_stats(read_gpx_trip_stats(route), settings.unit_system)
     config_path.write_text(json.dumps({
         "gpx_file": str(route), "export_path": str(stage), "project_name": project.name,
         "elevation_cache_dir": str(project / "build" / "verified-elevation-v1"),
         "shape": settings.shape, "shape_extra": settings.shape_extra,
-        "model_font_path": str(require_model_font()),
+        "model_font_path": str(prepare_print_font(stage / "Arial-Bold-print.ttf")),
         "resolution": settings.resolution,
         "plate_title": settings.plate_title, "plate_text_1": settings.plate_text_1,
         "plate_text_2": settings.plate_text_2, "plate_text_3": settings.plate_text_3,
@@ -521,9 +518,7 @@ def _run_attempt(project: Path, settings: BuildSettings, stage: Path, blender_pa
         "x_offset": settings.x_offset, "y_offset": settings.y_offset,
         "max_terrain_relief_mm": settings.max_terrain_relief_mm,
         "terrain_elevation_multiplier": settings.terrain_elevation_multiplier,
-        "trip_date": read_gpx_trip_date(route), "city": settings.city,
-        "state": settings.state, "country": settings.country,
-        "unit_system": settings.unit_system, **trip_values,
+        "unit_system": settings.unit_system,
         "plate_recess_depth": settings.plate_recess_depth,
         "plate_recess_clearance": 0.0,
         "dot_magnet_recess": settings.dot_magnet_recess,
@@ -578,7 +573,7 @@ def run_blender_build(project: Path, settings: BuildSettings, blender: Optional[
     if not route.is_file():
         raise ValueError(f"missing GPX input: {route}")
     expected_trail_segments = len(read_gpx_segments(route))
-    resolved_title = resolve_project_title(settings.plate_title, human_name(project))
+    resolved_title = settings.plate_title
     validate_title_fit(resolved_title, settings.shape, settings.shape_extra)
     settings = BuildSettings.validated(
         shape=settings.shape, shape_extra=settings.shape_extra,

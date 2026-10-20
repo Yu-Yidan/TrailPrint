@@ -1,7 +1,7 @@
 import json
 import shutil
 import subprocess
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from html.parser import HTMLParser
 from pathlib import Path
 from types import SimpleNamespace
@@ -91,12 +91,14 @@ def test_saved_form_survives_restart_and_submits_identical_settings(page, saved)
         assert form.selected_shape == saved.shape
         assert form.ids["shape-extra"]["data-initial-value"] == saved.shape_extra
         assert form.ids["plate-text-settings"]["data-restored"] == "true"
-        assert b"Saved location" in response.data
-        assert "checked" in form.inputs["use_metric"]
+        assert b"location-status" not in response.data
+        assert "use_metric" not in form.inputs
+        assert "plate_recess_depth" not in form.inputs
         assert "checked" not in form.inputs["dot_magnet_recess"]
         result = client.post(f"/projects/{project.name}/build", data=form.submission())
         assert result.status_code == 302
-        assert manager.start.call_args.args[1] == saved
+        assert manager.start.call_args.args[1] == replace(saved, plate_recess_depth=1.5,
+                                                       unit_system="IMPERIAL", city="", state="", country="")
 
 
 @pytest.mark.parametrize("state", ["failed", "cancelled", "running", "queued"])
@@ -135,7 +137,7 @@ def test_partial_older_settings_use_compatible_defaults(tmp_path):
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="Node is needed for the JS check")
-def test_client_initialization_preserves_saved_values_and_unit_edits(page):
+def test_client_initialization_preserves_saved_values_without_autofill(page):
     app, _, project = page
     save_run(project, {**asdict(current_model_settings(project, BuildSettings())),
                        "shape_extra": "NONE"})
@@ -152,6 +154,7 @@ function element(attrs = {}) {
     listeners: {}, classList: {toggle(){}}, style: {},
     addEventListener(type, action) {this.listeners[type] = action},
     setAttribute(){}, setCustomValidity(){}, querySelectorAll(){return []},
+    querySelector(){return element()},
     replaceChildren(...children){this.children = children},
   };
 }
@@ -175,12 +178,8 @@ assert.equal(elements.get('#shape-extra').value,'NONE');
 assert.equal(elements.get('#resolution-value').textContent,'9');
 assert.equal(elements.get('#plate-text-1').value,'Custom distance');
 assert.equal(fetches,0);
-const metric = elements.get('#use-metric'), distance = elements.get('#plate-text-1');
-metric.checked = false; metric.listeners.change();
-assert.equal(distance.value,'Custom distance');
-distance.value='0.41 mi'; distance.listeners.input();
-metric.checked = true; metric.listeners.change();
-assert.equal(distance.value,'0.66 km');
+assert.equal(elements.has('#use-metric'),false);
+assert.equal(elements.has('#plate-recess-depth'),false);
 const shape = elements.get('#shape'); shape.value='SQUARE'; shape.listeners.change();
 assert.equal(elements.get('#shape-extra').value,'NONE');
 """
@@ -204,6 +203,50 @@ def test_retired_creek_settings_are_ignored_without_losing_other_settings(page, 
     form.update({"small_creeks_enabled": "on", "small_creek_ids": "invalid legacy input",
                  "small_creek_width_mm": "invalid", "small_creek_snapshot": "missing"})
     assert client.post(f"/projects/{project.name}/build", data=form).status_code == 302
-    assert manager.start.call_args.args[1] == saved
+    assert manager.start.call_args.args[1] == replace(saved, plate_recess_depth=1.5,
+                                                       unit_system="IMPERIAL", city="", state="", country="")
     assert not any('creek' in key for key in asdict(manager.start.call_args.args[1]))
     assert client.post(f"/projects/{project.name}/creeks/preview").status_code == 404
+
+
+@pytest.mark.parametrize('recess', ['0', '4', 'invalid'])
+def test_app_prints_literal_text_and_ignores_retired_overrides(page, recess):
+    app, manager, project = page
+    entered = {'plate_title': '{name}', 'plate_text_1': '  12 km  ',
+               'plate_text_2': '{date}', 'plate_text_3': '{duration}',
+               'plate_text_4': '{city}', 'plate_text_5': 'Gain {elevation}'}
+    result = app.test_client().post(f'/projects/{project.name}/build', data={
+        'shape': 'HEXAGON', 'shape_extra': 'OUTER TEXT', **entered,
+        'plate_recess_depth': recess, 'use_metric': 'on'})
+    assert result.status_code == 302
+    settings = manager.start.call_args.args[1]
+    assert settings.plate_recess_depth == 1.5
+    assert settings.unit_system == 'IMPERIAL'
+    for key, value in entered.items():
+        assert getattr(settings, key) == value
+
+
+def test_manual_field_order_and_blank_defaults(page):
+    app, _, project = page
+    (project / 'products/fridge_magnet_raised_map/current.json').unlink()
+    html = app.test_client().get(f'/projects/{project.name}').get_data(as_text=True)
+    form = Form(html)
+    assert form.inputs['plate_title']['value'] == 'Saved Route'
+    assert all(form.inputs[f'plate_text_{i}']['value'] == '' for i in range(1, 6))
+    order = ['plate_title', 'plate_text_2', 'plate_text_1', 'plate_text_3',
+             'plate_text_5', 'plate_text_4']
+    positions = [html.index(f'name="{key}"') for key in order]
+    assert positions == sorted(positions)
+    assert all(label in html for label in ('Bottom edge', 'Lower left', 'Lower right',
+                                           'Upper left', 'Upper right'))
+    assert 'TRAILPRINT_TRIP_VALUES' not in html
+    assert 'Detect again' not in html and 'location-city' not in html
+
+
+@pytest.mark.parametrize('text', ['{date} {name} {length} {elevation} {duration} {speed} {scale}',
+                                  '  custom units  ', ''])
+def test_extension_text_substitution_is_bypassed(text):
+    from trailprint.blender_worker import literal_shape_text
+    obj = SimpleNamespace(data=SimpleNamespace(body='Previous'))
+    assert literal_shape_text(text, obj) == text
+    assert obj.data.body == text

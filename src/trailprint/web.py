@@ -21,16 +21,15 @@ from .bambu import BambuSettings, default_filament_mapping, discover_environment
 from .bambu_jobs import BambuJobManager
 from .blender_bridge import EXTRA_LABELS, SHAPE_EXTRAS, SHAPE_LABELS, BuildSettings
 from .build_settings import current_model_settings
+from .filament_palette import import_palette as import_filament_palette
+from .filament_palette import load_palette as load_filament_palette
+from .filament_palette import palette_revision, role_defaults
 from .fonts import MODEL_FONT_BROWSER_CSS
 from .gpx import (
     AUTO_RELIEF_LIMIT_MM,
     estimate_print_relief_mm,
-    format_trip_stats,
-    read_gpx_trip_stats,
-    resolve_trip_text,
 )
 from .jobs import BuildBusy, BuildManager
-from .location import detect_location, has_location_cache, read_location, save_location
 from .mesh_validation import mesh_role, read_report
 from .naming import canonical_3mf_name, human_name, read_project_meta
 from .osm_colors import load_palette
@@ -58,7 +57,7 @@ from .terrain_colors import (
     load_terrain_defaults,
     save_terrain_preferences,
 )
-from .title import TITLE_LIMITS_MM, TITLE_WIDTH_SCALE, resolve_project_title, validate_title_fit
+from .title import TITLE_LIMITS_MM, TITLE_WIDTH_SCALE, validate_title_fit
 
 
 def create_app(repo_root: Path = None, build_manager: BuildManager = None,
@@ -189,23 +188,13 @@ def create_app(repo_root: Path = None, build_manager: BuildManager = None,
         analytics.sync_project(project)
         deliverables = project / "deliverables"
         job = app.extensions["trailprint_builds"].for_project(project)
-        location = read_location(project)
-        stats = read_gpx_trip_stats(project / "route.gpx")
         expected_relief = estimate_print_relief_mm(project / "route.gpx")
-        trip_values = {
-            "IMPERIAL": format_trip_stats(stats, "IMPERIAL"),
-            "METRIC": format_trip_stats(stats, "METRIC"),
-        }
-        defaults = BuildSettings(
-            shape_extra="OUTER TEXT", plate_title=human_name(project),
-            plate_text_1=trip_values["IMPERIAL"]["length"],
-            plate_text_2=trip_values["IMPERIAL"]["date"],
-            plate_text_3=trip_values["IMPERIAL"]["duration"],
-            city=location["city"], state=location["state"], country=location["country"])
+        defaults = BuildSettings(shape_extra="OUTER TEXT", plate_title=human_name(project))
         restored = current_model_settings(project, defaults)
-        form_settings = restored or defaults
-        if restored:
-            location = {key: getattr(restored, key) for key in ("city", "state", "country")}
+        # App controls always use the standard recess and internal unit defaults.
+        restored = (replace(restored, plate_recess_depth=defaults.plate_recess_depth,
+                            unit_system=defaults.unit_system) if restored else None)
+        form_settings = BuildSettings.validated(**asdict(restored or defaults))
         preview_path = project / "build/preview.png"
         return render_template(
             "project.html", project=project,
@@ -215,8 +204,7 @@ def create_app(repo_root: Path = None, build_manager: BuildManager = None,
             gpx_sources=read_gpx_sources(project),
             stl_files=sorted(path.name for path in deliverables.glob("*.stl")) if deliverables.is_dir() else [],
             shapes=SHAPE_LABELS, extras=SHAPE_EXTRAS, extra_labels=EXTRA_LABELS,
-            job=job, location=location, has_location_cache=has_location_cache(project),
-            trip_values=trip_values,
+            job=job,
             expected_relief=expected_relief,
             form_settings=form_settings, settings_restored=restored is not None,
             relief_limit=AUTO_RELIEF_LIMIT_MM,
@@ -224,15 +212,6 @@ def create_app(repo_root: Path = None, build_manager: BuildManager = None,
             title_width_scale=TITLE_WIDTH_SCALE, model_font_css=MODEL_FONT_BROWSER_CSS,
             has_preview=preview_path.is_file(),
             validation=read_report(project / "build/validation.json"))
-
-    @app.post("/projects/<slug>/location")
-    def project_location(slug):
-        project = get_project(slug)
-        try:
-            location = detect_location(project)
-        except (OSError, ValueError) as exc:
-            return jsonify({"status": "failed", "error": str(exc)}), 502
-        return jsonify({"status": "resolved", **location})
 
     @app.post("/projects/<slug>/build")
     def build_project(slug):
@@ -242,39 +221,20 @@ def create_app(repo_root: Path = None, build_manager: BuildManager = None,
                 shape=request.form.get("shape", "HEXAGON"),
                 shape_extra=request.form.get("shape_extra", "OUTER TEXT"),
                 resolution=request.form.get("resolution", 8),
-                plate_title=request.form.get("plate_title", "{name}"),
-                plate_text_1=request.form.get("plate_text_1", "{length}"),
-                plate_text_2=request.form.get("plate_text_2", "{date}"),
-                plate_text_3=request.form.get("plate_text_3", "{duration}"),
+                plate_title=request.form.get("plate_title", human_name(project)),
+                plate_text_1=request.form.get("plate_text_1", ""),
+                plate_text_2=request.form.get("plate_text_2", ""),
+                plate_text_3=request.form.get("plate_text_3", ""),
                 plate_text_4=request.form.get("plate_text_4", ""),
                 plate_text_5=request.form.get("plate_text_5", ""),
                 x_offset=request.form.get("x_offset", 0),
                 y_offset=request.form.get("y_offset", 0),
                 max_terrain_relief_mm=AUTO_RELIEF_LIMIT_MM,
                 terrain_elevation_multiplier=request.form.get("terrain_elevation_multiplier", 1),
-                city=request.form.get("city", ""),
-                state=request.form.get("state", ""),
-                country=request.form.get("country", ""),
-                unit_system=("METRIC" if request.form.get("use_metric") == "on"
-                             else "IMPERIAL"),
-                plate_recess_depth=request.form.get("plate_recess_depth", 1.5),
                 dot_magnet_recess=(
                     True if "dot_magnet_recess" not in request.form
                     else "on" in request.form.getlist("dot_magnet_recess")))
-            stats = read_gpx_trip_stats(project / "route.gpx")
-            replacements = {"name": human_name(project), "city": settings.city,
-                            "state": settings.state, "country": settings.country}
-            settings = replace(settings,
-                plate_title=resolve_trip_text(settings.plate_title, stats, settings.unit_system, **replacements),
-                plate_text_1=resolve_trip_text(settings.plate_text_1, stats, settings.unit_system, **replacements),
-                plate_text_2=resolve_trip_text(settings.plate_text_2, stats, settings.unit_system, **replacements),
-                plate_text_3=resolve_trip_text(settings.plate_text_3, stats, settings.unit_system, **replacements),
-                plate_text_4=resolve_trip_text(settings.plate_text_4, stats, settings.unit_system, **replacements),
-                plate_text_5=resolve_trip_text(settings.plate_text_5, stats, settings.unit_system, **replacements))
-            resolved_title = resolve_project_title(settings.plate_title, human_name(project))
-            validate_title_fit(resolved_title, settings.shape, settings.shape_extra)
-            settings = replace(settings, plate_title=resolved_title)
-            save_location(project, settings.city, settings.state, settings.country)
+            validate_title_fit(settings.plate_title, settings.shape, settings.shape_extra)
             analytics.ensure_product(project, RAISED_MAP)
             job = app.extensions["trailprint_builds"].start(project, settings)
             analytics.record_build_requested(
@@ -362,12 +322,13 @@ def create_app(repo_root: Path = None, build_manager: BuildManager = None,
                          ("trail", "terrain", "plate", "text")
                          if role not in available_roles]
         try:
-            bambu_environment = discover_environment()
+            bambu_environment = load_filament_palette(root, discover_environment)
             bambu_error = ""
             filament_defaults = default_filament_mapping(bambu_environment.filaments)
             terrain_defaults = load_terrain_defaults(
                 root, project, bambu_environment.filaments)
             filament_defaults.update(terrain_defaults)
+            filament_defaults = role_defaults(root, project, bambu_environment, filament_defaults)
         except ValueError as exc:
             bambu_environment, filament_defaults, terrain_defaults, bambu_error = None, {}, {}, str(exc)
         elevation = elevation_metadata(project)
@@ -402,6 +363,7 @@ def create_app(repo_root: Path = None, build_manager: BuildManager = None,
             validation=validation,
             customer_preview=customer_preview,
             bambu_environment=bambu_environment, bambu_defaults=filament_defaults,
+            palette_revision=palette_revision(bambu_environment) if bambu_environment else "",
             bambu_error=bambu_error, bambu_job=bambu_job,
             bambu_validation=bambu_validation,
             elevation=elevation_view,
@@ -410,11 +372,25 @@ def create_app(repo_root: Path = None, build_manager: BuildManager = None,
             bambu_ready=not missing_roles and bool(elevation),
             bambu_output=(project / "deliverables" / canonical_3mf_name(project)).is_file())
 
+    @app.post("/projects/<slug>/import-filaments")
+    def import_bambu_filaments(slug):
+        get_project(slug)
+        try:
+            environment = import_filament_palette(root, discover_environment)
+        except (OSError, ValueError) as exc:
+            flash(str(exc), "error")
+        else:
+            flash(f"Imported {len(environment.filaments)} project filaments. Review the color assignments.",
+                  "success")
+        return redirect(url_for("preview_project", slug=slug))
+
     @app.post("/projects/<slug>/bambu")
     def build_bambu_project(slug):
         project = get_project(slug)
         try:
-            environment = discover_environment()
+            environment = load_filament_palette(root, discover_environment)
+            if request.form.get("palette_revision") != palette_revision(environment):
+                raise ValueError("The filament palette changed. Refresh and review the color selections.")
             elevation = elevation_metadata(project)
             if not elevation:
                 raise ValueError("Rebuild the terrain before creating elevation colors.")
@@ -424,29 +400,39 @@ def create_app(repo_root: Path = None, build_manager: BuildManager = None,
             white_start_m = elevation_to_meters(
                 request.form.get("white_start"), unit_system)
             terrain_mode = request.form.get("terrain_mode", "manual")
+            active_roles = ["trail", "plate", "text"] + (
+                ["black", "green", "grey", "white"] if terrain_mode == "osm"
+                else ["land", "mountain", "summit"])
+            if any(mesh_role(path, project.name) == "water"
+                   for path in (project / "deliverables").glob("*.stl")):
+                active_roles.append("water")
+            if any(not request.form.get(f"{role}_filament") for role in active_roles):
+                raise ValueError("Choose a filament for each active model part before exporting.")
             palette = load_palette(project) if terrain_mode == "osm" else {}
             settings = BambuSettings.validated(
                 len(environment.filaments),
                 trail=request.form.get("trail_filament"),
-                land=request.form.get("land_filament"),
-                mountain=request.form.get("mountain_filament"),
-                summit=request.form.get("summit_filament"),
+                land=request.form.get("land_filament") or 1,
+                mountain=request.form.get("mountain_filament") or 1,
+                summit=request.form.get("summit_filament") or 1,
                 plate=request.form.get("plate_filament"),
                 text=request.form.get("text_filament"),
                 water=request.form.get("water_filament", 1),
                 grey_start_m=grey_start_m, white_start_m=white_start_m,
-                black=request.form.get("black_filament", 1),
+                black=request.form.get("black_filament") or 1,
                 green=request.form.get(
-                    "green_filament", request.form.get("land_filament", 1)),
+                    "green_filament", request.form.get("land_filament", 1)) or 1,
                 grey=request.form.get(
-                    "grey_filament", request.form.get("mountain_filament", 1)),
+                    "grey_filament", request.form.get("mountain_filament", 1)) or 1,
                 white=request.form.get(
-                    "white_filament", request.form.get("summit_filament", 1)),
+                    "white_filament", request.form.get("summit_filament", 1)) or 1,
                 terrain_mode=terrain_mode,
                 automatic_bands=palette.get("bands", ()),
                 generate_diy_kit=request.form.get("generate_diy_kit") == "on")
             color_preferences = {
                 **settings.terrain_filaments(),
+                "trail": settings.trail_filament, "plate": settings.plate_filament,
+                "text": settings.text_filament, "palette_revision": palette_revision(environment),
                 "grey_start_m": grey_start_m,
                 "white_start_m": white_start_m,
             }
@@ -456,7 +442,7 @@ def create_app(repo_root: Path = None, build_manager: BuildManager = None,
             save_terrain_preferences(
                 root, project, color_preferences,
                 save_defaults=request.form.get("save_terrain_defaults") == "on")
-            job = app.extensions["trailprint_bambu"].start(project, settings)
+            job = app.extensions["trailprint_bambu"].start(project, settings, environment=environment)
         except (OSError, ValueError) as exc:
             flash(str(exc), "error")
         else:

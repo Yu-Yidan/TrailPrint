@@ -31,6 +31,12 @@ Terrain and trail were regenerated with Shape Extras set to None; the requested 
   </aside>
 </section>
 <section class="panel bambu-panel">
+  {% macro filament_select(role, required=false) %}
+    <select class="text-input" name="{{ role }}_filament" {% if required %}required{% endif %}>
+      {% if not bambu_defaults[role] %}<option value="" selected>Choose a filament</option>{% endif %}
+      {% for filament in bambu_environment.filaments %}<option value="{{ filament.number }}" data-color="{{ filament.color }}" {% if bambu_defaults[role] == filament.number %}selected{% endif %}>{{ filament.number }} · {{ filament.name }}</option>{% endfor %}
+    </select><i class="filament-dot" style="--filament-color:{{ bambu_environment.filaments[bambu_defaults[role]-1].color if bambu_defaults[role] else '#777777' }}"></i>
+  {% endmacro %}
   <div class="bambu-heading"><div><p class="eyebrow">BAMBU PROJECT</p><h2>Map and DIY kit setup</h2>
     <p>The calibrated map plate contains Trail · Terrain{% if has_water %} + Water{% endif %} · Plate + Text and prints by object. Optionally add the integrated-knuckle case as a second plate.</p></div>
     {% if bambu_output %}<div class="bambu-actions">
@@ -39,6 +45,10 @@ Terrain and trail were regenerated with Shape Extras set to None; the requested 
     </div>{% endif %}
   </div>
   {% set water_estimate = bambu_validation.get('water_layer_estimate') %}
+  <p>Project filaments are saved in TrailPrint, separately from your AMS slots. To update them, sync your AMS in Bambu Studio, then import its filament list here.</p>
+  <form method="post" action="{{ url_for('import_bambu_filaments', slug=project.name) }}">
+    <button class="button secondary" type="submit">Import filaments from Bambu Studio</button>
+  </form>
   {% if bambu_output and water_estimate %}<div class="notice success water-layer-estimate"><strong>Estimated mixed-color water layers: {{ water_estimate.mixed_filament_layer_count }}</strong>
     <p>Layer{% if water_estimate.mixed_filament_layer_count != 1 %}s{% endif %} {% for range in water_estimate.mixed_filament_layer_ranges %}{{ range[0] }}{% if range[1] != range[0] %}–{{ range[1] }}{% endif %}{% if not loop.last %}, {% endif %}{% else %}none{% endfor %} at {{ '%.2f'|format(water_estimate.nominal_layer_height_mm) }} mm nominal height; up to {{ water_estimate.manual_swaps_max }} manual swaps.</p>
     <p class="fine-print">Unsliced estimate. Bambu Studio's exact count may change after slicing, especially with variable layer height.</p></div>{% endif %}
@@ -47,6 +57,8 @@ Terrain and trail were regenerated with Shape Extras set to None; the requested 
   </div>{% endif %}
   {% if bambu_error %}<div class="notice error">{{ bambu_error }}</div>
   {% else %}<form method="post" action="{{ url_for('build_bambu_project', slug=project.name) }}" id="bambu-form">
+    <input type="hidden" name="palette_revision" value="{{ palette_revision }}">
+    {% if none in bambu_defaults.values() %}<p class="notice">Some saved colors are no longer in the palette. Choose replacement filaments before exporting.</p>{% endif %}
     <div class="bambu-profile"><span><strong>Printer</strong>{{ bambu_environment.machine }}</span><span><strong>Process</strong>{{ bambu_environment.process }}</span></div>
     {% if elevation %}<div class="terrain-mode-picker">
       {% if osm_palette %}<label><input type="radio" name="terrain_mode" value="osm" checked> OSM-inspired</label>{% endif %}
@@ -66,15 +78,13 @@ Terrain and trail were regenerated with Shape Extras set to None; the requested 
     </div>{% else %}<div class="notice error"><strong>Elevation colors unavailable.</strong> Rebuild this project to capture its downloaded terrain elevation range.</div>{% endif %}
     <div class="filament-grid">
       {% for role in ['trail', 'plate', 'text'] + (['water'] if has_water else []) %}<label><span>{{ role|title }} filament</span>
-        <select class="text-input" name="{{ role }}_filament">
-          {% for filament in bambu_environment.filaments %}<option value="{{ filament.number }}" data-color="{{ filament.color }}" {% if bambu_defaults[role] == filament.number %}selected{% endif %}>{{ filament.number }} · {{ filament.name }}</option>{% endfor %}
-        </select><i class="filament-dot" style="--filament-color:{{ bambu_environment.filaments[bambu_defaults[role]-1].color }}"></i>
+        {{ filament_select(role, true) }}
       </label>{% endfor %}
       {% for role in ['land', 'mountain', 'summit'] %}<label class="manual-terrain-settings" {% if osm_palette %}hidden{% endif %}><span>{{ role|title }} filament</span>
-        <select class="text-input" name="{{ role }}_filament">{% for filament in bambu_environment.filaments %}<option value="{{ filament.number }}" data-color="{{ filament.color }}" {% if bambu_defaults[role] == filament.number %}selected{% endif %}>{{ filament.number }} · {{ filament.name }}</option>{% endfor %}</select><i class="filament-dot" style="--filament-color:{{ bambu_environment.filaments[bambu_defaults[role]-1].color }}"></i>
+        {{ filament_select(role) }}
       </label>{% endfor %}
       {% if osm_palette %}{% for role in ['black', 'green', 'grey', 'white'] %}<label class="osm-terrain-settings"><span>{{ role|title }} filament</span>
-        <select class="text-input" name="{{ role }}_filament">{% for filament in bambu_environment.filaments %}<option value="{{ filament.number }}" data-color="{{ filament.color }}" {% if bambu_defaults[role] == filament.number %}selected{% endif %}>{{ filament.number }} · {{ filament.name }}</option>{% endfor %}</select><i class="filament-dot" style="--filament-color:{{ bambu_environment.filaments[bambu_defaults[role]-1].color }}"></i>
+        {{ filament_select(role) }}
       </label>{% endfor %}{% endif %}
     </div>
     <div class="notice"><strong>Data credit for packaging and product listing</strong>

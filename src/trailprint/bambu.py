@@ -980,7 +980,8 @@ def create_bambu_project(project: Path, settings: BambuSettings,
         manifest_path = temp_root / "assemble.json"
         _write_json(manifest_path, assemble_manifest(
             layout_files, settings, count, positions, diy_case_path))
-        command = [str(environment.binary), "--debug", "2", "--ensure-on-bed",
+        command = [str(environment.binary), "--datadir", str(temp_root / "bambu-data"),
+                   "--debug", "2", "--ensure-on-bed",
                    "--allow-multicolor-oneplate",
                    "--load-assemble-list", str(manifest_path),
                    "--load-settings", f"{machine_path};{process_path}",

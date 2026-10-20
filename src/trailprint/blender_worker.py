@@ -23,15 +23,16 @@ def configure_model_font(props, path=None):
     props.textFont = str(require_model_font(path) if path is not None else require_model_font())
 
 
-def resolve_text(value, config):
-    replacements = {
-        "{date}": config.get("trip_date", ""), "{city}": config.get("city", ""),
-        "{state}": config.get("state", ""), "{country}": config.get("country", ""),
-        "{length}": config.get("length", ""), "{elevation}": config.get("elevation", ""),
-        "{duration}": config.get("duration", ""), "{speed}": config.get("speed", ""),
-    }
-    for token, replacement in replacements.items():
-        value = value.replace(token, replacement)
+def configure_plate_text(props, config):
+    """Pass manually entered plate strings to Blender without token expansion."""
+    props.titlefield = config["plate_title"]
+    for index in range(1, 6):
+        setattr(props, f"textfield{index}", config[f"plate_text_{index}"])
+
+
+def literal_shape_text(value, text_object):
+    """Bypass the extension's second token-expansion step before meshing."""
+    text_object.data.body = value
     return value
 
 
@@ -625,12 +626,7 @@ def main():
         props.shape = config["shape"]
         props.shapeTextStyle = config["shape_extra"]
         props.num_subdivisions = int(config["resolution"])
-        props.titlefield = resolve_text(config["plate_title"], config)
-        props.textfield1 = resolve_text(config["plate_text_1"], config)
-        props.textfield2 = resolve_text(config["plate_text_2"], config)
-        props.textfield3 = resolve_text(config["plate_text_3"], config)
-        props.textfield4 = resolve_text(config["plate_text_4"], config)
-        props.textfield5 = resolve_text(config["plate_text_5"], config)
+        configure_plate_text(props, config)
         props.xTerrainOffset = float(config["x_offset"])
         props.yTerrainOffset = float(config["y_offset"])
         props.fixedElevationScale = False
@@ -645,6 +641,8 @@ def main():
         props.exportformat = "STL"
         terrain_utils = importlib.import_module(module_root + ".utils.terrain")
         generation_utils = importlib.import_module(module_root + ".utils.generation")
+        text_utils = importlib.import_module(module_root + ".utils.text_objects")
+        original_shape_text = text_utils.replaceShapeText
         original_color_mode = generation_utils._rg_apply_single_color_mode
         original_plate_insert = terrain_utils.plateInsert
         original_elevation = elevation_utils.get_tile_elevation
@@ -750,6 +748,7 @@ def main():
             original_plate_insert, props, config.get("plate_recess_clearance", 0))
         elevation_utils.get_tile_elevation = capture_elevation
         generation_utils._rg_apply_single_color_mode = local_color_mode
+        text_utils.replaceShapeText = literal_shape_text
         try:
             utils.runGeneration(0)
             coverage = Path(config["export_path"]) / "terrain-data-validation.json"
@@ -761,6 +760,7 @@ def main():
             terrain_utils.plateInsert = original_plate_insert
             elevation_utils.get_tile_elevation = original_elevation
             generation_utils._rg_apply_single_color_mode = original_color_mode
+            text_utils.replaceShapeText = original_shape_text
         export_dir = Path(config["export_path"])
         normalization_translation = None
         plate = bpy.data.objects.get(config["project_name"] + "_Plate")

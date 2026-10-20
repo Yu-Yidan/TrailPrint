@@ -124,7 +124,7 @@ def save_terrain_preferences(repo_root: Path, project: Path, value: dict,
                              save_defaults: bool = False) -> None:
     required = ("land", "mountain", "summit", "grey_start_m", "white_start_m")
     payload = {key: value[key] for key in required}
-    for key in ("black", "green", "grey", "white"):
+    for key in ("black", "green", "grey", "white", "trail", "plate", "text", "palette_revision"):
         if key in value:
             payload[key] = value[key]
     if "water" in value:
