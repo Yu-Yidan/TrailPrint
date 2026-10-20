@@ -1,5 +1,6 @@
 """Run the installed TrailPrint3D Blender extension as TrailPrint's engine."""
 
+import hashlib
 import json
 import math
 import os
@@ -15,6 +16,8 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import trimesh
+from shapely.errors import ShapelyError
+from shapely.wkb import loads as load_wkb
 
 from .fonts import require_model_font
 from .gpx import (
@@ -26,6 +29,7 @@ from .gpx import (
 )
 from .mesh_validation import (
     align_core_to_terrain,
+    cleanup_fragmented_trails,
     inspect_stl,
     mesh_role,
     normalize_anomalous_assembly,
@@ -37,6 +41,9 @@ from .osm_colors import analyze_project
 from .title import resolve_project_title, validate_title_fit
 from .water_geometry import (
     WATER_BOOLEAN_BOUNDS_TOLERANCE_MM,
+    export_groove_cutter,
+    generation_trail_corridor,
+    groove_material_overlap,
     prepare_integrated_water,
     repair_terrain_for_water_boolean,
     validate_trail_fit,
@@ -89,6 +96,7 @@ class BuildSettings:
     unit_system: str = "IMPERIAL"
     plate_recess_depth: float = 1.5
     dot_magnet_recess: bool = True
+    terrain_elevation_multiplier: float = 1.0
 
     @classmethod
     def validated(cls, shape="HEXAGON", shape_extra="NONE", resolution=8,
@@ -98,7 +106,8 @@ class BuildSettings:
                   max_terrain_relief_mm=AUTO_RELIEF_LIMIT_MM,
                   city="", state="", country="",
                   unit_system="IMPERIAL", plate_recess_depth=1.5,
-                  dot_magnet_recess=True):
+                  dot_magnet_recess=True,
+                  terrain_elevation_multiplier=1.0):
         shape = str(shape).upper()
         shape_extra = str(shape_extra).upper()
         try:
@@ -129,6 +138,12 @@ class BuildSettings:
             raise ValueError("Maximum terrain relief must be a positive number.") from exc
         if not math.isfinite(max_terrain_relief_mm) or max_terrain_relief_mm <= 0:
             raise ValueError("Maximum terrain relief must be a positive number.")
+        try:
+            terrain_elevation_multiplier = float(terrain_elevation_multiplier)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Terrain elevation multiplier must be a positive finite number.") from exc
+        if not math.isfinite(terrain_elevation_multiplier) or terrain_elevation_multiplier <= 0:
+            raise ValueError("Terrain elevation multiplier must be a positive finite number.")
         locations = [str(value).strip() for value in (city, state, country)]
         if any(len(value) > 200 for value in locations):
             raise ValueError("Location fields must be 200 characters or fewer.")
@@ -151,6 +166,7 @@ class BuildSettings:
             plate_text_4=text_values[4], plate_text_5=text_values[5],
             x_offset=x_offset, y_offset=y_offset,
             max_terrain_relief_mm=max_terrain_relief_mm,
+            terrain_elevation_multiplier=terrain_elevation_multiplier,
             city=locations[0], state=locations[1], country=locations[2],
             unit_system=unit_system, plate_recess_depth=plate_recess_depth,
             dot_magnet_recess=bool(dot_magnet_recess))
@@ -224,10 +240,13 @@ def _integrate_generated_water(stage: Path, project_slug: str, blender_path: Pat
     trail = next((path for path in paths
                   if mesh_role(path, project_slug) == "trail"), None)
     water = [path for path in paths if mesh_role(path, project_slug) == "water"]
-    if terrain is None or not water:
+    if terrain is None or trail is None:
         return None, None
-    if trail is None:
-        raise ValueError("Could not protect the trail groove because no Trail STL was generated.")
+    corridor, groove_report = generation_trail_corridor(trail, water, TRAIL_CLEARANCE_MM)
+    (stage / "protected-trail-corridor.wkb").write_bytes(corridor.wkb)
+    (stage / "groove-correction.json").write_text(json.dumps(groove_report), encoding="utf-8")
+    if not water:
+        return None, None
     work = stage / "water-integration"
     work.mkdir()
     cap = work / f"{project_slug}_WATER.stl"
@@ -235,7 +254,8 @@ def _integrate_generated_water(stage: Path, project_slug: str, blender_path: Pat
     support = work / "water-terrain-support.stl"
     report = prepare_integrated_water(
         terrain, water, cap, cutter, support,
-        trail_path=trail, trail_clearance_mm=TRAIL_CLEARANCE_MM)
+        trail_path=trail, trail_clearance_mm=TRAIL_CLEARANCE_MM,
+        protected_corridor=corridor)
     if not report.get("available"):
         for path in water:
             path.unlink(missing_ok=True)
@@ -259,6 +279,9 @@ def _integrate_generated_water(stage: Path, project_slug: str, blender_path: Pat
             or "Cannot execute" in combined_log):
         detail = _failure_detail(result)
         raise ValueError(f"Could not integrate shallow water into Terrain: {detail}")
+    manifold_output = work / "terrain-with-water-basins-manifold.stl"
+    report["terrain_output_repair"] = repair_terrain_for_water_boolean(output, manifold_output)
+    output = manifold_output
     integrated = trimesh.load_mesh(output, process=True)
     original_bounds = np.asarray(repair["bounds_mm"], dtype=float)
     integrated_bounds = np.asarray(integrated.bounds, dtype=float)
@@ -280,18 +303,112 @@ def _integrate_generated_water(stage: Path, project_slug: str, blender_path: Pat
         "cutter_roof_absent": True, "net_removed_volume_mm3": removed_volume,
         "output_bounds_mm": integrated_bounds.tolist(),
     }
-    fit = validate_trail_fit(
-        output, trail, cap, clearance_mm=TRAIL_CLEARANCE_MM)
-    report["trail_fit"] = fit
-    if not fit["valid"]:
-        raise ValueError("Trail snap-fit validation failed: "
-                         + " ".join(fit["errors"]))
     os.replace(output, terrain)
     for path in water:
         path.unlink(missing_ok=True)
     destination = stage / f"{project_slug}_WATER.stl"
     os.replace(cap, destination)
     return report, _attempt_log("integrated shallow water", result)
+
+
+def _correct_staged_groove(stage, slug, blender_path, timeout, cancel_event=None,
+                           expected_trail_segments=1):
+    """Widen terrain walls from the actual trail; never rewrite the Trail STL."""
+    roles = {mesh_role(path, slug): path for path in stage.glob("*.stl")}
+    if not {"terrain", "trail"}.issubset(roles):
+        return
+    if not inspect_stl(roles["terrain"], slug)["valid"]:
+        return
+    if not inspect_stl(roles["trail"], slug,
+                       expected_trail_segments=expected_trail_segments)["valid"]:
+        return
+    try:
+        before = validate_trail_fit(roles["terrain"], roles["trail"], roles.get("water"),
+                                    clearance_mm=TRAIL_CLEARANCE_MM)
+    except (ValueError, ShapelyError):
+        return  # The final blocking validator reports unreadable geometry.
+    report_path = stage / "groove-correction.json"
+    if (stage / "protected-trail-corridor.wkb").exists():
+        corridor = load_wkb((stage / "protected-trail-corridor.wkb").read_bytes())
+        report = json.loads(report_path.read_text())
+    else:
+        corridor, report = generation_trail_corridor(
+            roles["trail"], [roles["water"]] if "water" in roles else [], TRAIL_CLEARANCE_MM)
+    report.update({"before": before, "attempts": [], "trail_unchanged": True})
+    report["trail_sha256"] = hashlib.sha256(roles["trail"].read_bytes()).hexdigest()
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+    if (before["valid"] and groove_material_overlap(
+            roles["terrain"], corridor, report["floor_z_mm"]) <= 0.01):
+        report["after"] = before
+        report_path.write_text(json.dumps(report), encoding="utf-8")
+        return
+    work = stage / "groove-correction"
+    work.mkdir(exist_ok=True)
+    started = time.monotonic()
+    for attempt in range(2):
+        terrain = trimesh.load_mesh(roles["terrain"], process=True)
+        cutter = work / "cutter.stl"
+        # A second pass adds only a bounded construction margin, never relaxes validation.
+        protected = corridor.buffer(attempt * 0.02, quad_segs=16)
+        cutter_report = export_groove_cutter(protected, report["floor_z_mm"],
+                                             float(terrain.bounds[1, 2]) + 1, cutter)
+        report["cutter"] = cutter_report
+        report_path.write_text(json.dumps(report), encoding="utf-8")
+        source = work / "terrain-manifold.stl"
+        repair = repair_terrain_for_water_boolean(roles["terrain"], source)
+        output = work / "terrain-corrected.stl"
+        job = work / "job.json"
+        job.write_text(json.dumps({"terrain_path": str(source), "cutter_path": str(cutter),
+                                   "output_path": str(output)}), encoding="utf-8")
+        result = _run_command(
+            [str(blender_path), "--background", "--python",
+             str(Path(__file__).with_name("water_worker.py")), "--", str(job)],
+            max(1, timeout - int(time.monotonic() - started)), cancel_event)
+        if result.returncode != 0 or not output.is_file():
+            raise ValueError(f"Groove correction failed: {_failure_detail(result)}")
+        repaired_output = work / "terrain-corrected-manifold.stl"
+        output_repair = repair_terrain_for_water_boolean(output, repaired_output)
+        output = repaired_output
+        corrected = trimesh.load_mesh(output, process=True)
+        if (corrected.is_empty or not corrected.is_watertight
+                or not corrected.is_winding_consistent
+                or abs(corrected.bounds[0, 2] - terrain.bounds[0, 2]) > 0.01
+                or not np.allclose(corrected.bounds[:, :2], terrain.bounds[:, :2],
+                                   atol=0.01, rtol=0)
+                or abs(corrected.volume) > abs(terrain.volume) + 0.01):
+            raise ValueError("Groove correction produced invalid terrain geometry.")
+        os.replace(output, roles["terrain"])
+        after = validate_trail_fit(roles["terrain"], roles["trail"], roles.get("water"),
+                                   clearance_mm=TRAIL_CLEARANCE_MM)
+        report["attempts"].append({"pass": attempt + 1, "terrain_repair": repair,
+                                   "export_repair": output_repair,
+                                   "valid": after["valid"]})
+        report["after"] = after
+        report["trail_unchanged"] = (
+            hashlib.sha256(roles["trail"].read_bytes()).hexdigest() == report["trail_sha256"])
+        if not report["trail_unchanged"]:
+            raise ValueError("Groove correction unexpectedly changed the trail.")
+        report_path.write_text(json.dumps(report), encoding="utf-8")
+        if after["valid"]:
+            break
+
+
+def _validate_staged_trail_fit(stage: Path, slug: str, validation: dict) -> None:
+    """Apply the same blocking fit gate to every publishable generation attempt."""
+    if not validation["valid"]:
+        return
+    paths = list(stage.glob("*.stl"))
+    roles = {mesh_role(path, slug): path for path in paths}
+    try:
+        fit = validate_trail_fit(roles["terrain"], roles["trail"], roles.get("water"),
+                                 clearance_mm=TRAIL_CLEARANCE_MM)
+    except (KeyError, ValueError, ShapelyError) as exc:
+        fit = {"valid": False, "errors": [f"Could not evaluate trail fit reliably: {exc}"]}
+    validation["trail_fit"] = fit
+    if not fit["valid"]:
+        validation["valid"] = False
+        validation["errors"].extend(f"Trail fit validation failed: {error}"
+                                    for error in fit["errors"])
 
 
 def _read_elevation_metadata(stage: Path, validation: dict) -> dict:
@@ -320,7 +437,7 @@ def _read_elevation_metadata(stage: Path, validation: dict) -> dict:
         "unit_system": str(value.get("unit_system", "IMPERIAL")).upper(),
     }
     for name in ("uncapped_model_relief_mm", "final_model_relief_mm",
-                 "max_terrain_relief_mm", "elevation_multiplier"):
+                 "max_terrain_relief_mm", "elevation_multiplier", "requested_elevation_multiplier"):
         try:
             number = float(value[name])
         except (KeyError, TypeError, ValueError):
@@ -394,6 +511,7 @@ def _run_attempt(project: Path, settings: BuildSettings, stage: Path, blender_pa
     trip_values = format_trip_stats(read_gpx_trip_stats(route), settings.unit_system)
     config_path.write_text(json.dumps({
         "gpx_file": str(route), "export_path": str(stage), "project_name": project.name,
+        "elevation_cache_dir": str(project / "build" / "verified-elevation-v1"),
         "shape": settings.shape, "shape_extra": settings.shape_extra,
         "model_font_path": str(require_model_font()),
         "resolution": settings.resolution,
@@ -402,6 +520,7 @@ def _run_attempt(project: Path, settings: BuildSettings, stage: Path, blender_pa
         "plate_text_4": settings.plate_text_4, "plate_text_5": settings.plate_text_5,
         "x_offset": settings.x_offset, "y_offset": settings.y_offset,
         "max_terrain_relief_mm": settings.max_terrain_relief_mm,
+        "terrain_elevation_multiplier": settings.terrain_elevation_multiplier,
         "trip_date": read_gpx_trip_date(route), "city": settings.city,
         "state": settings.state, "country": settings.country,
         "unit_system": settings.unit_system, **trip_values,
@@ -469,6 +588,7 @@ def run_blender_build(project: Path, settings: BuildSettings, blender: Optional[
         plate_text_5=settings.plate_text_5, x_offset=settings.x_offset,
         y_offset=settings.y_offset,
         max_terrain_relief_mm=settings.max_terrain_relief_mm,
+        terrain_elevation_multiplier=settings.terrain_elevation_multiplier,
         city=settings.city, state=settings.state, country=settings.country,
         unit_system=settings.unit_system,
         plate_recess_depth=settings.plate_recess_depth,
@@ -509,6 +629,15 @@ def run_blender_build(project: Path, settings: BuildSettings, blender: Optional[
     logs.append(_attempt_log("requested settings", result))
     if result.returncode != 0:
         log_path.write_text("".join(logs), encoding="utf-8")
+        coverage_path = primary_stage / "terrain-data-validation.json"
+        if coverage_path.is_file():
+            coverage = json.loads(coverage_path.read_text(encoding="utf-8"))
+            if not coverage.get("valid"):
+                report_path.write_text(json.dumps({
+                    "valid": False, "terrain_data": coverage,
+                    "errors": coverage.get("errors", []),
+                    "preview": {"customer_filename": previous_customer_preview},
+                }, indent=2), encoding="utf-8")
         shutil.rmtree(attempt_root, ignore_errors=True)
         detail = _failure_detail(result)
         raise ValueError(f"TrailPrint3D failed: {detail}")
@@ -521,23 +650,39 @@ def run_blender_build(project: Path, settings: BuildSettings, blender: Optional[
     water_integration = None
     remaining = max(1, timeout - int(time.monotonic() - started))
     try:
+        pre_water_corrections.extend(cleanup_fragmented_trails(
+            primary_files, project.name, expected_trail_segments))
         water_integration, water_log = _integrate_generated_water(
             primary_stage, project.name, blender_path, remaining, cancel_event)
         if water_log:
             logs.append(water_log)
+        _correct_staged_groove(primary_stage, project.name, blender_path,
+                              max(1, timeout - int(time.monotonic() - started)), cancel_event,
+                              expected_trail_segments=expected_trail_segments)
     except (BuildCancelled, subprocess.TimeoutExpired, ValueError) as exc:
         log_path.write_text("".join(logs) + f"\n[water integration]\n{exc}\n", encoding="utf-8")
+        if not isinstance(exc, BuildCancelled):
+            failure_report = {"valid": False, "errors": [str(exc)],
+                              "corrections": pre_water_corrections,
+                              "duration_seconds": round(time.monotonic() - started, 1)}
+            if hasattr(exc, "repair_report"):
+                failure_report["terrain_repair"] = exc.repair_report
+            if (primary_stage / "groove-correction.json").exists():
+                failure_report["groove_correction"] = json.loads(
+                    (primary_stage / "groove-correction.json").read_text())
+            write_report(report_path, failure_report)
         shutil.rmtree(attempt_root, ignore_errors=True)
         PROGRESS_FILE.unlink(missing_ok=True)
         if isinstance(exc, BuildCancelled):
             raise
-        raise ValueError(f"Water integration failed: {exc}") from exc
+        raise ValueError(f"Terrain/water integration failed: {exc}") from exc
     primary_paths = list(primary_stage.glob("*.stl"))
     primary_validation = validate_stls(primary_paths, project.name,
                                        expected_trail_segments=expected_trail_segments)
     if pre_water_corrections:
         primary_validation["corrections"] = (
             pre_water_corrections + primary_validation.get("corrections", []))
+    _validate_staged_trail_fit(primary_stage, project.name, primary_validation)
     final_validation = primary_validation
     fallback_validation = None
     fallback_used = False
@@ -577,10 +722,16 @@ def run_blender_build(project: Path, settings: BuildSettings, blender: Optional[
                     project.name)
                 remaining = max(1, timeout - int(time.monotonic() - started))
                 try:
+                    fallback_pre_water_corrections.extend(cleanup_fragmented_trails(
+                        fallback_files, project.name, expected_trail_segments))
                     fallback_water, water_log = _integrate_generated_water(
                         fallback_stage, project.name, blender_path, remaining, cancel_event)
                     if water_log:
                         logs.append(water_log)
+                    _correct_staged_groove(
+                        fallback_stage, project.name, blender_path,
+                        max(1, timeout - int(time.monotonic() - started)), cancel_event,
+                        expected_trail_segments=expected_trail_segments)
                 except BuildCancelled:
                     log_path.write_text(
                         "Build cancelled during fallback water integration.\n", encoding="utf-8")
@@ -589,9 +740,12 @@ def run_blender_build(project: Path, settings: BuildSettings, blender: Optional[
                     raise
                 except (subprocess.TimeoutExpired, ValueError) as exc:
                     fallback_validation = {
-                        "valid": False, "files": [], "corrections": [],
+                        "valid": False, "files": [],
+                        "corrections": fallback_pre_water_corrections,
                         "errors": [f"Fallback water integration failed: {exc}"],
                     }
+                    if hasattr(exc, "repair_report"):
+                        fallback_validation["terrain_repair"] = exc.repair_report
                     fallback_water = None
                 else:
                     if fallback_water is not None:
@@ -604,6 +758,7 @@ def run_blender_build(project: Path, settings: BuildSettings, blender: Optional[
                         fallback_validation["corrections"] = (
                             fallback_pre_water_corrections
                             + fallback_validation.get("corrections", []))
+                _validate_staged_trail_fit(fallback_stage, project.name, fallback_validation)
                 if fallback_validation["valid"]:
                     fallback_alignment = align_core_to_terrain(
                         fallback_paths, primary_paths, project.name)
@@ -615,6 +770,7 @@ def run_blender_build(project: Path, settings: BuildSettings, blender: Optional[
                             shutil.copy2(path, primary_stage / path.name)
                     final_validation = validate_stls(list(primary_stage.glob("*.stl")), project.name,
                                                      expected_trail_segments=expected_trail_segments)
+                    _validate_staged_trail_fit(primary_stage, project.name, final_validation)
                     fallback_used = final_validation["valid"]
                     if fallback_used:
                         elevation_stage = fallback_stage
@@ -644,7 +800,16 @@ def run_blender_build(project: Path, settings: BuildSettings, blender: Optional[
         "trail_clearance_mm": TRAIL_CLEARANCE_MM,
         "water_integration": water_integration,
         "terrain_elevation": elevation,
+        "terrain_data": (json.loads((elevation_stage / "terrain-data-validation.json").read_text())
+                         if (elevation_stage / "terrain-data-validation.json").is_file() else None),
+        "trail_fit": final_validation.get("trail_fit"),
     }
+    if water_integration is not None:
+        water_integration["trail_fit"] = report["trail_fit"]
+    correction_stage = elevation_stage
+    if (correction_stage / "groove-correction.json").exists():
+        report["groove_correction"] = json.loads(
+            (correction_stage / "groove-correction.json").read_text())
     try:
         report["boolean_origin"] = json.loads(
             (primary_stage / "generation-local-origin.json").read_text(encoding="utf-8"))

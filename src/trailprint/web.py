@@ -20,6 +20,7 @@ from .analytics import RAISED_MAP, AnalyticsStore
 from .bambu import BambuSettings, default_filament_mapping, discover_environment
 from .bambu_jobs import BambuJobManager
 from .blender_bridge import EXTRA_LABELS, SHAPE_EXTRAS, SHAPE_LABELS, BuildSettings
+from .build_settings import current_model_settings
 from .fonts import MODEL_FONT_BROWSER_CSS
 from .gpx import (
     AUTO_RELIEF_LIMIT_MM,
@@ -195,6 +196,16 @@ def create_app(repo_root: Path = None, build_manager: BuildManager = None,
             "IMPERIAL": format_trip_stats(stats, "IMPERIAL"),
             "METRIC": format_trip_stats(stats, "METRIC"),
         }
+        defaults = BuildSettings(
+            shape_extra="OUTER TEXT", plate_title=human_name(project),
+            plate_text_1=trip_values["IMPERIAL"]["length"],
+            plate_text_2=trip_values["IMPERIAL"]["date"],
+            plate_text_3=trip_values["IMPERIAL"]["duration"],
+            city=location["city"], state=location["state"], country=location["country"])
+        restored = current_model_settings(project, defaults)
+        form_settings = restored or defaults
+        if restored:
+            location = {key: getattr(restored, key) for key in ("city", "state", "country")}
         preview_path = project / "build/preview.png"
         return render_template(
             "project.html", project=project,
@@ -207,8 +218,9 @@ def create_app(repo_root: Path = None, build_manager: BuildManager = None,
             job=job, location=location, has_location_cache=has_location_cache(project),
             trip_values=trip_values,
             expected_relief=expected_relief,
+            form_settings=form_settings, settings_restored=restored is not None,
             relief_limit=AUTO_RELIEF_LIMIT_MM,
-            plate_title=human_name(project), title_limits=TITLE_LIMITS_MM,
+            plate_title=form_settings.plate_title, title_limits=TITLE_LIMITS_MM,
             title_width_scale=TITLE_WIDTH_SCALE, model_font_css=MODEL_FONT_BROWSER_CSS,
             has_preview=preview_path.is_file(),
             validation=read_report(project / "build/validation.json"))
@@ -239,6 +251,7 @@ def create_app(repo_root: Path = None, build_manager: BuildManager = None,
                 x_offset=request.form.get("x_offset", 0),
                 y_offset=request.form.get("y_offset", 0),
                 max_terrain_relief_mm=AUTO_RELIEF_LIMIT_MM,
+                terrain_elevation_multiplier=request.form.get("terrain_elevation_multiplier", 1),
                 city=request.form.get("city", ""),
                 state=request.form.get("state", ""),
                 country=request.form.get("country", ""),

@@ -151,6 +151,74 @@ def inspect_stl(path: Path, project_slug: str, map_span: float = None,
     return result
 
 
+def cleanup_fragmented_trails(paths: Iterable[Path], project_slug: str,
+                              expected_trail_segments: int = 1) -> List[dict]:
+    """Remove only disconnected, provably nonphysical curve-export artifacts.
+
+    Stage and reload each candidate before replacing the source. Connected
+    degenerate faces and standalone positive-area sheets are deliberately kept.
+    """
+    from .water_geometry import TRAIL_FIT_AREA_TOLERANCE_MM2, _material_above_floor
+
+    corrections = []
+    for path in paths:
+        if mesh_role(path, project_slug) != "trail":
+            continue
+        before = inspect_stl(path, project_slug,
+                             expected_trail_segments=expected_trail_segments)
+        if not any(error.startswith("Trail is fragmented") for error in before["errors"]):
+            continue
+        mesh = _load(path)
+        keep = np.ones(len(mesh.faces), dtype=bool)
+        counts = {"zero_area_components": 0, "opposed_triangle_components": 0}
+        for group in _component_face_groups(mesh):
+            if np.all(mesh.area_faces[group] == 0):
+                reason = "zero_area_components"
+            elif (len(group) == 2
+                  and np.array_equal(np.sort(mesh.faces[group[0]]),
+                                     np.sort(mesh.faces[group[1]]))
+                  and np.dot(mesh.face_normals[group[0]], mesh.face_normals[group[1]])
+                  < -0.999999):
+                reason = "opposed_triangle_components"
+            else:
+                continue
+            keep[group] = False
+            counts[reason] += 1
+        if keep.all():
+            continue
+        candidate = mesh.copy()
+        candidate.update_faces(keep)
+        candidate.remove_unreferenced_vertices()
+        with tempfile.TemporaryDirectory(prefix=".trail-cleanup-", dir=path.parent) as temp:
+            staged = Path(temp) / path.name
+            candidate.export(staged, file_type="stl")
+            reloaded = _load(staged)
+            after = inspect_stl(staged, project_slug,
+                                expected_trail_segments=expected_trail_segments)
+            if reloaded.is_empty:
+                raise ValueError("Trail artifact cleanup would remove the entire trail.")
+            bounds_delta = float(np.max(np.abs(reloaded.bounds - mesh.bounds)))
+            volume_delta = abs(float(reloaded.volume - mesh.volume))
+            floor_z = float(mesh.bounds[0, 2])
+            footprint_delta = float(_material_above_floor(mesh, floor_z).symmetric_difference(
+                _material_above_floor(reloaded, floor_z)).area)
+            if (not np.isfinite([bounds_delta, volume_delta, footprint_delta]).all()
+                    or bounds_delta > 0.01 or volume_delta > 0.01
+                    or footprint_delta > TRAIL_FIT_AREA_TOLERANCE_MM2
+                    or not after["valid"]):
+                raise ValueError("Trail artifact cleanup failed geometry preservation or validation.")
+            os.replace(staged, path)
+        corrections.append({
+            "type": "trail_artifact_cleanup", "filename": path.name,
+            **counts, "removed_components": sum(counts.values()),
+            "removed_faces": int(np.count_nonzero(~keep)),
+            "bounds_delta_mm": bounds_delta, "volume_delta_mm3": volume_delta,
+            "raised_footprint_difference_mm2": footprint_delta,
+            "before": before, "after": after,
+        })
+    return corrections
+
+
 def _is_anomalous(result: dict) -> bool:
     if result.get("errors") and "center_mm" not in result:
         return False
@@ -226,6 +294,7 @@ def validate_stls(paths: Iterable[Path], project_slug: str, repair=True, expecte
     corrections = []
     if repair:
         corrections = normalize_anomalous_assembly(paths, first_pass, project_slug)
+        corrections.extend(cleanup_fragmented_trails(paths, project_slug, expected_trail_segments))
     terrain = next((path for path in paths if mesh_role(path, project_slug) == "terrain"), None)
     terrain_result = inspect_stl(terrain, project_slug) if terrain else None
     map_span = None

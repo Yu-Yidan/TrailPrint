@@ -12,8 +12,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 try:
+    from .elevation_data import verified_blender_elevations
     from .fonts import require_model_font
 except ImportError:  # Worker is executed as a standalone script by Blender.
+    from elevation_data import verified_blender_elevations
     from fonts import require_model_font
 
 
@@ -46,7 +48,7 @@ def with_plate_clearance(original, props, clearance):
 
 
 def terrain_relief_scaling(elevations, mercator_factors, horizontal_scale,
-                           max_relief_mm):
+                           max_relief_mm, elevation_multiplier=1.0):
     """Choose TrailPrint3D scale settings from the complete DEM footprint."""
     elevations = [float(value) for value in elevations]
     mercator_factors = [float(value) for value in mercator_factors]
@@ -56,25 +58,32 @@ def terrain_relief_scaling(elevations, mercator_factors, horizontal_scale,
         raise ValueError("Terrain relief scaling received non-finite DEM samples.")
     horizontal_scale = float(horizontal_scale)
     maximum = float(max_relief_mm)
+    requested = float(elevation_multiplier)
     if not math.isfinite(horizontal_scale) or horizontal_scale <= 0:
         raise ValueError("Terrain horizontal scale must be positive.")
     if not math.isfinite(maximum) or maximum <= 0:
         raise ValueError("Maximum terrain relief must be positive.")
+    if not math.isfinite(requested) or requested <= 0:
+        raise ValueError("Terrain elevation multiplier must be positive and finite.")
 
     natural = [elevation / 1000.0 * horizontal_scale * mercator
                for elevation, mercator in zip(elevations, mercator_factors)]
-    uncapped_relief = max(natural) - min(natural)
+    natural_relief = max(natural) - min(natural)
+    uncapped_relief = natural_relief * requested
+    if not math.isfinite(uncapped_relief):
+        raise ValueError("Requested terrain elevation multiplier produces non-finite relief.")
     result = {
         "uncapped_model_relief_mm": float(uncapped_relief),
         "final_model_relief_mm": float(uncapped_relief),
         "max_terrain_relief_mm": maximum,
         "cap_applied": False,
-        "elevation_multiplier": 1.0,
+        "elevation_multiplier": requested,
+        "requested_elevation_multiplier": requested,
     }
     if uncapped_relief <= maximum + 1e-9:
         return result
 
-    multiplier = maximum / uncapped_relief
+    multiplier = maximum / natural_relief
     result.update({
         "final_model_relief_mm": maximum,
         "cap_applied": True,
@@ -667,7 +676,34 @@ def main():
             return original_color_mode(terrain, *args, **kwargs)
 
         def capture_elevation(*args, **kwargs):
-            values, difference = original_elevation(*args, **kwargs)
+            geo_utils = importlib.import_module(module_root + ".utils.geo")
+
+            def fetch_tile(z, x, y):
+                response = elevation_utils.requests.get(
+                    f"https://tiles.mapterhorn.com/{z}/{x}/{y}.webp", timeout=(10, 30))
+                response.raise_for_status()
+                return response.content
+
+            def decode_tile(path):
+                image = bpy.data.images.load(str(path), check_existing=False)
+                try:
+                    image.colorspace_settings.name = "Non-Color"
+                    width, height = image.size
+                    if (width, height) != (512, 512):
+                        raise ValueError(f"Unexpected tile dimensions {width} by {height}")
+                    pixels = list(image.pixels)
+                    return [[tuple(round(channel * 255) for channel in
+                                   pixels[(row * width + col) * 4:(row * width + col) * 4 + 4])
+                             for col in range(width)] for row in reversed(range(height))]
+                finally:
+                    bpy.data.images.remove(image)
+
+            props.api = "MAPTERHORN"
+            values, difference = verified_blender_elevations(
+                args[0], props, elevation_utils, geo_utils,
+                config["elevation_cache_dir"],
+                Path(config["export_path"]) / "terrain-data-validation.json",
+                decode_tile, fetch_tile, kwargs.get("progress_cb"))
             elevation_values.extend(float(value) for value in values
                                     if math.isfinite(float(value)))
             try:
@@ -690,7 +726,8 @@ def main():
                 decision = terrain_relief_scaling(
                     values[:paired_count], mercator_factors,
                     float(props.get("sScaleHor", props.sScaleHor)),
-                    float(config.get("max_terrain_relief_mm", 15.0)))
+                    float(config.get("max_terrain_relief_mm", 15.0)),
+                    float(config.get("terrain_elevation_multiplier", 1.0)))
                 print("[terrain relief cap] " + json.dumps(decision, sort_keys=True))
                 props.fixedElevationScale = False
                 props.scaleElevation = 1.0
@@ -702,7 +739,7 @@ def main():
             except (AttributeError, IndexError, TypeError) as exc:
                 raise RuntimeError(
                     "Could not calculate the DEM-based terrain relief cap.") from exc
-            if elevation_scaling.get("cap_applied"):
+            if elevation_scaling.get("elevation_multiplier", 1.0) != 1.0:
                 multiplier = elevation_scaling["elevation_multiplier"]
                 scaled_values = [float(value) * multiplier for value in values]
                 scaled_difference = max(scaled_values) - min(scaled_values)
@@ -715,6 +752,11 @@ def main():
         generation_utils._rg_apply_single_color_mode = local_color_mode
         try:
             utils.runGeneration(0)
+            coverage = Path(config["export_path"]) / "terrain-data-validation.json"
+            coverage_result = json.loads(coverage.read_text()) if coverage.is_file() else {}
+            if not coverage_result.get("valid"):
+                detail = "; ".join(coverage_result.get("errors", [])) or "No coverage report"
+                raise RuntimeError(f"Elevation coverage validation failed: {detail}")
         finally:
             terrain_utils.plateInsert = original_plate_insert
             elevation_utils.get_tile_elevation = original_elevation

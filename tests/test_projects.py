@@ -321,8 +321,8 @@ class WebTests(unittest.TestCase):
                          b'name="city" type="hidden" value="Volcano"',
                          b'name="state" type="hidden" value="Hawaii"',
                          b'name="country" type="hidden" value="USA"',
-                         b'name="x_offset" type="number" value="0"',
-                         b'name="y_offset" type="number" value="0"'):
+                         b'name="x_offset" type="number" value="0.0"',
+                         b'name="y_offset" type="number" value="0.0"'):
             self.assertIn(expected, page)
         self.assertIn(b'id="resolution-value">8', page)
         self.assertIn(b'name="resolution" type="range" min="1" max="10" value="8"', page)

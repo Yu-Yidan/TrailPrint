@@ -63,27 +63,31 @@ function refreshOrientation() {
   orientationNote.textContent = `${orientationNotes[shape.value] || ''}${usesFive ? ' · Text 4 upper-right · Text 5 upper-left' : ' · Text 4–5 unused'}`;
 }
 
-function refreshExtras() {
+function refreshExtras(initialValue = null) {
   const extras = window.TRAILPRINT_EXTRAS[shape.value];
   extra.replaceChildren(...extras.map(value => {
     const option = document.createElement('option'); option.value = value;
     option.textContent = window.TRAILPRINT_EXTRA_LABELS[value]; return option;
   }));
-  extra.value = extras.includes('OUTER TEXT') ? 'OUTER TEXT' : 'NONE';
+  extra.value = extras.includes(initialValue) ? initialValue : (extras.includes('OUTER TEXT') ? 'OUTER TEXT' : 'NONE');
   refreshOrientation();
 }
-shape.addEventListener('change', refreshExtras);
+shape.addEventListener('change', () => refreshExtras());
 extra.addEventListener('change', refreshOrientation);
-refreshExtras();
+refreshExtras(extra.dataset.initialValue);
 titleInput.addEventListener('input', validateTitleFit);
 if (document.fonts) document.fonts.ready.then(validateTitleFit);
-resolution.addEventListener('input', () => {
+function refreshResolution() {
   resolutionValue.textContent = resolution.value;
   resolutionNote.classList.toggle('warning', Number(resolution.value) > 8);
-});
+}
+resolution.addEventListener('input', refreshResolution);
+refreshResolution();
 
 if (metricToggle && distanceText) {
-  let generatedDistance = window.TRAILPRINT_TRIP_VALUES.IMPERIAL.length;
+  const initialSystem = metricToggle.checked ? 'METRIC' : 'IMPERIAL';
+  let generatedDistance = window.TRAILPRINT_TRIP_VALUES[initialSystem].length;
+  distanceText.dataset.edited = distanceText.value === generatedDistance ? 'false' : 'true';
   distanceText.addEventListener('input', () => { distanceText.dataset.edited = 'true'; });
   metricToggle.addEventListener('change', () => {
     const system = metricToggle.checked ? 'METRIC' : 'IMPERIAL';
@@ -122,7 +126,7 @@ if (plateTextSettings) {
     } finally { retry.hidden = false; }
   };
   retry.addEventListener('click', detect);
-  if (plateTextSettings.dataset.cached !== 'true') detect();
+  if (plateTextSettings.dataset.cached !== 'true' && plateTextSettings.dataset.restored !== 'true') detect();
 }
 
 const statusBox = document.querySelector('#build-status');
