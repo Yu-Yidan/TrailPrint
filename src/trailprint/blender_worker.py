@@ -4,6 +4,7 @@ import importlib
 import json
 import math
 import os
+import struct
 import sys
 import traceback
 from collections import Counter
@@ -505,6 +506,26 @@ def configure_water(props, enabled, min_area_mm2=25.0):
         props.elementMode = "PAINT"
 
 
+def coastal_source_metadata(sources, expected, translation):
+    """Apply the same final assembly translation to the coastal snapshot."""
+    return {"version": 1, "expected": expected, "sources": [
+        {"vertices": [[value + translation[axis] for axis, value in enumerate(vertex)]
+                      for vertex in source["vertices"]], "faces": source["faces"]}
+        for source in sources]}
+
+
+def write_terrain_snapshot(path, source, translation):
+    """Write the original terrain in final model coordinates, outside exports."""
+    vertices = [[v + translation[i] for i, v in enumerate(p)] for p in source["vertices"]]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("wb") as stream:
+        stream.write(b"TrailPrint original terrain".ljust(80, b"\0"))
+        stream.write(struct.pack("<I", len(source["faces"])))
+        for face in source["faces"]:
+            stream.write(struct.pack("<12fH", 0, 0, 0,
+                                     *(c for index in face for c in vertices[index]), 0))
+
+
 def lava_osm_query(bounds):
     """Build the explicit-lava Overpass query missing from TrailPrint3D."""
     south, west, north, east = (float(value) for value in bounds)
@@ -646,12 +667,38 @@ def main():
         original_color_mode = generation_utils._rg_apply_single_color_mode
         original_plate_insert = terrain_utils.plateInsert
         original_elevation = elevation_utils.get_tile_elevation
+        mesh_ops = importlib.import_module(module_root + ".utils.mesh_ops")
+        original_mesh_modes = {name: getattr(mesh_ops, name) for name in (
+            "single_color_mode_mesh_wireframe", "single_color_mode_mesh_remesh")}
+        coastal_sources = []
+        coastal_expected = False
+        coastal_translation = [0.0, 0.0, 0.0]
+        original_terrain = None
+
+        def capture_coastal_mode(original):
+            def wrapped(obj, *args, **kwargs):
+                result = original(obj, *args, **kwargs)
+                if obj.get("_tp3d_is_ocean", False) and obj.data.vertices:
+                    obj.data.calc_loop_triangles()
+                    coastal_sources.append({
+                        "vertices": [list(obj.matrix_world @ v.co) for v in obj.data.vertices],
+                        "faces": [list(t.vertices) for t in obj.data.loop_triangles],
+                    })
+                return result
+            return wrapped
+
+        for name, original in original_mesh_modes.items():
+            setattr(mesh_ops, name, capture_coastal_mode(original))
         elevation_values = []
         elevation_scaling = {}
         terrain_samples = []
         terrain_bounds = {}
 
         def local_color_mode(terrain, *args, **kwargs):
+            nonlocal coastal_expected, original_terrain
+            elements = args[1] if len(args) > 1 else kwargs.get("terrain", {})
+            ocean = elements.get("ocean")
+            coastal_expected |= bool(ocean is not None and len(ocean.data.vertices))
             # Geographic fetching is complete at this point. Perform the groove
             # and water Booleans near the origin: projected map coordinates can
             # exceed 100,000 Blender units and quantize small shared edges.
@@ -668,6 +715,17 @@ def main():
                 if generated.type in {"MESH", "CURVE", "FONT"}:
                     generated.location += translation
             bpy.context.view_layer.update()
+            evaluated = terrain.evaluated_get(bpy.context.evaluated_depsgraph_get())
+            source_mesh = evaluated.to_mesh()
+            try:
+                source_mesh.calc_loop_triangles()
+                original_terrain = {
+                    "vertices": [list(evaluated.matrix_world @ v.co)
+                                 for v in source_mesh.vertices],
+                    "faces": [list(t.vertices) for t in source_mesh.loop_triangles],
+                }
+            finally:
+                evaluated.to_mesh_clear()
             Path(config["export_path"]).joinpath("generation-local-origin.json").write_text(
                 json.dumps({"translation_mm": list(translation),
                             "phase": "before groove and water Booleans"}, indent=2))
@@ -761,6 +819,10 @@ def main():
             elevation_utils.get_tile_elevation = original_elevation
             generation_utils._rg_apply_single_color_mode = original_color_mode
             text_utils.replaceShapeText = original_shape_text
+            for name, original in original_mesh_modes.items():
+                setattr(mesh_ops, name, original)
+        if coastal_expected and not coastal_sources:
+            raise RuntimeError("Could not capture original coastal water geometry.")
         export_dir = Path(config["export_path"])
         normalization_translation = None
         plate = bpy.data.objects.get(config["project_name"] + "_Plate")
@@ -782,6 +844,7 @@ def main():
                 -((initial_minimum[1] + initial_maximum[1]) / 2.0),
                 -initial_minimum[2],
             ))
+            coastal_translation = list(early_translation)
             for generated in bpy.data.objects:
                 if generated.type in {"MESH", "CURVE", "FONT"}:
                     generated.location += early_translation
@@ -809,6 +872,18 @@ def main():
                 -((final_minimum[1] + final_maximum[1]) / 2.0),
                 -final_minimum[2],
             ]
+        if normalization_translation is not None:
+            coastal_translation = [a + b for a, b in
+                                   zip(coastal_translation, normalization_translation)]
+        if original_terrain is None:
+            raise RuntimeError("Could not capture original terrain for shoreline restoration.")
+        write_terrain_snapshot(export_dir / "shoreline-source/terrain.stl",
+                               original_terrain, coastal_translation)
+        coastal_metadata = coastal_source_metadata(
+            coastal_sources, coastal_expected, coastal_translation)
+        coastal_metadata["terrain_source"] = True
+        (export_dir / "coastal-water-source.json").write_text(
+            json.dumps(coastal_metadata), encoding="utf-8")
         if elevation_values:
             (export_dir / "terrain-elevation.json").write_text(json.dumps({
                 "source_min_m": min(elevation_values),
