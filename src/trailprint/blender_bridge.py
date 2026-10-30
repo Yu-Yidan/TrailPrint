@@ -39,6 +39,7 @@ from .print_font import prepare_print_font
 from .title import validate_title_fit
 from .water_geometry import (
     WATER_BOOLEAN_BOUNDS_TOLERANCE_MM,
+    UpperSurface,
     export_groove_cutter,
     generation_trail_corridor,
     groove_material_overlap,
@@ -250,17 +251,34 @@ def _integrate_generated_water(stage: Path, project_slug: str, blender_path: Pat
     cap = work / f"{project_slug}_WATER.stl"
     cutter = work / "water-cutter.stl"
     support = work / "water-terrain-support.stl"
+    coastal_source = stage / "coastal-water-source.json"
+    original_terrain = stage / "shoreline-source/terrain.stl"
+    restore_land = False
+    if coastal_source.is_file():
+        metadata = json.loads(coastal_source.read_text(encoding="utf-8"))
+        restore_land = isinstance(metadata, dict) and metadata.get("terrain_source") is True
+        if restore_land and not original_terrain.is_file():
+            raise ValueError("Missing original terrain for shoreline restoration; regenerate.")
+    if (any(path.stem.lower().endswith("ocean") for path in water)
+            and not coastal_source.is_file()):
+        raise ValueError("Missing original coastal water metadata; regenerate the model.")
     report = prepare_integrated_water(
         terrain, water, cap, cutter, support,
         trail_path=trail, trail_clearance_mm=TRAIL_CLEARANCE_MM,
-        protected_corridor=corridor)
+        protected_corridor=corridor,
+        coastal_source_path=coastal_source if coastal_source.is_file() else None,
+        original_terrain_path=original_terrain if restore_land else None)
     if not report.get("available"):
         for path in water:
             path.unlink(missing_ok=True)
         return report, None
     repaired_terrain = work / "terrain-manifold.stl"
-    repair = repair_terrain_for_water_boolean(terrain, repaired_terrain)
+    rebuilding = report.get("land_restoration", {}).get("available", False)
+    integration_source = original_terrain if rebuilding else terrain
+    repair = repair_terrain_for_water_boolean(integration_source, repaired_terrain)
     report["terrain_repair"] = repair
+    if rebuilding:
+        report["land_restoration"]["source_repair"] = repair
     output = work / "terrain-with-water-basins.stl"
     job = work / "job.json"
     job.write_text(json.dumps({
@@ -281,6 +299,16 @@ def _integrate_generated_water(stage: Path, project_slug: str, blender_path: Pat
     report["terrain_output_repair"] = repair_terrain_for_water_boolean(output, manifold_output)
     output = manifold_output
     integrated = trimesh.load_mesh(output, process=True)
+    if rebuilding:
+        restored_surface = UpperSurface(integrated)
+        errors = []
+        for sample in report["land_restoration"]["samples"]:
+            actual = restored_surface.z(sample["xy_mm"])
+            if actual is None or abs(actual - sample["original_z_mm"]) > .05:
+                raise ValueError(f"Original terrain was not restored at {sample['xy_mm']}.")
+            errors.append(abs(actual - sample["original_z_mm"]))
+        report["land_restoration"]["verified_samples"] = len(errors)
+        report["land_restoration"]["maximum_height_error_mm"] = max(errors, default=0.)
     original_bounds = np.asarray(repair["bounds_mm"], dtype=float)
     integrated_bounds = np.asarray(integrated.bounds, dtype=float)
     tolerance = WATER_BOOLEAN_BOUNDS_TOLERANCE_MM
@@ -908,6 +936,11 @@ def run_blender_build(project: Path, settings: BuildSettings, blender: Optional[
     staged_samples = elevation_stage / "terrain-samples.json"
     evidence_path = build_dir / "terrain-osm-evidence.json"
     staged_evidence = elevation_stage / "terrain-osm-evidence.json"
+    staged_coastal = elevation_stage / "coastal-water-source.json"
+    if staged_coastal.is_file():
+        shutil.copy2(staged_coastal, build_dir / "coastal-water-source.json")
+    else:
+        (build_dir / "coastal-water-source.json").unlink(missing_ok=True)
     (build_dir / "terrain-palette.json").unlink(missing_ok=True)
     # Remove the thumbnail left by pre-v2 ESA builds.
     (build_dir / "terrain-reference.png").unlink(missing_ok=True)

@@ -11,6 +11,14 @@ Keep filenames descriptive, for example:
 
 These files are test inputs only and are not treated as production projects.
 
+`tomales-water-precision.gpx` preserves only the coordinates and elevations of
+the route whose tiny coastal water fragment crossed the printable-area threshold
+during precision cleanup. Names, timestamps, and extensions are removed.
+`../tomales-water-precision.wkt` captures that pre-cleanup polygon in model
+millimetres: cleanup reduces its area from 1.0094 to 0.9989 mm² without splitting it.
+`../tomales-water-overlap.json` contains model-space inland and ocean polygons
+whose overlapping floor faces become non-manifold when combined in an STL.
+
 `triathlon/` contains three synthetic, non-personal recordings near Lake Tahoe.
 The swim is offshore and disconnected from the land routes. Bike and run share
 an endpoint and part of their footprint. Their timestamps contain gaps between
@@ -54,6 +62,18 @@ coplanar groove Boolean. Its seven-edge floor opening must remain a blocking
 error when inspected directly; generation avoids creating it by separating the
 cutter floor at STL precision. The fixture contains only model vertices and
 triangle indices, without project metadata.
+
+`crosstown-tiny-edge.gpx` retains only SF Crosstown route coordinates and
+elevations, without names, timestamps, or extensions. `../crosstown-tiny-edge.npz`
+captures its groove-corrected terrain in model millimetres. Ordinary repair
+leaves one 0.000184 mm edge shared by four faces; it exercises the guarded
+tiny-edge collapse and binary STL round-trip checks.
+The same route also exercises coastal water classification: bay polygons in
+the generic water layer must share the captured ocean plane after regeneration.
+Its small piers also exercise print-scale shoreline smoothing while retaining
+the original trail, protected shoreline support, and continuous marine surface.
+The Tomales route additionally checks that independent inland water retains
+shoreline-based levels while marine fragments share one sea level.
 
 `../trail-projection-ring-edge.npz` captures terrain vertices, face order and
 trail floor height that reproduce GEOS's `Ring edge missing` error during the

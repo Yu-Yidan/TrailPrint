@@ -84,6 +84,43 @@ Water bodies with non-manifold shoreline point contacts receive a single
 are checked both before and after STL export. Corrections are recorded under
 `water_topology_corrections` in the water integration report.
 
+Water that falls below the 1 mm² printable-area minimum during coordinate cleanup
+is omitted and reported with its original and cleaned areas. Builds preserve
+original ocean coverage before layer-priority cuts remove bays from it. Generic
+water inside that coverage shares one print-layer-aligned sea level with the
+ocean, even when trail grooves separate the final pieces. Lakes and upstream
+river sections outside that coverage retain shoreline-driven levels. Coastal
+classification happens before printable-width cleanup. That cleanup closes
+artificial ocean/bay clearance seams only inside the original ocean coverage,
+preserving island holes and real land barriers; trail exclusion happens afterward.
+Restored area and component counts are recorded under
+`coastal_classification.seam_cleanup`. The exported marine
+support bottoms receive at most 0.000001 mm of upward separation when pieces
+join, preventing coincident bottom sheets without changing the terrain bounds.
+The separation is recorded in the coastal report. Marine
+surfaces are checked for a common height. Invalid or conflicting coastal source
+metadata blocks generation. Remaining duplicate ocean coverage is trimmed with
+a 0.001 mm separation from independent inland water. These adjustments
+are recorded under `water_overlap_corrections`, and the combined water, cutter,
+and support must still pass the STL watertightness checks.
+
+Shoreline smoothing uses a 1.0 mm physical detail scale for the standard 0.4 mm
+nozzle workflow. Narrow land tips and tiny piers blend into adjacent water;
+narrow dead-end water inlets blend back into land. The generator captures the
+original terrain before water and trail cuts. When water is removed, it rebuilds
+from that surface and applies the final water basins and trail groove, so old
+channels cannot remain underneath. Water contraction is
+enabled only when this original terrain is available; legacy low-level callers
+without it retain land-only smoothing.
+Larger features and islands retain their land cores with rounded outlines where
+safe. The model rim, trail-support region, major land connections, and barriers
+between independent water bodies are protected. The smoothed outline drives
+both water inserts and terrain cuts, so original coastal clipping cannot bring
+the tiny details back. Changed area and protected exceptions are recorded under
+`shoreline_smoothing`, with restored areas and source checks in `land_restoration`,
+in the validation report. Existing exports change only
+when rebuilt.
+
 Generation widens terrain grooves from the actual raised trail footprint, targeting
 0.12 mm ordinary clearance and 0.27 mm around small enclosed water openings.
 The Trail STL is preserved. Water fragments below the existing printable area
@@ -92,6 +129,11 @@ omissions are recorded in the validation report; correction is limited to two
 passes and never relaxes the fit requirements.
 
 Generated trails undergo a blocking fit check before replacing deliverables.
+If ordinary terrain cleanup leaves exactly one four-face edge no longer than
+0.001 mm, repair may collapse that numerical sliver. The correction must preserve
+bounds, change volume by at most 0.00001 mm³, and remain watertight with consistent
+winding after STL export. Corrections and vertex displacement are recorded in
+the repair report; genuine holes and larger defects still block generation.
 The check requires 0.1 mm clearance along outer and inner walls, increased to
 0.25 mm around enclosed water openings up to 10 mm², with a 0.005 mm numerical
 tolerance. A failed check reports the measured gap and model XY location and

@@ -1,6 +1,7 @@
 """Convert generated water solids into shallow, printable terrain inlays."""
 
 import io
+import json
 import math
 from pathlib import Path
 
@@ -10,6 +11,8 @@ from shapely import contains_xy, polygons, set_precision, union_all
 from shapely.errors import ShapelyError
 from shapely.geometry import MultiPoint, Polygon
 from shapely.ops import nearest_points, unary_union
+
+from .shoreline import smooth_shoreline
 
 WATER_TOPOLOGY_INSET_MM = 0.001
 WATER_DEPTH_MM = 0.4
@@ -325,6 +328,46 @@ def _terrain_repair_defects(mesh):
             "defect_locations_mm": mesh.vertices[edges[:5]].mean(axis=1).tolist()}
 
 
+def _collapse_tiny_overfull_edge(mesh):
+    """Try one sub-micron numerical seam; never close boundary holes."""
+    counts = np.bincount(mesh.edges_unique_inverse)
+    bad = np.flatnonzero(counts != 2)
+    if (len(bad) != 1 or counts[bad[0]] != 4
+            or not mesh.is_winding_consistent):
+        return mesh, None
+    a, b = mesh.edges_unique[bad[0]]
+    endpoints = mesh.vertices[[a, b]]
+    length = float(np.linalg.norm(endpoints[1] - endpoints[0]))
+    if not np.isfinite(endpoints).all() or not 0 < length <= .001:
+        return mesh, None
+    midpoint = endpoints.mean(axis=0).astype(np.float32).astype(float)
+    vertices = mesh.vertices.copy()
+    vertices[a] = midpoint
+    faces = mesh.faces.copy()
+    faces[faces == b] = a
+    keep = ((faces[:, 0] != faces[:, 1]) & (faces[:, 1] != faces[:, 2])
+            & (faces[:, 0] != faces[:, 2]))
+    candidate = trimesh.Trimesh(vertices, faces[keep], process=True)
+    # Validate the actual binary STL representation before accepting the edit.
+    candidate = trimesh.load_mesh(io.BytesIO(candidate.export(file_type="stl")),
+                                  file_type="stl", process=True)
+    volume_delta = float(candidate.volume - mesh.volume)
+    if (not candidate.is_watertight or not candidate.is_winding_consistent
+            or not np.array_equal(candidate.bounds, mesh.bounds)
+            or not math.isfinite(volume_delta) or abs(volume_delta) > .00001
+            or candidate.volume <= 0):
+        return mesh, None
+    return candidate, {
+        "edge_length_mm": length,
+        "original_endpoints_mm": endpoints.tolist(),
+        "replacement_vertex_mm": midpoint.tolist(),
+        "maximum_vertex_displacement_mm": float(
+            np.linalg.norm(endpoints - midpoint, axis=1).max()),
+        "collapsed_triangles": int(np.count_nonzero(~keep)),
+        "volume_change_mm3": volume_delta,
+    }
+
+
 def repair_terrain_for_water_boolean(terrain_path: Path, output_path: Path) -> dict:
     """Repair numerical sheets without filling holes or changing solid volume."""
     mesh = trimesh.load_mesh(terrain_path, process=True)
@@ -334,12 +377,20 @@ def repair_terrain_for_water_boolean(terrain_path: Path, output_path: Path) -> d
     input_bounds = np.asarray(mesh.bounds, dtype=float)
     input_volume = float(mesh.volume)
     passes = []
+    tiny_edge_corrections = []
     for number in range(1, 4):
         mesh, counts = _terrain_repair_pass(mesh)
+        correction = None
+        if number == 3 and not mesh.is_watertight:
+            mesh, correction = _collapse_tiny_overfull_edge(mesh)
+        counts["tiny_edge_collapses"] = int(correction is not None)
+        if correction is not None:
+            tiny_edge_corrections.append(correction)
         passes.append({"pass": number, **counts, **_terrain_repair_defects(mesh)})
         if mesh.is_watertight and mesh.is_winding_consistent:
             break
-    diagnostics = {"valid": False, "passes": passes, "source": terrain_path.name}
+    diagnostics = {"valid": False, "passes": passes, "source": terrain_path.name,
+                   "tiny_edge_corrections": tiny_edge_corrections}
     if not mesh.is_watertight or not mesh.is_winding_consistent:
         defects = passes[-1]
         raise TerrainRepairError(
@@ -364,6 +415,7 @@ def repair_terrain_for_water_boolean(terrain_path: Path, output_path: Path) -> d
         "output_watertight": True,
         **{key: sum(item[key] for item in passes) for key in counts},
         "passes": passes,
+        "tiny_edge_corrections": tiny_edge_corrections,
         "bounds_mm": input_bounds.tolist(),
         "volume_mm3": float(abs(exported.volume)),
     }
@@ -462,8 +514,8 @@ def _printable_water(geometry, terrain_outline):
     return unary_union(output).buffer(0) if output else Polygon()
 
 
-def _stable_polygon(polygon):
-    """Remove coordinates which collapse when STL stores them as float32."""
+def _stable_polygon(polygon, cleanup=None):
+    """Normalize STL coordinates; return None if no printable fragment remains."""
     maximum = max(abs(value) for value in polygon.bounds)
     float32_spacing = float(np.spacing(np.float32(maximum)))
     grid = max(WATER_COORDINATE_GRID_MM, float32_spacing * 2.0)
@@ -474,9 +526,79 @@ def _stable_polygon(polygon):
                              preserve_topology=True).buffer(0)
     items = [item for item in polygon_items(stable)
              if item.area >= WATER_MIN_COMPONENT_AREA_MM2]
-    if len(items) != 1:
+    if cleanup is not None:
+        cleanup.update(source_area_mm2=float(polygon.area), cleaned_area_mm2=float(stable.area),
+                       grid_mm=grid)
+    if not items:
+        return None
+    if len(items) > 1:
         raise ValueError("Water precision cleanup unexpectedly split a connected body.")
     return items[0]
+
+
+def _printable_smoothed_inland(geometry, outline):
+    """Keep smoothed shorelines; widen standalone undersized water as before."""
+    parts = polygon_items(geometry)
+    output = []
+    for index, polygon in enumerate(parts):
+        printable = _printable_water(polygon, outline)
+        if not polygon.buffer(-WATER_MIN_WIDTH_MM / 2).is_empty:
+            printable = printable.intersection(polygon)
+        else:
+            neighbors = unary_union(parts[:index] + parts[index + 1:])
+            printable = printable.difference(neighbors.buffer(WATER_COORDINATE_GRID_MM))
+        output.append(printable)
+    return unary_union(output).buffer(0)
+
+
+def _normalized_water_entries(entries, omitted, overlap_corrections, enforce_width=False):
+    """Normalize first, then keep duplicate ocean solids out of inland water.
+
+    Inland water retains its shoreline-driven heights. Ocean fragments keep
+    their existing sea level, but only cover areas not already supplied by an
+    inland body. The existing topology inset separates shared floor edges.
+    """
+    normalized = []
+    for source_index, (source, level, depth, samples) in enumerate(entries, 1):
+        cleanup = {}
+        polygon = _stable_polygon(source, cleanup=cleanup)
+        if polygon is None:
+            omitted.append({"source_body": source_index, **cleanup,
+                            "area_mm2": cleanup["cleaned_area_mm2"],
+                            "reason": "below printable area after precision cleanup",
+                            "replacement": "existing terrain"})
+        else:
+            normalized.append((source_index, polygon, level, depth, samples))
+    inland = set_precision(unary_union([p for _, p, level, _, _ in normalized
+                                       if level is None]), 0)
+    exclusion = inland.buffer(WATER_TOPOLOGY_INSET_MM, join_style=2)
+    result = []
+    for source_index, polygon, level, depth, samples in normalized:
+        if level is None or inland.is_empty or not polygon.intersects(inland):
+            result.append((source_index, polygon, level, depth, samples))
+            continue
+        # A retained .01 mm precision model would erase the .001 mm separation.
+        original = set_precision(polygon, 0)
+        clipped = original.difference(exclusion)
+        if clipped.difference(original).area > 1e-8:
+            raise ValueError("Ocean overlap correction unexpectedly expanded the shoreline.")
+        kept = []
+        for part in polygon_items(clipped):
+            if (part.area < WATER_MIN_COMPONENT_AREA_MM2
+                    or (enforce_width and part.buffer(-WATER_MIN_WIDTH_MM / 2).is_empty)):
+                omitted.append({"source_body": source_index, "area_mm2": float(part.area),
+                                "reason": "below printable area or width after ocean overlap cleanup",
+                                "replacement": "existing terrain"})
+            else:
+                kept.append(part)
+                result.append((source_index, part, level, depth, samples))
+        overlap_corrections.append({
+            "source_body": source_index, "retained_water": "inland",
+            "overlap_area_mm2": float(original.intersection(inland).area),
+            "removed_area_mm2": float(original.area - clipped.area),
+            "separation_mm": WATER_TOPOLOGY_INSET_MM, "resulting_body_count": len(kept),
+        })
+    return result
 
 
 def _surface_triangulation(polygon, surface):
@@ -685,6 +807,44 @@ def _ocean_surface_level(mesh):
     return float(_snap_down([np.median(upward[:, :, 2])])[0])
 
 
+def _coastal_source(path, outline):
+    """Read the ocean before layer-priority cuts remove bays and estuaries."""
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+        if (not isinstance(data, dict) or data.get("version") != 1
+                or not isinstance(data.get("expected"), bool)):
+            raise ValueError("unsupported coastal metadata")
+        sources = data["sources"]
+        if not isinstance(sources, list) or bool(sources) != data["expected"]:
+            raise ValueError("missing coastal source geometry")
+        footprints, levels = [], []
+        for source in sources:
+            vertices = np.asarray(source["vertices"], dtype=float)
+            faces = np.asarray(source["faces"], dtype=np.int64)
+            if (vertices.ndim != 2 or vertices.shape[1] != 3 or not len(vertices)
+                    or not np.isfinite(vertices).all() or faces.ndim != 2
+                    or faces.shape[1] != 3 or not len(faces)
+                    or faces.min() < 0 or faces.max() >= len(vertices)):
+                raise ValueError("invalid coastal source mesh")
+            mesh = trimesh.Trimesh(vertices, faces, process=True)
+            levels.append(_ocean_surface_level(mesh))
+            mesh.update_faces(mesh.face_normals[:, 2] > 1e-8)
+            footprint = projected_footprint(mesh).intersection(outline)
+            if footprint.is_empty:
+                raise ValueError("coastal source is outside the terrain")
+            footprints.append(footprint)
+        if not levels:
+            return Polygon(), None, {"available": False, "source_count": 0}
+        if max(levels) - min(levels) > WATER_LEVEL_TOLERANCE_MM:
+            raise ValueError("conflicting coastal sea levels")
+        level = float(_snap_down([np.median(levels)])[0])
+        coverage = unary_union(footprints).buffer(0)
+        return coverage, level, {"available": True, "source_count": len(sources),
+                                 "sea_level_mm": level, "coverage_area_mm2": coverage.area}
+    except (OSError, KeyError, TypeError, ValueError, IndexError) as exc:
+        raise ValueError(f"Invalid coastal water metadata: {exc}") from exc
+
+
 def _boundary_edges(faces):
     directed = np.vstack((faces[:, [0, 1]], faces[:, [1, 2]], faces[:, [2, 0]]))
     canonical = np.sort(directed, axis=1)
@@ -761,6 +921,16 @@ def _water_shells_valid(meshes):
     return True
 
 
+def _separated_support_floor(base):
+    """Avoid coincident support/terrain bottom sheets after marine joins."""
+    separated = float(np.nextafter(np.float32(base), np.float32(np.inf)))
+    if abs(separated) < np.finfo(np.float32).eps:
+        separated = float(np.finfo(np.float32).eps)
+    if not math.isfinite(separated) or not 0 < separated - base <= .000001:
+        raise ValueError("Coastal support floor cannot be separated safely at STL precision.")
+    return separated
+
+
 def _regularize_water_polygon(polygon, enforce_width=False):
     # A coarse Shapely precision model would snap this tiny inset back onto
     # itself. Retain full precision after the initial shoreline cleanup.
@@ -787,13 +957,21 @@ def prepare_integrated_water(terrain_path: Path, water_paths, cap_path: Path,
                              cutter_path: Path, support_path: Path = None,
                              trail_path: Path = None,
                              trail_clearance_mm: float = 0.0,
-                             protected_corridor=None) -> dict:
+                             protected_corridor=None, coastal_source_path=None,
+                             original_terrain_path=None) -> dict:
     """Create shoreline-driven water inlays and matching terrain geometry."""
     terrain = trimesh.load_mesh(terrain_path, process=True)
     if terrain.is_empty:
         raise ValueError("Terrain mesh is empty.")
     surface = UpperSurface(terrain)
     outline = MultiPoint(terrain.vertices[:, :2]).convex_hull.buffer(0)
+    coverage, sea_level, coastal_report = (
+        _coastal_source(coastal_source_path, outline) if coastal_source_path is not None
+        else (Polygon(), None, {"available": False, "reason": "legacy input without provenance"}))
+    if original_terrain_path is not None:
+        # Keep two-sided overlays on one sub-print-scale grid; mixing unsnapped
+        # snapshots with rounded shoreline edits creates almost coincident edges.
+        coverage = set_precision(coverage, WATER_TOPOLOGY_INSET_MM)
     inland_footprints = []
     ocean_footprints = []
     for path in water_paths:
@@ -810,13 +988,70 @@ def prepare_integrated_water(terrain_path: Path, water_paths, cap_path: Path,
                 inland_footprints.append(footprint)
     if not inland_footprints and not ocean_footprints:
         return {"available": False, "reason": "no visible water footprint"}
+    if coastal_source_path is not None and ocean_footprints and sea_level is None:
+        raise ValueError("Ocean geometry has no original coastal water metadata.")
     entries = []
-    if inland_footprints:
-        inland = (_printable_water(unary_union(inland_footprints).buffer(0), outline)
-                  if inland_footprints else Polygon())
+    smoothing_reports = []
+    restoration_regions = []
+    restore_land = original_terrain_path is not None
+    smoothing_protection = protected_corridor
+    if smoothing_protection is None and trail_path is not None:
+        smoothing_protection = trail_corridor(
+            trail_path, float(trail_clearance_mm) + TRAIL_WATER_PRECISION_MARGIN_MM)
+    if sea_level is not None:
+        inland_raw = unary_union(inland_footprints)
+        marine_raw = unary_union([p for p, _ in ocean_footprints])
+        if restore_land:
+            inland_raw = set_precision(inland_raw, WATER_TOPOLOGY_INSET_MM)
+            marine_raw = set_precision(marine_raw, WATER_TOPOLOGY_INSET_MM)
+        coastal_water = inland_raw.intersection(coverage)
+        coastal_report["reclassified_area_mm2"] = float(coastal_water.area)
+        # Classify before width cleanup so nearby lakes cannot become marine
+        # simply because their printable outlines touch after rounding.
+        independent_raw = inland_raw.difference(coverage)
+        # STL rounding can leave hairline residues just outside the coast.
+        # Do not let width cleanup inflate these into spurious inland water.
+        independent_parts = polygon_items(independent_raw)
+        independent_raw = unary_union([p for p in independent_parts
+                                       if p.area >= WATER_MIN_COMPONENT_AREA_MM2])
+        coastal_report["unprintable_inland_area_mm2"] = float(sum(
+            p.area for p in independent_parts if p.area < WATER_MIN_COMPONENT_AREA_MM2))
+        printable_coverage, smoothing = smooth_shoreline(
+            coverage, outline, smoothing_protection, independent_raw, smooth_water=restore_land)
+        restoration_regions.append(coverage.difference(printable_coverage))
+        smoothing_reports.append({"kind": "marine", **smoothing})
+        smoothed_inland, smoothing = smooth_shoreline(
+            independent_raw, outline, smoothing_protection, printable_coverage,
+            smooth_water=restore_land)
+        restoration_regions.append(independent_raw.difference(smoothed_inland))
+        smoothing_reports.append({"kind": "inland", **smoothing})
+        independent = _printable_smoothed_inland(smoothed_inland, outline)
+        independent = independent.difference(printable_coverage).buffer(0)
+        entries.extend((p, None, WATER_DEPTH_MM, None) for p in polygon_items(independent))
+        marine_raw = (marine_raw.union(coastal_water)
+                      .union(printable_coverage.difference(coverage))
+                      .intersection(printable_coverage).buffer(0))
+        # Layer-priority cuts leave clearance gaps between ocean and bay meshes.
+        # Keep the cleanup's restored connections inside the original ocean,
+        # rather than clipping them back to those already-separated inputs.
+        marine = _printable_water(marine_raw, outline).intersection(printable_coverage).buffer(0)
+        coastal_report["seam_cleanup"] = {
+            "radius_mm": WATER_MIN_WIDTH_MM / 2.0,
+            "restored_area_mm2": float(marine.difference(marine_raw).area),
+            "input_component_count": len(polygon_items(marine_raw)),
+            "output_component_count": len(polygon_items(marine)),
+        }
+        entries.extend((p, sea_level, OCEAN_DEPTH_MM, None) for p in polygon_items(marine))
+    elif inland_footprints:
+        smoothed_inland, smoothing = smooth_shoreline(
+            unary_union(inland_footprints).buffer(0), outline, smoothing_protection,
+            smooth_water=restore_land)
+        restoration_regions.append(unary_union(inland_footprints).difference(smoothed_inland))
+        smoothing_reports.append({"kind": "inland", **smoothing})
+        inland = _printable_smoothed_inland(smoothed_inland, outline)
         entries.extend((polygon, None, WATER_DEPTH_MM, None)
                        for polygon in polygon_items(inland))
-    for ocean, level in ocean_footprints:
+    for ocean, level in ocean_footprints if sea_level is None else []:
         printable = _printable_water(ocean, outline)
         entries.extend((polygon, level, OCEAN_DEPTH_MM, None)
                        for polygon in polygon_items(printable))
@@ -874,9 +1109,20 @@ def prepare_integrated_water(terrain_path: Path, water_paths, cap_path: Path,
     caps, cutters, supports, bodies = [], [], [], []
     cutter_top = float(terrain.bounds[1, 2] + 1.0)
     support_base = float(terrain.bounds[0, 2])
+    seam = coastal_report.get("seam_cleanup", {})
+    if seam.get("input_component_count", 0) > seam.get("output_component_count", 0):
+        separated_base = _separated_support_floor(support_base)
+        coastal_report["support_floor_separation"] = {
+            "terrain_base_z_mm": support_base, "support_base_z_mm": separated_base,
+            "separation_mm": separated_base - support_base,
+        }
+        support_base = separated_base
     topology_corrections = []
-    for source_index, (source_polygon, ocean_level, depth, natural_samples) in enumerate(entries, 1):
-        polygon = _stable_polygon(source_polygon)
+    overlap_corrections = []
+    normalized_entries = _normalized_water_entries(
+        entries, omitted_fragments, overlap_corrections,
+        enforce_width=protected_corridor is not None)
+    for source_index, polygon, ocean_level, depth, natural_samples in normalized_entries:
         samples = None
         if ocean_level is None:
             samples = (natural_samples if natural_samples is not None else
@@ -918,6 +1164,7 @@ def prepare_integrated_water(terrain_path: Path, water_paths, cap_path: Path,
         return {"available": False, "reason": "no printable water footprint",
                 "omitted_fragments": omitted_fragments,
                 "water_topology_corrections": topology_corrections,
+                "water_overlap_corrections": overlap_corrections,
                 "shoreline_fallbacks": shoreline_fallbacks}
     cap_mesh = trimesh.util.concatenate(caps)
     cutter_mesh = trimesh.util.concatenate(cutters)
@@ -949,11 +1196,53 @@ def prepare_integrated_water(terrain_path: Path, water_paths, cap_path: Path,
         raise ValueError(
             "Integrated water geometry did not remain watertight after STL export: "
             + ", ".join(failures) + ".")
+    restoration = {"available": False, "area_mm2": 0.0}
+    if restore_land:
+        mask = unary_union(restoration_regions).buffer(0)
+        if not mask.is_empty:
+            original = trimesh.load_mesh(original_terrain_path, process=True)
+            if (original.is_empty or not np.isfinite(original.vertices).all()
+                    or not np.allclose(original.bounds[:, :2], terrain.bounds[:, :2],
+                                       atol=WATER_BOOLEAN_BOUNDS_TOLERANCE_MM, rtol=0)
+                    or abs(original.bounds[0, 2] - terrain.bounds[0, 2]) > .01
+                    or original.bounds[1, 2] < terrain.bounds[1, 2] - .01):
+                raise ValueError("Original shoreline terrain is not aligned with this model.")
+            original_surface = UpperSurface(original)
+            samples = []
+            interior = mask.buffer(-WATER_COORDINATE_GRID_MM * 2)
+            for polygon in sorted(polygon_items(interior), key=lambda p: p.area, reverse=True)[:128]:
+                point = polygon.representative_point()
+                height = original_surface.z((point.x, point.y))
+                if height is None:
+                    raise ValueError("Original terrain does not cover a smoothed inlet.")
+                samples.append({"xy_mm": [point.x, point.y], "original_z_mm": float(height)})
+            restoration = {"available": True, "area_mm2": float(mask.area),
+                           "mode": "rebuild-from-original-terrain", "samples": samples}
+    if sea_level is not None:
+        # Inspect the binary STL, preserving face order to identify each cap.
+        exported = trimesh.load_mesh(cap_path, process=False)
+        offset = 0
+        marine_heights = []
+        for cap, body in zip(caps, bodies):
+            end = offset + len(cap.faces)
+            if body["surface_mode"] == "ocean-flat":
+                selected = exported.faces[offset:end]
+                normals = exported.face_normals[offset:end]
+                heights = exported.vertices[selected[normals[:, 2] > .99], 2]
+                if not len(heights) or not np.allclose(heights, sea_level, atol=1e-5, rtol=0):
+                    raise ValueError("Exported coastal water surfaces disagree on sea level.")
+                marine_heights.extend([float(heights.min()), float(heights.max())])
+            offset = end
+        coastal_report["exported_surface_range_mm"] = (
+            [min(marine_heights), max(marine_heights)] if marine_heights else None)
     return {"available": True, "body_count": len(bodies), "bodies": bodies,
             "minimum_width_mm": WATER_MIN_WIDTH_MM,
             "depth_mm": WATER_DEPTH_MM,
             "surface_sample_mm": WATER_SURFACE_SAMPLE_MM,
             "surface_mode": "shoreline-driven",
+            "coastal_classification": coastal_report,
+            "shoreline_smoothing": smoothing_reports,
+            "land_restoration": restoration,
             "trail_clearance_mm": float(trail_clearance_mm),
             "trail_precision_margin_mm": TRAIL_WATER_PRECISION_MARGIN_MM,
             "trail_excluded_water_area_mm2": excluded_water_area,
@@ -962,7 +1251,8 @@ def prepare_integrated_water(terrain_path: Path, water_paths, cap_path: Path,
             "cap_watertight": True,
             "cutter_watertight": True,
             "support_watertight": True,
-            "water_topology_corrections": topology_corrections}
+            "water_topology_corrections": topology_corrections,
+            "water_overlap_corrections": overlap_corrections}
 
 
 def _union_projected_material(pieces, mesh):
