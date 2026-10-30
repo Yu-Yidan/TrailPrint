@@ -283,4 +283,3 @@ def test_removed_inlet_requests_rebuild_and_verifiable_original_heights(tmp_path
     assert report["land_restoration"]["mode"] == "rebuild-from-original-terrain"
     assert report["land_restoration"]["samples"]
     assert all(p["original_z_mm"] == 4 for p in report["land_restoration"]["samples"])
-
