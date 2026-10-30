@@ -141,7 +141,7 @@ def test_failed_fit_preserves_previous_outputs_and_records_location(tmp_path):
         with pytest.raises(ValueError, match="outer wall"):
             run_blender_build(project, BuildSettings(), blender=blender)
     assert old.read_bytes() == b"keep this"
-    report = json.loads((project / "build/validation.json").read_text())
+    report = json.loads((project / "build/failed-validation.json").read_text())
     assert not report["valid"]
     assert report["trail_fit"]["wall_clearance"]["boundaries"][0]["tightest_xy_mm"]
     assert not list((project / "build").glob("trailprint3d-*"))
@@ -182,7 +182,7 @@ def test_fallback_cannot_bypass_failed_wall_clearance(tmp_path):
     with patch("trailprint.blender_bridge.subprocess.run", side_effect=generate):
         with pytest.raises(ValueError, match="Fallback: Trail fit validation failed"):
             run_blender_build(project, BuildSettings(shape_extra="OUTER TEXT"), blender=blender)
-    report = json.loads((project / "build/validation.json").read_text())
+    report = json.loads((project / "build/failed-validation.json").read_text())
     assert attempts == ["OUTER TEXT", "NONE"]
     assert not report["fallback"]["trail_fit"]["valid"]
     assert old.read_bytes() == b"preserved"

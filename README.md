@@ -141,6 +141,20 @@ preserves previous outputs. Printed fit still depends on printer accuracy.
 Details are recorded under `trail_fit`
 in the build validation report, including for models without water.
 
+Within one app process, builds, exports, and deletion reserve their project before
+starting, preventing these operations from overlapping for the same project.
+Terrain builds retain the existing app-wide single-build limit. These reservations
+do not coordinate separate app processes or independently invoked CLI commands.
+
+Successful builds publish their owned model files, previews, metadata, and
+validation report together with rollback on replacement errors. A successful STL
+rebuild invalidates its previous app-generated 3MF and Bambu validation report;
+failed or cancelled builds preserve the previous deliverables. Failed-attempt
+diagnostics are stored in `build/failed-validation.json`, separately from
+`build/validation.json`, which describes the last successfully published model.
+Bambu exports likewise publish the 3MF and its report together. This protects
+against handled file-operation failures, rather than machine or process crashes.
+
 The dashboard uses compact, sticky tabs for Project created, STL generated, 3MF
 generated, Printing started, and Print completed. Tab badges show live counts
 and the last selected tab is remembered. Each project row can open its complete

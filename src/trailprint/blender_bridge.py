@@ -33,9 +33,10 @@ from .mesh_validation import (
     validate_stls,
     write_report,
 )
-from .naming import customer_preview_name, deliverable_prefix, human_name
+from .naming import canonical_3mf_name, customer_preview_name, deliverable_prefix, human_name
 from .osm_colors import analyze_project
 from .print_font import prepare_print_font
+from .publishing import publish_files
 from .title import validate_title_fit
 from .water_geometry import (
     WATER_BOOLEAN_BOUNDS_TOLERANCE_MM,
@@ -188,30 +189,6 @@ def find_blender(explicit: Optional[Path] = None) -> Path:
         if candidate and candidate.is_file():
             return candidate.resolve()
     raise ValueError("Blender was not found. Install Blender 5.2 or set TRAILPRINT_BLENDER.")
-
-
-def _promote_stls(staged: List[Path], deliverables: Path, build_dir: Path) -> List[Path]:
-    deliverables.mkdir(parents=True, exist_ok=True)
-    backup = build_dir / f"previous-stls-{uuid.uuid4().hex}"
-    backup.mkdir()
-    old = list(deliverables.glob("*.stl"))
-    promoted: List[Path] = []
-    try:
-        for path in old:
-            os.replace(path, backup / path.name)
-        for path in staged:
-            destination = deliverables / path.name
-            os.replace(path, destination)
-            promoted.append(destination)
-    except Exception:
-        for path in promoted:
-            path.unlink(missing_ok=True)
-        for path in backup.glob("*.stl"):
-            os.replace(path, deliverables / path.name)
-        raise
-    finally:
-        shutil.rmtree(backup, ignore_errors=True)
-    return promoted
 
 
 def _prefix_staged_outputs(project: Path, stage: Path) -> None:
@@ -593,6 +570,37 @@ def _render_preview(stls: List[Path], project_slug: str, output: Path, config_pa
     return _run_command(command, timeout, cancel_event)
 
 
+def _normalize_generated_stage(project, stage):
+    _prefix_staged_outputs(project, stage)
+    files = list(stage.glob("*.stl"))
+    return normalize_anomalous_assembly(
+        files, [inspect_stl(path, project.name) for path in files], project.name)
+
+
+def _validate_generated_stage(paths, slug, corrections, expected_trail_segments):
+    validation = validate_stls(paths, slug, expected_trail_segments=expected_trail_segments)
+    if corrections:
+        validation["corrections"] = corrections + validation.get("corrections", [])
+    return validation
+
+
+def _process_generated_stage(stage, slug, corrections, blender_path, timeout,
+                             started, logs, cancel_event, expected_trail_segments):
+    """Apply the same geometry processing to primary and fallback builds."""
+    corrections.extend(cleanup_fragmented_trails(
+        list(stage.glob("*.stl")), slug, expected_trail_segments))
+    remaining = max(1, timeout - int(time.monotonic() - started))
+    water, water_log = _integrate_generated_water(
+        stage, slug, blender_path, remaining, cancel_event)
+    if water_log:
+        logs.append(water_log)
+    _correct_staged_groove(
+        stage, slug, blender_path,
+        max(1, timeout - int(time.monotonic() - started)), cancel_event,
+        expected_trail_segments=expected_trail_segments)
+    return water
+
+
 def run_blender_build(project: Path, settings: BuildSettings, blender: Optional[Path] = None,
                       timeout: int = 3600, cancel_event=None) -> List[Path]:
     project = project.resolve()
@@ -635,6 +643,8 @@ def run_blender_build(project: Path, settings: BuildSettings, blender: Optional[
             previous_customer_preview = ""
     except (OSError, ValueError, TypeError):
         pass
+    report_path = build_dir / "failed-validation.json"
+    report_path.unlink(missing_ok=True)
     PROGRESS_FILE.unlink(missing_ok=True)
     started = time.monotonic()
     logs = []
@@ -664,24 +674,12 @@ def run_blender_build(project: Path, settings: BuildSettings, blender: Optional[
         shutil.rmtree(attempt_root, ignore_errors=True)
         detail = _failure_detail(result)
         raise ValueError(f"TrailPrint3D failed: {detail}")
-    _prefix_staged_outputs(project, primary_stage)
-    primary_files = list(primary_stage.glob("*.stl"))
-    pre_water_corrections = normalize_anomalous_assembly(
-        primary_files,
-        [inspect_stl(path, project.name) for path in primary_files],
-        project.name)
+    pre_water_corrections = _normalize_generated_stage(project, primary_stage)
     water_integration = None
-    remaining = max(1, timeout - int(time.monotonic() - started))
     try:
-        pre_water_corrections.extend(cleanup_fragmented_trails(
-            primary_files, project.name, expected_trail_segments))
-        water_integration, water_log = _integrate_generated_water(
-            primary_stage, project.name, blender_path, remaining, cancel_event)
-        if water_log:
-            logs.append(water_log)
-        _correct_staged_groove(primary_stage, project.name, blender_path,
-                              max(1, timeout - int(time.monotonic() - started)), cancel_event,
-                              expected_trail_segments=expected_trail_segments)
+        water_integration = _process_generated_stage(
+            primary_stage, project.name, pre_water_corrections, blender_path, timeout,
+            started, logs, cancel_event, expected_trail_segments)
     except (BuildCancelled, subprocess.TimeoutExpired, ValueError) as exc:
         log_path.write_text("".join(logs) + f"\n[water integration]\n{exc}\n", encoding="utf-8")
         if not isinstance(exc, BuildCancelled):
@@ -700,11 +698,8 @@ def run_blender_build(project: Path, settings: BuildSettings, blender: Optional[
             raise
         raise ValueError(f"Terrain/water integration failed: {exc}") from exc
     primary_paths = list(primary_stage.glob("*.stl"))
-    primary_validation = validate_stls(primary_paths, project.name,
-                                       expected_trail_segments=expected_trail_segments)
-    if pre_water_corrections:
-        primary_validation["corrections"] = (
-            pre_water_corrections + primary_validation.get("corrections", []))
+    primary_validation = _validate_generated_stage(
+        primary_paths, project.name, pre_water_corrections, expected_trail_segments)
     _validate_staged_trail_fit(primary_stage, project.name, primary_validation)
     final_validation = primary_validation
     fallback_validation = None
@@ -737,24 +732,12 @@ def run_blender_build(project: Path, settings: BuildSettings, blender: Optional[
         else:
             logs.append(_attempt_log("no Shape Extras fallback", fallback_result))
             if fallback_result.returncode == 0:
-                _prefix_staged_outputs(project, fallback_stage)
-                fallback_files = list(fallback_stage.glob("*.stl"))
-                fallback_pre_water_corrections = normalize_anomalous_assembly(
-                    fallback_files,
-                    [inspect_stl(path, project.name) for path in fallback_files],
-                    project.name)
-                remaining = max(1, timeout - int(time.monotonic() - started))
+                fallback_pre_water_corrections = _normalize_generated_stage(project, fallback_stage)
                 try:
-                    fallback_pre_water_corrections.extend(cleanup_fragmented_trails(
-                        fallback_files, project.name, expected_trail_segments))
-                    fallback_water, water_log = _integrate_generated_water(
-                        fallback_stage, project.name, blender_path, remaining, cancel_event)
-                    if water_log:
-                        logs.append(water_log)
-                    _correct_staged_groove(
-                        fallback_stage, project.name, blender_path,
-                        max(1, timeout - int(time.monotonic() - started)), cancel_event,
-                        expected_trail_segments=expected_trail_segments)
+                    fallback_water = _process_generated_stage(
+                        fallback_stage, project.name, fallback_pre_water_corrections,
+                        blender_path, timeout, started, logs, cancel_event,
+                        expected_trail_segments)
                 except BuildCancelled:
                     log_path.write_text(
                         "Build cancelled during fallback water integration.\n", encoding="utf-8")
@@ -775,12 +758,9 @@ def run_blender_build(project: Path, settings: BuildSettings, blender: Optional[
                         water_integration = fallback_water
                 fallback_paths = list(fallback_stage.glob("*.stl"))
                 if fallback_validation is None:
-                    fallback_validation = validate_stls(fallback_paths, project.name,
-                                                        expected_trail_segments=expected_trail_segments)
-                    if fallback_pre_water_corrections:
-                        fallback_validation["corrections"] = (
-                            fallback_pre_water_corrections
-                            + fallback_validation.get("corrections", []))
+                    fallback_validation = _validate_generated_stage(
+                        fallback_paths, project.name, fallback_pre_water_corrections,
+                        expected_trail_segments)
                 _validate_staged_trail_fit(fallback_stage, project.name, fallback_validation)
                 if fallback_validation["valid"]:
                     fallback_alignment = align_core_to_terrain(
@@ -909,60 +889,63 @@ def run_blender_build(project: Path, settings: BuildSettings, blender: Optional[
         shutil.rmtree(attempt_root, ignore_errors=True)
         PROGRESS_FILE.unlink(missing_ok=True)
         raise BuildCancelled("Blender build cancelled.")
-    outputs = _promote_stls(staged, project / "deliverables", build_dir)
-    preview_path = build_dir / "preview.png"
+    publication = attempt_root / "publication"
+    staged_build = publication / "build"
+    staged_build.mkdir(parents=True)
     deliverables = project / "deliverables"
+    changes = {path: None for path in deliverables.glob("*.stl")}
+    outputs = []
+    for path in staged:
+        destination = deliverables / path.name
+        changes[destination] = path
+        outputs.append(destination)
+    managed = ("preview.png", "elevation.json", "terrain-samples.json",
+               "terrain-osm-evidence.json", "coastal-water-source.json",
+               "terrain-palette.json", "terrain-reference.png", "bambu-validation.json",
+               "failed-validation.json")
+    changes.update({build_dir / name: None for name in managed})
+    changes[deliverables / canonical_3mf_name(project)] = None
+    if previous_customer_preview:
+        changes[deliverables / previous_customer_preview] = None
     if preview["valid"]:
-        customer_path = deliverables / preview["customer_filename"]
-        customer_stage = deliverables / f".preview-{uuid.uuid4().hex}.tmp"
+        changes[build_dir / "preview.png"] = preview_stage
+        customer_stage = publication / "customer-preview.png"
         shutil.copy2(preview_stage, customer_stage)
-        os.replace(preview_stage, preview_path)
-        os.replace(customer_stage, customer_path)
-        if (previous_customer_preview
-                and previous_customer_preview != preview["customer_filename"]):
-            (deliverables / previous_customer_preview).unlink(missing_ok=True)
-    else:
-        preview_path.unlink(missing_ok=True)
-        if previous_customer_preview:
-            (deliverables / previous_customer_preview).unlink(missing_ok=True)
-    elevation_path = build_dir / "elevation.json"
+        changes[deliverables / preview["customer_filename"]] = customer_stage
     if elevation:
-        temporary_elevation = elevation_path.with_suffix(".tmp")
-        temporary_elevation.write_text(json.dumps(elevation, indent=2) + "\n", encoding="utf-8")
-        os.replace(temporary_elevation, elevation_path)
-    else:
-        elevation_path.unlink(missing_ok=True)
-    samples_path = build_dir / "terrain-samples.json"
-    staged_samples = elevation_stage / "terrain-samples.json"
-    evidence_path = build_dir / "terrain-osm-evidence.json"
-    staged_evidence = elevation_stage / "terrain-osm-evidence.json"
-    staged_coastal = elevation_stage / "coastal-water-source.json"
-    if staged_coastal.is_file():
-        shutil.copy2(staged_coastal, build_dir / "coastal-water-source.json")
-    else:
-        (build_dir / "coastal-water-source.json").unlink(missing_ok=True)
-    (build_dir / "terrain-palette.json").unlink(missing_ok=True)
-    # Remove the thumbnail left by pre-v2 ESA builds.
-    (build_dir / "terrain-reference.png").unlink(missing_ok=True)
-    if elevation and staged_samples.is_file() and staged_evidence.is_file():
-        shutil.copy2(staged_samples, samples_path)
-        shutil.copy2(staged_evidence, evidence_path)
+        (staged_build / "elevation.json").write_text(json.dumps(elevation, indent=2)+"\n")
+    for name in ("terrain-samples.json", "terrain-osm-evidence.json", "coastal-water-source.json"):
+        path = elevation_stage / name
+        if path.is_file() and (name == "coastal-water-source.json" or elevation):
+            shutil.copy2(path, staged_build / name)
+    if (elevation and (staged_build / "terrain-samples.json").is_file()
+            and (staged_build / "terrain-osm-evidence.json").is_file()):
         try:
-            palette = analyze_project(project)
+            palette = analyze_project(publication)
             report["terrain_palette"] = {
                 "available": True, "bands": len(palette["bands"]),
-                "confidence": palette["confidence"],
-                "mapped_coverage": palette["mapped_coverage"],
-            }
+                "confidence": palette["confidence"], "mapped_coverage": palette["mapped_coverage"]}
         except Exception as exc:
             report["terrain_palette"] = {"available": False, "error": str(exc)}
     else:
-        samples_path.unlink(missing_ok=True)
-        evidence_path.unlink(missing_ok=True)
         report["terrain_palette"] = {
-            "available": False, "error": "Terrain OSM evidence is unavailable."
-        }
-    write_report(report_path, report)
+            "available": False, "error": "Terrain OSM evidence is unavailable."}
+    for path in staged_build.iterdir():
+        changes[build_dir / path.name] = path
+    staged_report = staged_build / "validation.json"
+    write_report(staged_report, report)
+    changes[build_dir / "validation.json"] = staged_report
+
+    def check_publish_cancelled():
+        if cancel_event is not None and cancel_event.is_set():
+            raise BuildCancelled("Blender build cancelled before outputs were committed.")
+
+    try:
+        publish_files(changes, build_dir, before_commit=check_publish_cancelled)
+    except BaseException:
+        shutil.rmtree(attempt_root, ignore_errors=True)
+        PROGRESS_FILE.unlink(missing_ok=True)
+        raise
     log_path.write_text(f"Duration: {time.monotonic() - started:.1f}s\n" + "".join(logs), encoding="utf-8")
     shutil.rmtree(attempt_root, ignore_errors=True)
     PROGRESS_FILE.unlink(missing_ok=True)

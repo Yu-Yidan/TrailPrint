@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Optional
 
 from .bambu import BambuEnvironment, BambuSettings, create_bambu_project, discover_environment
+from .project_operations import OPERATIONS, release_operation
 
 
 @dataclass
@@ -38,10 +39,18 @@ class BambuJobManager:
                 raise ValueError("A Bambu project is already being created for this model.")
             job = BambuJob(uuid.uuid4().hex, project, settings,
                            deepcopy(environment if environment is not None else discover_environment()))
+            OPERATIONS.acquire(job.project, "exporting", job.id)
             self._jobs[job.id] = job
-        threading.Thread(target=self._run, args=(job,), daemon=True).start()
+        try:
+            threading.Thread(target=self._run, args=(job,), daemon=True).start()
+        except Exception:
+            OPERATIONS.release(job.project, job.id)
+            with self._lock:
+                self._jobs.pop(job.id, None)
+            raise
         return job
 
+    @release_operation
     def _run(self, job):
         job.state, job.message, job.started_at = "running", "Creating Bambu project", time.time()
         try:
