@@ -17,6 +17,7 @@ import trimesh
 from .diy_case import generate_diy_case
 from .mesh_validation import mesh_role
 from .naming import canonical_3mf_name
+from .publishing import publish_files
 from .terrain_colors import (
     DEFAULT_GREY_START_M,
     DEFAULT_WHITE_START_M,
@@ -1011,9 +1012,10 @@ def create_bambu_project(project: Path, settings: BambuSettings,
         report["layout"] = layout_report
         if diy_case_report is not None:
             report["diy_case"] = diy_case_report
-        _write_json(build_dir / "bambu-validation.json", report)
+        staged_report = temp_root / "bambu-validation.json"
+        _write_json(staged_report, report)
         destination = project / "deliverables" / canonical_3mf_name(project)
-        os.replace(staged, destination)
+        publish_files({destination: staged, build_dir / "bambu-validation.json": staged_report}, build_dir)
         return destination
     finally:
         shutil.rmtree(temp_root, ignore_errors=True)

@@ -509,7 +509,7 @@ class SettingsTests(unittest.TestCase):
                     run_blender_build(project, BuildSettings(), blender=blender)
             self.assertEqual(previous.read_text(encoding="ascii"), "old")
             self.assertEqual(customer_preview.read_bytes(), b"old customer preview")
-            report = json.loads((project / "build/validation.json").read_text(encoding="utf-8"))
+            report = json.loads((project / "build/failed-validation.json").read_text(encoding="utf-8"))
             self.assertFalse(report["valid"])
             self.assertTrue(report["preview"]["preserved"])
             self.assertEqual(report["preview"]["customer_filename"],
@@ -557,7 +557,7 @@ class SettingsTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "Missing tile 12/981/1612"):
                     run_blender_build(project, BuildSettings(), blender=blender)
             assert all(path.read_bytes() == b"previous successful build" for path in preserved)
-            report = json.loads((project / "build/validation.json").read_text())
+            report = json.loads((project / "build/failed-validation.json").read_text())
             assert not report["valid"] and not report["terrain_data"]["valid"]
             assert report["preview"]["customer_filename"] == "old-preview.png"
 

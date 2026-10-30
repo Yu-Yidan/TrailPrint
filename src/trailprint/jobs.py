@@ -9,6 +9,7 @@ from typing import Dict, List, Optional
 
 from .blender_bridge import BuildCancelled, BuildSettings, read_progress, run_blender_build
 from .mesh_validation import read_report
+from .project_operations import OPERATIONS, release_operation
 
 
 @dataclass
@@ -41,11 +42,20 @@ class BuildManager:
                     in {"queued", "running", "cancelling"}):
                 raise BuildBusy("Another map is currently building. Wait for it to finish.")
             job = BuildJob(uuid.uuid4().hex, project.resolve(), settings)
+            OPERATIONS.acquire(job.project, "building", job.id)
             self._jobs[job.id] = job
             self._active = job.id
-        threading.Thread(target=self._run, args=(job,), daemon=True, name=f"trailprint-{job.id[:8]}").start()
+        try:
+            threading.Thread(target=self._run, args=(job,), daemon=True, name=f"trailprint-{job.id[:8]}").start()
+        except Exception:
+            OPERATIONS.release(job.project, job.id)
+            with self._lock:
+                self._jobs.pop(job.id, None)
+                self._active = None
+            raise
         return job
 
+    @release_operation
     def _run(self, job: BuildJob):
         job.started_at = time.time()
         if job.cancel_event.is_set():
@@ -60,7 +70,11 @@ class BuildManager:
         except BuildCancelled:
             job.state, job.message = "cancelled", "Build cancelled. Previous deliverables were preserved."
         except Exception as exc:
-            job.validation = read_report(job.project / "build/validation.json")
+            failure_path = job.project / "build/failed-validation.json"
+            job.validation = (read_report(failure_path) if failure_path.is_file()
+                              and failure_path.stat().st_mtime >= job.started_at else {})
+            if not job.validation:
+                job.validation = {"valid": False, "errors": [str(exc)]}
             job.state, job.message = "error", str(exc)
         else:
             job.outputs = [path.name for path in outputs]

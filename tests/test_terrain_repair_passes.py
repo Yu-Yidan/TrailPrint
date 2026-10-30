@@ -80,7 +80,7 @@ def test_failed_repair_diagnostics_survive_staging_cleanup_and_preserve_models(t
             side_effect=TerrainRepairError("Repair failed after 3 passes", diagnostic)):
         with pytest.raises(ValueError, match="Repair failed after 3 passes"):
             run_blender_build(project, BuildSettings.validated(plate_title="Test"), blender=blender)
-    report = json.loads((project / "build/validation.json").read_text())
+    report = json.loads((project / "build/failed-validation.json").read_text())
     assert report["terrain_repair"] == diagnostic
     assert all(file.read_bytes() == b"previous successful build" for file in preserved)
     assert not list((project / "build").glob("trailprint3d-*"))

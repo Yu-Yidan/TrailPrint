@@ -33,6 +33,7 @@ from .jobs import BuildBusy, BuildManager
 from .mesh_validation import mesh_role, read_report
 from .naming import canonical_3mf_name, human_name, read_project_meta
 from .osm_colors import load_palette
+from .project_operations import OPERATIONS
 from .projects import (
     FUNNEL_STAGES,
     MAX_GPX_BYTES,
@@ -249,14 +250,15 @@ def create_app(repo_root: Path = None, build_manager: BuildManager = None,
     def delete_project(slug):
         project = get_project(slug)
         try:
-            if app.extensions["trailprint_builds"].is_active(project):
-                raise ValueError("This project is currently building. Wait for the build to finish before deleting it.")
-            if app.extensions["trailprint_bambu"].is_active(project):
-                raise ValueError("This project is currently exporting. Wait for the Bambu project to finish before deleting it.")
-            analytics.sync_project(project)
-            deleted = trash_project(app.config["PRINTS_DIR"], app.config["TRASH_DIR"], slug,
-                                    request.form.get("confirmation", ""))
-            analytics.transition(deleted, "project soft deleted")
+            with OPERATIONS.hold(project, "deleting"):
+                if app.extensions["trailprint_builds"].is_active(project):
+                    raise ValueError("This project is currently building. Wait for the build to finish before deleting it.")
+                if app.extensions["trailprint_bambu"].is_active(project):
+                    raise ValueError("This project is currently exporting. Wait for the Bambu project to finish before deleting it.")
+                analytics.sync_project(project)
+                deleted = trash_project(app.config["PRINTS_DIR"], app.config["TRASH_DIR"], slug,
+                                        request.form.get("confirmation", ""))
+                analytics.transition(deleted, "project soft deleted")
         except (OSError, ValueError) as exc:
             flash(str(exc), "error")
         else:
