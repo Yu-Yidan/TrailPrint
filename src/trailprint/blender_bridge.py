@@ -273,7 +273,21 @@ def _integrate_generated_water(stage: Path, project_slug: str, blender_path: Pat
         detail = _failure_detail(result)
         raise ValueError(f"Could not integrate shallow water into Terrain: {detail}")
     manifold_output = work / "terrain-with-water-basins-manifold.stl"
-    report["terrain_output_repair"] = repair_terrain_for_water_boolean(output, manifold_output)
+    # Reuse the verified base only when cuts stop above it and support
+    # stays within its footprint, preserving any intended base openings.
+    base_z = float(trimesh.load_mesh(repaired_terrain, process=True).bounds[0, 2])
+    reference_mesh = trimesh.load_mesh(repaired_terrain, process=True)
+    base_faces = np.all(np.abs(reference_mesh.triangles[:, :, 2] - base_z) < 1e-7, axis=1)
+    from shapely import covers, points, polygons, union_all
+    base_region = union_all(polygons(reference_mesh.triangles[base_faces, :, :2]))
+    support_mesh = trimesh.load_mesh(support, process=True)
+    tools_above_base = (
+        float(trimesh.load_mesh(cutter, process=True).bounds[0, 2]) > base_z + 0.001
+        and float(support_mesh.bounds[0, 2]) >= base_z
+        and bool(np.all(covers(base_region.buffer(1e-7), points(support_mesh.vertices[:, :2])))))
+    report["terrain_output_repair"] = repair_terrain_for_water_boolean(
+        output, manifold_output,
+        base_reference_path=repaired_terrain if tools_above_base else None)
     output = manifold_output
     integrated = trimesh.load_mesh(output, process=True)
     if rebuilding:

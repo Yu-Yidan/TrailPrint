@@ -368,7 +368,36 @@ def _collapse_tiny_overfull_edge(mesh):
     }
 
 
-def repair_terrain_for_water_boolean(terrain_path: Path, output_path: Path) -> dict:
+def _restore_reference_base(mesh, reference):
+    """Restore only an unchanged, verified base after a cut above that base."""
+    if not reference.is_watertight or not reference.is_winding_consistent:
+        return mesh, False
+    level = float(reference.bounds[0, 2])
+    bad = mesh.edges_unique[np.bincount(mesh.edges_unique_inverse) != 2]
+    if (not len(bad) or not np.all(np.abs(mesh.vertices[bad, 2] - level) < 1e-7)
+            or not np.allclose(mesh.bounds[:, :2], reference.bounds[:, :2], atol=1e-6)
+            or abs(mesh.bounds[0, 2] - level) > 1e-7):
+        return mesh, False
+    original = np.all(np.abs(reference.triangles[:, :, 2] - level) < 1e-7, axis=1)
+    if not original.any() or np.any(reference.face_normals[original, 2] >= 0):
+        return mesh, False
+    selected = np.all(np.abs(mesh.triangles[:, :, 2] - level) < 1e-7, axis=1)
+    candidate = trimesh.util.concatenate((
+        trimesh.Trimesh(mesh.vertices, mesh.faces[~selected], process=False),
+        trimesh.Trimesh(reference.vertices, reference.faces[original], process=False)))
+    candidate.merge_vertices()
+    candidate, _ = _stitch_collinear_boundaries(candidate)
+    candidate = trimesh.load_mesh(io.BytesIO(candidate.export(file_type="stl")),
+                                  file_type="stl", process=True)
+    if (not candidate.is_watertight or not candidate.is_winding_consistent
+            or not np.array_equal(candidate.bounds, mesh.bounds)
+            or abs(candidate.volume - mesh.volume) > .00001):
+        return mesh, False
+    return candidate, True
+
+
+def repair_terrain_for_water_boolean(terrain_path: Path, output_path: Path,
+                                     base_reference_path: Path = None) -> dict:
     """Repair numerical sheets without filling holes or changing solid volume."""
     mesh = trimesh.load_mesh(terrain_path, process=True)
     if mesh.is_empty:
@@ -389,6 +418,13 @@ def repair_terrain_for_water_boolean(terrain_path: Path, output_path: Path) -> d
         passes.append({"pass": number, **counts, **_terrain_repair_defects(mesh)})
         if mesh.is_watertight and mesh.is_winding_consistent:
             break
+    restored_base = False
+    if not mesh.is_watertight and base_reference_path is not None:
+        reference = trimesh.load_mesh(base_reference_path, process=True)
+        mesh, restored_base = _restore_reference_base(mesh, reference)
+        if restored_base:
+            passes.append({"pass": len(passes) + 1, "reference_base_restored": True,
+                           **{key: 0 for key in counts}, **_terrain_repair_defects(mesh)})
     diagnostics = {"valid": False, "passes": passes, "source": terrain_path.name,
                    "tiny_edge_corrections": tiny_edge_corrections}
     if not mesh.is_watertight or not mesh.is_winding_consistent:
@@ -416,6 +452,7 @@ def repair_terrain_for_water_boolean(terrain_path: Path, output_path: Path) -> d
         **{key: sum(item[key] for item in passes) for key in counts},
         "passes": passes,
         "tiny_edge_corrections": tiny_edge_corrections,
+        "reference_base_restored": restored_base,
         "bounds_mm": input_bounds.tolist(),
         "volume_mm3": float(abs(exported.volume)),
     }

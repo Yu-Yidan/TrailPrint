@@ -80,3 +80,5 @@ trail floor height that reproduce GEOS's `Ring edge missing` error during the
 raised-material projection. The mesh is in model millimetres; it contains no
 project metadata. Its individually valid projected triangles exercise the
 bounded precision retry without weakening trail clearance checks.
+
+`big-dam-bridge-base.gpx` retains only route coordinates and elevations, without names, timestamps or extensions. Its water Boolean exposes mismatched flat underside triangulation; the verified pre-cut base must be restored without altering intended openings.
