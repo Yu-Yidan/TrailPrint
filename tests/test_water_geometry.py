@@ -240,6 +240,41 @@ class IntegratedWaterTests(unittest.TestCase):
             self.assertAlmostEqual(mesh.volume, box_mesh.volume)
             np.testing.assert_array_equal(mesh.bounds, box_mesh.bounds)
 
+    def test_reference_base_restores_only_flat_underside(self):
+        from trailprint.water_geometry import _restore_reference_base
+        reference = trimesh.creation.box((10, 10, 4))
+        reference.apply_translation((0, 0, 2))
+        broken = reference.copy()
+        broken.update_faces(broken.face_normals[:, 2] > -.99)
+        repaired, changed = _restore_reference_base(broken, reference)
+        self.assertTrue(changed)
+        self.assertTrue(repaired.is_watertight)
+        self.assertAlmostEqual(repaired.volume, reference.volume, places=5)
+        np.testing.assert_array_equal(repaired.bounds, reference.bounds)
+
+    def test_reference_base_does_not_repair_side_hole(self):
+        from trailprint.water_geometry import _restore_reference_base
+        reference = trimesh.creation.box((10, 10, 4))
+        broken = reference.copy()
+        broken.update_faces(np.arange(len(broken.faces)) != 0)
+        _, changed = _restore_reference_base(broken, reference)
+        self.assertFalse(changed)
+
+    def test_reference_base_preserves_intended_opening(self):
+        from shapely.geometry import Point
+
+        from trailprint.water_geometry import _restore_reference_base
+        footprint = Point(0, 0).buffer(5).difference(Point(0, 0).buffer(2))
+        reference = trimesh.creation.extrude_polygon(footprint, 2, engine="earcut")
+        broken = reference.copy()
+        bottom = np.flatnonzero(broken.face_normals[:, 2] < -.99)
+        broken.update_faces(~np.isin(np.arange(len(broken.faces)), bottom[:2]))
+        repaired, changed = _restore_reference_base(broken, reference)
+        self.assertTrue(changed)
+        self.assertTrue(repaired.is_watertight)
+        self.assertAlmostEqual(repaired.volume, reference.volume, places=5)
+        self.assertFalse(projected_footprint(repaired).covers(Point(0, 0)))
+
     def test_terrain_repair_rejects_actual_hole(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
