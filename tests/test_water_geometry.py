@@ -22,6 +22,59 @@ from trailprint.water_geometry import (
 
 
 class IntegratedWaterTests(unittest.TestCase):
+    def test_large_lake_widens_its_narrow_arm(self):
+        from trailprint.water_geometry import _printable_smoothed_inland
+        lake = box(-3, -3, 3, 3).union(box(3, -.1, 8, .1))
+        result = _printable_smoothed_inland(lake, box(-20, -20, 20, 20))
+        self.assertTrue(result.covers(Point(6, .45)))
+        self.assertEqual(len(result.geoms) if hasattr(result, "geoms") else 1, 1)
+
+    def test_rounded_lake_survives_binary_stl(self):
+        import io
+
+        from trailprint.water_geometry import _finish_lake_width, _printable_smoothed_inland
+        outline = box(-20, -20, 20, 20)
+        lake = box(-3, -3, 3, 3).union(box(3, -.1, 8, .1))
+        widened = _printable_smoothed_inland(lake, outline)
+        final = _finish_lake_width(widened, outline)
+        mesh = trimesh.creation.extrude_polygon(final, WATER_DEPTH_MM, engine="earcut")
+        actual = trimesh.load_mesh(io.BytesIO(mesh.export(file_type="stl")),
+                                   file_type="stl", process=True)
+        self.assertTrue(actual.is_watertight)
+        self.assertTrue(actual.is_winding_consistent)
+        self.assertAlmostEqual(actual.extents[2], WATER_DEPTH_MM, places=6)
+
+    def test_overlapping_widened_lakes_are_blocked(self):
+        from trailprint.water_geometry import _normalized_water_entries
+        entries = [(box(0, 0, 3, 3), None, WATER_DEPTH_MM, None),
+                   (box(2, 0, 5, 3), None, WATER_DEPTH_MM, None)]
+        with self.assertRaisesRegex(ValueError, "merge separate"):
+            _normalized_water_entries(entries, [], [])
+
+    def test_widened_lakes_stay_separate(self):
+        from trailprint.water_geometry import _printable_smoothed_inland
+        lakes = box(-3, -3, 0, 3).union(box(.5, -3, 3, 3))
+        result = _printable_smoothed_inland(lakes, box(-20, -20, 20, 20))
+        self.assertEqual(len(result.geoms), 2)
+
+    def test_thin_lake_can_widen_away_from_protected_edge(self):
+        from trailprint.water_geometry import _finish_lake_width, _widen_lake_sections
+        allowed = box(0, -10, 10, 10)
+        narrow = box(0, -3, .25, 3)
+        widened = _widen_lake_sections(narrow, allowed)
+        final = _finish_lake_width(widened, allowed)
+        self.assertTrue(final.covers(Point(.6, 0)))
+        self.assertLess(final.difference(allowed).area, 1e-8)
+
+    def test_lake_width_respects_protected_corridor(self):
+        from trailprint.water_geometry import _finish_lake_width
+        allowed = box(-10, -10, 10, 10).difference(box(-.6, -10, .6, 10))
+        lake = box(1, -3, 5, 3)
+        result = _finish_lake_width(lake, allowed)
+        self.assertLess(result.difference(allowed).area, 1e-8)
+        with self.assertRaisesRegex(ValueError, "printable width"):
+            _finish_lake_width(box(0, 0, .3, 5), allowed)
+
     def test_expanded_shoreline_excludes_water_groove_and_perimeter(self):
         original = box(-2, -2, 2, 2)
         neighbor = box(3, -3, 8, 3)

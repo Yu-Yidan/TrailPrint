@@ -574,18 +574,49 @@ def _stable_polygon(polygon, cleanup=None):
 
 
 def _printable_smoothed_inland(geometry, outline):
-    """Keep smoothed shorelines; widen standalone undersized water as before."""
+    """Widen undersized sections without merging independent water bodies."""
     parts = polygon_items(geometry)
     output = []
     for index, polygon in enumerate(parts):
         printable = _printable_water(polygon, outline)
-        if not polygon.buffer(-WATER_MIN_WIDTH_MM / 2).is_empty:
-            printable = printable.intersection(polygon)
-        else:
-            neighbors = unary_union(parts[:index] + parts[index + 1:])
+        neighbors = unary_union(parts[:index] + parts[index + 1:])
+        # Enlarge thin sections even when another part of this lake has a core.
+        # Reserve half the gap so independently processed lakes cannot merge.
+        if not neighbors.is_empty:
+            gap = polygon.distance(neighbors)
+            printable = printable.intersection(polygon.buffer(max(0, gap / 2 - .01)))
             printable = printable.difference(neighbors.buffer(WATER_COORDINATE_GRID_MM))
         output.append(printable)
     return unary_union(output).buffer(0)
+
+
+def _widen_lake_sections(polygon, allowed):
+    """Grow thin remnants into available land after the trail has been excluded."""
+    radius = WATER_MIN_WIDTH_MM / 2
+    core = polygon.buffer(-radius).buffer(radius)
+    thin = polygon.difference(core.buffer(WATER_COORDINATE_GRID_MM * 3))
+    if thin.is_empty:
+        return polygon
+    widened = polygon.union(thin.buffer(WATER_MIN_WIDTH_MM)).intersection(allowed).buffer(0)
+    parts = polygon_items(widened)
+    if len(parts) != 1:
+        raise ValueError("Lake widening cannot preserve a continuous printable body.")
+    return parts[0]
+
+
+def _finish_lake_width(polygon, allowed):
+    """Round protected cuts without retaining slicer-sized water slivers."""
+    radius = WATER_MIN_WIDTH_MM / 2
+    opened = polygon.buffer(-radius).buffer(radius).intersection(allowed).buffer(0)
+    if opened.is_empty:
+        raise ValueError("Lake cannot reach printable width without crossing protected terrain or trail.")
+    parts = polygon_items(opened)
+    if len(parts) != 1:
+        raise ValueError("Lake contains a narrow connection that cannot print continuously.")
+    stable = _stable_polygon(parts[0])
+    if stable is None or stable.buffer(-radius).is_empty:
+        raise ValueError("Lake lost printable width during coordinate cleanup.")
+    return stable
 
 
 def _normalized_water_entries(entries, omitted, overlap_corrections, enforce_width=False):
@@ -606,8 +637,11 @@ def _normalized_water_entries(entries, omitted, overlap_corrections, enforce_wid
                             "replacement": "existing terrain"})
         else:
             normalized.append((source_index, polygon, level, depth, samples))
-    inland = set_precision(unary_union([p for _, p, level, _, _ in normalized
-                                       if level is None]), 0)
+    inland_parts = [p for _, p, level, _, _ in normalized if level is None]
+    for index, polygon in enumerate(inland_parts):
+        if any(polygon.intersects(other) for other in inland_parts[:index]):
+            raise ValueError("Lake widening would merge separate water bodies.")
+    inland = set_precision(unary_union(inland_parts), 0)
     exclusion = inland.buffer(WATER_TOPOLOGY_INSET_MM, join_style=2)
     result = []
     for source_index, polygon, level, depth, samples in normalized:
@@ -1113,6 +1147,15 @@ def prepare_integrated_water(terrain_path: Path, water_paths, cap_path: Path,
                     # The bounded fallback below still requires actual nearby land.
                     pass
             for item in polygon_items(clipped):
+                if (level is None and protected_corridor is not None
+                        and item.area >= WATER_MIN_COMPONENT_AREA_MM2):
+                    allowed = outline.difference(trail_exclusion).difference(
+                        water_exclusion.difference(polygon).buffer(WATER_COORDINATE_GRID_MM))
+                    item = _widen_lake_sections(item, allowed)
+                if (level is None and item.area >= WATER_MIN_COMPONENT_AREA_MM2
+                        and protected_corridor is not None
+                        and item.buffer(-WATER_MIN_WIDTH_MM / 2).is_empty):
+                    raise ValueError("Lake cannot reach printable width beside the protected trail.")
                 if (item.area < WATER_MIN_COMPONENT_AREA_MM2
                         or (protected_corridor is not None
                             and item.buffer(-WATER_MIN_WIDTH_MM / 2).is_empty)):
@@ -1160,6 +1203,8 @@ def prepare_integrated_water(terrain_path: Path, water_paths, cap_path: Path,
         entries, omitted_fragments, overlap_corrections,
         enforce_width=protected_corridor is not None)
     for source_index, polygon, ocean_level, depth, natural_samples in normalized_entries:
+        if ocean_level is None and protected_corridor is not None:
+            polygon = _finish_lake_width(polygon, outline.difference(trail_exclusion))
         samples = None
         if ocean_level is None:
             samples = (natural_samples if natural_samples is not None else
@@ -1235,7 +1280,10 @@ def prepare_integrated_water(terrain_path: Path, water_paths, cap_path: Path,
             + ", ".join(failures) + ".")
     restoration = {"available": False, "area_mm2": 0.0}
     if restore_land:
-        mask = unary_union(restoration_regions).buffer(0)
+        # Widened water now occupies some formerly smoothed-away inlets.
+        # Only verify land that remains outside the final exported water/groove.
+        mask = unary_union(restoration_regions).difference(
+            projected_footprint(cap_mesh).union(trail_exclusion)).buffer(0)
         if not mask.is_empty:
             original = trimesh.load_mesh(original_terrain_path, process=True)
             if (original.is_empty or not np.isfinite(original.vertices).all()
