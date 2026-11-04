@@ -44,6 +44,89 @@ class IntegratedWaterTests(unittest.TestCase):
         self.assertTrue(actual.is_winding_consistent)
         self.assertAlmostEqual(actual.extents[2], WATER_DEPTH_MM, places=6)
 
+    def test_storage_precision_does_not_split_printable_connection(self):
+        import json
+
+        from shapely import from_wkt, set_precision
+
+        from trailprint.water_geometry import _finish_lake_width, polygon_items
+        fixture = Path(__file__).parent / "fixtures/water-neck-precision.json"
+        data = json.loads(fixture.read_text())
+        polygon = set_precision(from_wkt(data["polygon"]), .01)
+        allowed = from_wkt(data["allowed"])
+        quantized = polygon.buffer(-.5).buffer(.5).intersection(allowed).buffer(0)
+        self.assertEqual(len(polygon_items(quantized)), 2)
+        result = _finish_lake_width(polygon, allowed)
+        self.assertEqual(len(polygon_items(result)), 1)
+        self.assertLess(result.difference(allowed).area, 1e-6)
+        core = set_precision(result, 0).buffer(-.5).buffer(.5)
+        self.assertEqual(len(polygon_items(core)), 1)
+        full_precision = _finish_lake_width(set_precision(polygon, 0), allowed)
+        self.assertLess(result.symmetric_difference(full_precision).area, 1e-8)
+
+    def test_real_river_fragments_share_growth_without_merging(self):
+        import json
+
+        from shapely import from_wkt
+
+        from trailprint.water_geometry import _coordinate_water_growth, _normalized_water_entries
+        fixture = Path(__file__).parent / "fixtures/water-growth-fragments.json"
+        fragments = json.loads(fixture.read_text())
+        originals = [from_wkt(p["source"]) for p in fragments]
+        entries = [(from_wkt(p["candidate"]), p["level"], WATER_DEPTH_MM, None)
+                   for p in fragments]
+        with self.assertRaisesRegex(ValueError, "merge separate"):
+            _normalized_water_entries(entries, [], [])
+        allocated, report = _coordinate_water_growth(entries, originals)
+        self.assertTrue(report)
+        normalized = _normalized_water_entries(allocated, [], [])
+        self.assertFalse(normalized[0][1].intersects(normalized[1][1]))
+        self.assertTrue(all(original.difference(entry[0]).area < 1e-8
+                            for original, entry in zip(originals, allocated)))
+
+    def test_uncontested_water_is_not_rebuilt(self):
+        from trailprint.water_geometry import _coordinate_water_growth
+        originals = [box(-4, -1, -2, 1), box(2, -1, 4, 1)]
+        entries = [(p.buffer(.3), None, WATER_DEPTH_MM, None) for p in originals]
+        result, report = _coordinate_water_growth(entries, originals)
+        self.assertFalse(report)
+        self.assertEqual([p[0].wkb for p in result], [p[0].wkb for p in entries])
+
+    def test_contested_growth_preserves_both_original_lakes(self):
+        from trailprint.water_geometry import _coordinate_water_growth, _normalized_water_entries
+        originals = [box(-3, -1, -1, 1), box(1, -1, 3, 1)]
+        entries = [(p.buffer(1.4), None, WATER_DEPTH_MM, None) for p in originals]
+        coordinated, report = _coordinate_water_growth(entries, originals)
+        self.assertTrue(report)
+        for entry, original in zip(coordinated, originals):
+            self.assertLess(original.difference(entry[0]).area, 1e-8)
+        self.assertFalse(coordinated[0][0].intersects(coordinated[1][0]))
+        _normalized_water_entries(coordinated, [], [])
+        reversed_entries, _ = _coordinate_water_growth(entries[::-1], originals[::-1])
+        for left, right in zip(coordinated, reversed_entries[::-1]):
+            self.assertLess(left[0].symmetric_difference(right[0]).area, 1e-6)
+
+    def test_sibling_growth_keeps_trail_corridor_clear(self):
+        from trailprint.water_geometry import _coordinate_water_growth
+        corridor = box(-.5, -1, .5, 1)
+        originals = [box(-3, -1, -.5, 1), box(.5, -1, 3, 1)]
+        entries = [(p.buffer(1).difference(corridor), None, WATER_DEPTH_MM, None)
+                   for p in originals]
+        result, _ = _coordinate_water_growth(entries, originals)
+        self.assertFalse(result[0][0].intersects(result[1][0]))
+        self.assertTrue(all(p.difference(e[0]).area < 1e-8
+                            and e[0].intersection(corridor).area < 1e-8
+                            for p, e in zip(originals, result)))
+
+    def test_growth_gap_survives_coordinate_cleanup(self):
+        from trailprint.water_geometry import _coordinate_water_growth, _normalized_water_entries
+        originals = [box(-3, -1, -1, 1), box(1, -1, 3, 1)]
+        entries = [(box(-4, -2, .004, 2), None, WATER_DEPTH_MM, None),
+                   (box(.006, -2, 4, 2), None, WATER_DEPTH_MM, None)]
+        result, _ = _coordinate_water_growth(entries, originals)
+        normalized = _normalized_water_entries(result, [], [])
+        self.assertFalse(normalized[0][1].intersects(normalized[1][1]))
+
     def test_overlapping_widened_lakes_are_blocked(self):
         from trailprint.water_geometry import _normalized_water_entries
         entries = [(box(0, 0, 3, 3), None, WATER_DEPTH_MM, None),

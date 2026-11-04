@@ -551,11 +551,11 @@ def _printable_water(geometry, terrain_outline):
     return unary_union(output).buffer(0) if output else Polygon()
 
 
-def _stable_polygon(polygon, cleanup=None):
+def _stable_polygon(polygon, cleanup=None, coordinate_grid_mm=WATER_COORDINATE_GRID_MM):
     """Normalize STL coordinates; return None if no printable fragment remains."""
     maximum = max(abs(value) for value in polygon.bounds)
     float32_spacing = float(np.spacing(np.float32(maximum)))
-    grid = max(WATER_COORDINATE_GRID_MM, float32_spacing * 2.0)
+    grid = max(coordinate_grid_mm, float32_spacing * 2.0)
     stable = set_precision(polygon, grid, mode="valid_output")
     # Slightly exceed the storage grid so Earcut does not retain nearly
     # collinear shoreline vertices which collapse into an open edge in STL.
@@ -604,19 +604,118 @@ def _widen_lake_sections(polygon, allowed):
     return parts[0]
 
 
+def _lake_width_failure(message, polygon):
+    point = polygon.representative_point()
+    return ValueError(f"{message} Requires {WATER_MIN_WIDTH_MM:.3f} mm water width "
+                      f"near ({point.x:.3f}, {point.y:.3f}) mm.")
+
+
 def _finish_lake_width(polygon, allowed):
     """Round protected cuts without retaining slicer-sized water slivers."""
     radius = WATER_MIN_WIDTH_MM / 2
-    opened = polygon.buffer(-radius).buffer(radius).intersection(allowed).buffer(0)
+    # Preserve already printable output; only rebuild at finer precision when the
+    # storage grid creates a false split or loses the connection during cleanup.
+    existing = polygon.buffer(-radius).buffer(radius).intersection(allowed).buffer(0)
+    existing_parts = polygon_items(existing)
+    if len(existing_parts) == 1:
+        stable = _stable_polygon(existing_parts[0])
+        if stable is not None and len(polygon_items(
+                set_precision(stable, 0).buffer(-radius).buffer(radius))) == 1:
+            return stable
+    # The storage grid must not quantize the fallback erosion/dilation itself.
+    polygon = set_precision(polygon, 0)
+    allowed = set_precision(allowed, 0)
+    radius = WATER_MIN_WIDTH_MM / 2
+    # Keep a micrometre construction margin so final coordinate cleanup cannot
+    # snap rounded vertices into the protected trail corridor.
+    finish_grid = WATER_TOPOLOGY_INSET_MM
+    opened = polygon.buffer(-radius).buffer(radius).intersection(
+        allowed.buffer(-finish_grid)).buffer(0)
     if opened.is_empty:
-        raise ValueError("Lake cannot reach printable width without crossing protected terrain or trail.")
+        raise _lake_width_failure(
+            "Lake cannot reach printable width without crossing protected terrain or trail.", polygon)
     parts = polygon_items(opened)
     if len(parts) != 1:
-        raise ValueError("Lake contains a narrow connection that cannot print continuously.")
-    stable = _stable_polygon(parts[0])
-    if stable is None or stable.buffer(-radius).is_empty:
-        raise ValueError("Lake lost printable width during coordinate cleanup.")
+        raise _lake_width_failure(
+            "Lake contains a narrow connection that cannot print continuously.",
+            polygon.difference(opened))
+    stable = _stable_polygon(parts[0], coordinate_grid_mm=finish_grid)
+    if (stable is None or len(polygon_items(
+            set_precision(stable, 0).buffer(-radius).buffer(radius))) != 1):
+        raise _lake_width_failure("Lake lost printable width during coordinate cleanup.", polygon)
     return stable
+
+
+def _coordinate_water_growth(entries, originals):
+    """Share contested added shoreline space by distance to original fragments."""
+    from shapely import box, distance, points
+
+    grid = WATER_COORDINATE_GRID_MM
+    gap = grid * 4
+    shapes = [set_precision(entry[0], 0) for entry in entries]
+    sources = [set_precision(polygon, 0) for polygon in originals]
+    corrections = []
+    inland = [i for i, entry in enumerate(entries) if entry[1] is None]
+    active = set()
+    for position, i in enumerate(inland):
+        for j in inland[:position]:
+            if shapes[i].distance(shapes[j]) <= gap:
+                active.update((i, j))
+    if not active:
+        return entries, []
+    # Existing water owns its footprint before any added growth is allocated.
+    for i in sorted(active):
+        others = unary_union([sources[j] for j in inland if j != i])
+        shapes[i] = sources[i].union(shapes[i].difference(others.buffer(gap)))
+    for position, i in enumerate(inland):
+        for j in inland[:position]:
+            contested = shapes[i].intersection(shapes[j].buffer(gap))
+            if contested.is_empty:
+                continue
+            removed_i, removed_j = [], []
+            for patch in polygon_items(contested.buffer(grid)):
+                search_region = patch.buffer(grid)
+                x0, y0, x1, y1 = patch.bounds
+                xs = np.arange(math.floor(x0 / grid), math.ceil(x1 / grid)) * grid
+                # Process rows to keep memory bounded for long, narrow conflicts.
+                for row in range(math.floor(y0 / grid), math.ceil(y1 / grid)):
+                    y = row * grid
+                    centers = points(xs + grid / 2, np.full(len(xs), y + grid / 2))
+                    relevant = contains_xy(search_region, xs + grid / 2, y + grid / 2)
+                    if not relevant.any():
+                        continue
+                    a, b = distance(centers, sources[i]), distance(centers, sources[j])
+                    first_on_tie = sources[i].wkb < sources[j].wkb
+                    owner_i = (a < b) | ((a == b) & first_on_tie)
+                    for mask, output in ((relevant & ~owner_i, removed_i),
+                                         (relevant & owner_i, removed_j)):
+                        ids = np.flatnonzero(mask)
+                        if not len(ids):
+                            continue
+                        for run in np.split(ids, np.flatnonzero(np.diff(ids) > 1) + 1):
+                            output.append(box(xs[run[0]], y, xs[run[-1]] + grid, y + grid))
+            before = float(shapes[i].intersection(shapes[j]).area)
+            for index, removed in ((i, removed_i), (j, removed_j)):
+                if removed:
+                    growth = shapes[index].difference(sources[index])
+                    shapes[index] = sources[index].union(
+                        growth.difference(unary_union(removed).buffer(gap / 2)))
+            corrections.append({"fragments": [j + 1, i + 1],
+                                "overlap_area_mm2": before, "allocation_grid_mm": grid,
+                                "separation_mm": gap})
+    result = []
+    for i, (polygon, level, depth, samples) in enumerate(entries):
+        if level is not None or i not in active:
+            result.append((polygon, level, depth, samples))
+            continue
+        attached = [part for part in polygon_items(shapes[i])
+                    if part.intersection(sources[i]).area > 1e-8]
+        if len(attached) != 1 or sources[i].difference(attached[0]).area > 1e-6:
+            point = sources[i].representative_point()
+            raise ValueError(f"Lake widening cannot preserve water near ({point.x:.3f}, "
+                             f"{point.y:.3f}) mm without a collision.")
+        result.append((attached[0], level, depth, samples))
+    return result, corrections
 
 
 def _normalized_water_entries(entries, omitted, overlap_corrections, enforce_width=False):
@@ -1129,6 +1228,7 @@ def prepare_integrated_water(terrain_path: Path, water_paths, cap_path: Path,
     trail_exclusion = Polygon()
     excluded_water_area = 0.0
     shoreline_fallbacks = []
+    growth_corrections = []
     omitted_fragments = []
     water_exclusion = unary_union([entry[0] for entry in entries])
     if trail_path is not None:
@@ -1136,6 +1236,7 @@ def prepare_integrated_water(terrain_path: Path, water_paths, cap_path: Path,
             trail_path,
             float(trail_clearance_mm) + TRAIL_WATER_PRECISION_MARGIN_MM)
         protected_entries = []
+        original_fragments = []
         for polygon, level, depth, _samples in entries:
             clipped = polygon.difference(trail_exclusion).buffer(0)
             excluded_water_area += max(0.0, float(polygon.area - clipped.area))
@@ -1147,6 +1248,7 @@ def prepare_integrated_water(terrain_path: Path, water_paths, cap_path: Path,
                     # The bounded fallback below still requires actual nearby land.
                     pass
             for item in polygon_items(clipped):
+                original_fragment = item
                 if (level is None and protected_corridor is not None
                         and item.area >= WATER_MIN_COMPONENT_AREA_MM2):
                     allowed = outline.difference(trail_exclusion).difference(
@@ -1155,7 +1257,8 @@ def prepare_integrated_water(terrain_path: Path, water_paths, cap_path: Path,
                 if (level is None and item.area >= WATER_MIN_COMPONENT_AREA_MM2
                         and protected_corridor is not None
                         and item.buffer(-WATER_MIN_WIDTH_MM / 2).is_empty):
-                    raise ValueError("Lake cannot reach printable width beside the protected trail.")
+                    raise _lake_width_failure(
+                        "Lake cannot reach printable width beside the protected trail.", item)
                 if (item.area < WATER_MIN_COMPONENT_AREA_MM2
                         or (protected_corridor is not None
                             and item.buffer(-WATER_MIN_WIDTH_MM / 2).is_empty)):
@@ -1178,7 +1281,9 @@ def prepare_integrated_water(terrain_path: Path, water_paths, cap_path: Path,
                             "water_fragment_area_mm2": float(item.area),
                         })
                 protected_entries.append((item, level, depth, local_samples))
-        entries = protected_entries
+                original_fragments.append(original_fragment)
+        entries, growth_corrections = _coordinate_water_growth(
+            protected_entries, original_fragments)
     if not entries:
         return {"available": False, "reason": "no printable water footprint",
                 "trail_clearance_mm": float(trail_clearance_mm),
@@ -1333,6 +1438,7 @@ def prepare_integrated_water(terrain_path: Path, water_paths, cap_path: Path,
             "trail_excluded_water_area_mm2": excluded_water_area,
             "omitted_fragments": omitted_fragments,
             "shoreline_fallbacks": shoreline_fallbacks,
+            "water_growth_corrections": growth_corrections,
             "cap_watertight": True,
             "cutter_watertight": True,
             "support_watertight": True,
