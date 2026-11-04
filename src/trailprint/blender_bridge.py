@@ -40,6 +40,7 @@ from .publishing import publish_files
 from .title import validate_title_fit
 from .water_geometry import (
     WATER_BOOLEAN_BOUNDS_TOLERANCE_MM,
+    TerrainRepairError,
     UpperSurface,
     export_groove_cutter,
     generation_trail_corridor,
@@ -384,7 +385,15 @@ def _correct_staged_groove(stage, slug, blender_path, timeout, cancel_event=None
         if result.returncode != 0 or not output.is_file():
             raise ValueError(f"Groove correction failed: {_failure_detail(result)}")
         repaired_output = work / "terrain-corrected-manifold.stl"
-        output_repair = repair_terrain_for_water_boolean(output, repaired_output)
+        try:
+            output_repair = repair_terrain_for_water_boolean(output, repaired_output)
+        except TerrainRepairError as exc:
+            report["attempts"].append({"pass": attempt + 1, "valid": False,
+                                       "export_repair": exc.repair_report})
+            report_path.write_text(json.dumps(report), encoding="utf-8")
+            if attempt == 0:
+                continue  # Retry from the untouched terrain with the existing .02 mm margin.
+            raise
         output = repaired_output
         corrected = trimesh.load_mesh(output, process=True)
         if (corrected.is_empty or not corrected.is_watertight
