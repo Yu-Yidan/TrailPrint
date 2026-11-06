@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block title %}Local settings · TrailPrint{% endblock %}
+{% block content %}<section class="form-shell"><h1>Your project prefix</h1>
+<p>Choose a unique prefix for this installation, such as YD. New folders use YD-0037-project_name. Existing projects keep their names.</p>
+<p>This setting and your project counter stay on this computer. Use a different prefix on each computer that creates projects independently.</p>
+{% if error %}<div class="notice error">{{ error }}</div>{% endif %}
+<form method="post"><label class="field-label" for="prefix">Creator prefix</label><input class="text-input" id="prefix" name="prefix" value="{{ creator_prefix }}" pattern="[A-Za-z][A-Za-z0-9]{1,7}" minlength="2" maxlength="8" required><p>2–8 letters or numbers, starting with a letter.</p><button class="button primary">Save local prefix</button></form></section>{% endblock %}

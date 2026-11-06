@@ -58,7 +58,7 @@ remain enabled; minor waterways are excluded. The complete downloaded DEM is
 measured before displacement; relief above 15 mm is scaled down exactly while
 flatter terrain retains its natural scale. With the standard 2 mm base, terrain
 is therefore at most about 17 mm thick. Projects can be
-sorted by their zero-padded four-digit filesystem ID; analytics retain the ID
+sorted by their zero-padded four-digit filesystem ID; project metadata retain the ID
 as an integer, and the prefix is omitted from headings and printable titles.
 Projects can be
 deleted from the dashboard after typing the exact folder
@@ -162,23 +162,22 @@ folder in Finder. The first three stages follow project files automatically;
 use **Start printing**, **Mark completed**, and **Move back** for production.
 Manual production state is stored in the project's `workflow.json`.
 
-TrailPrint records normalized project and product identities, scoped status
-events, and Pacific end-of-day snapshots as atomic CSV files in
-`data/analytics/`. The upload form can mark a project as a test: its complete
-history is retained, while Analytics excludes it by default unless **Include
-tests** is enabled. A formal raised-map product is created on its first build.
-Install the macOS schedule
-once with:
+New installations choose a local creator prefix, such as `YD`, under **Local settings**.
+New folders use `YD-0037-project_name`; existing names remain unchanged. Each
+independent installation needs a unique prefix. The counter continues above existing
+and deleted project IDs, never reuses allocated numbers, and stays in ignored
+`data/settings/identity.json`. Back up this file along with `prints/`.
 
-```sh
-.venv/bin/trailprint analytics-install-scheduler
-```
+The dashboard reports current local status only. **Not printed** includes every
+active project not marked printed; test projects are excluded unless requested.
+There is no shared queue or automatic printer monitoring. Historical analytics
+and daily scheduling are retired. Existing analytics files are preserved but no
+longer updated; the legacy CSV is read only to avoid reusing historical IDs.
+An old analytics LaunchAgent belonging to this checkout is disabled on startup.
 
-Run the same pipeline manually with `.venv/bin/trailprint analytics-refresh`.
-If the repository is stored in a macOS-protected folder such as Desktop or
-Documents, the LaunchAgent may also need permission to read that folder. App
-startup and the manual refresh command still run the same idempotent catch-up
-pipeline safely.
+GitHub contains source and test fixtures. Production projects, final models and
+local settings remain ignored; back them up separately and share approved 3MF
+files directly with your printing partner.
 
 Plate text is entered manually and printed literally. New edge fields start
 blank; the title defaults to the readable project name. Existing model text is
@@ -222,8 +221,7 @@ bird's-eye PNG preview with validation details and an action to open the
 project's output folder in Finder. While Blender runs, the settings panel is
 replaced by the live build phase and progress. A running build can be cancelled;
 TrailPrint stops Blender and discards staged work while preserving prior STL,
-3MF, preview, and validation files. Cancelled and failed jobs do not create
-analytics status facts. Preview colors use green terrain, red trail, blue water,
+3MF, preview, and validation files. Cancelled and failed jobs preserve the last successful model settings. Preview colors use green terrain, red trail, blue water,
 black plate, and white text; STL files themselves remain colorless. Builds include
 lakes, major rivers, and coastal sea by default as recessed Terrain inlays.
 Each inland water body samples the terrain immediately outside its shoreline.

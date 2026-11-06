@@ -16,10 +16,10 @@ from .gpx import combine_gpx, read_gpx
 from .naming import canonical_3mf_name, human_name, logical_slug, read_project_meta, storage_name
 
 MAX_GPX_BYTES = 10 * 1024 * 1024
-TRASH_PATTERN = re.compile(r"^(?P<slug>[a-z0-9][a-z0-9-]*)--(?P<stamp>\d{8}T\d{6}Z)--[a-f0-9]{8}$")
-FUNNEL_STAGES = (("created", "Project created"), ("stl", "STL generated"),
-                 ("3mf", "3MF generated"), ("printing", "Printing started"),
-                 ("completed", "Print completed"))
+TRASH_PATTERN = re.compile(r"^(?P<slug>[A-Za-z0-9][A-Za-z0-9_-]*)--(?P<stamp>\d{8}T\d{6}Z)--[a-f0-9]{8}$")
+FUNNEL_STAGES = (("created", "GPX ready"), ("stl", "STL ready"),
+                 ("3mf", "Ready to print"), ("printing", "Printing"),
+                 ("completed", "Printed"))
 
 
 @dataclass(frozen=True)
@@ -55,7 +55,7 @@ def slugify(name: str) -> str:
 
 
 def resolve_project(prints_dir: Path, slug: str) -> Path:
-    if slugify(slug) != slug:
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", slug):
         raise ValueError("Invalid project name.")
     root = prints_dir.resolve()
     project = (root / slug).resolve()
@@ -228,6 +228,8 @@ def create_project(prints_dir: Path, name: str, gpx_data: bytes, *, gpx_sources=
 def migrate_active_project(project: Path) -> Path:
     """Apply the sortable name to one active project and all binary deliverables."""
     project = project.resolve()
+    if read_project_meta(project).get("creator_prefix"):
+        return project
     meta = read_project_meta(project)
     if not meta.get("id_project"):
         return project
@@ -258,7 +260,7 @@ def migrate_active_projects(prints_dir: Path) -> List[Path]:
     targets = {}
     for project in projects:
         meta = read_project_meta(project)
-        if not meta.get("id_project"):
+        if not meta.get("id_project") or meta.get("creator_prefix"):
             continue
         target = project.parent / storage_name(meta["id_project"], meta.get("project_slug") or logical_slug(project))
         if target in targets or (target.exists() and target != project):

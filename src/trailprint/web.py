@@ -16,7 +16,6 @@ from flask import (
     url_for,
 )
 
-from .analytics import RAISED_MAP, AnalyticsStore
 from .bambu import BambuSettings, default_filament_mapping, discover_environment
 from .bambu_jobs import BambuJobManager
 from .blender_bridge import EXTRA_LABELS, SHAPE_EXTRAS, SHAPE_LABELS, BuildSettings
@@ -29,6 +28,7 @@ from .gpx import (
     AUTO_RELIEF_LIMIT_MM,
     estimate_print_relief_mm,
 )
+from .identity import ProjectIdentity, disable_legacy_scheduler
 from .jobs import BuildBusy, BuildManager
 from .mesh_validation import mesh_role, read_report
 from .naming import canonical_3mf_name, human_name, read_project_meta
@@ -37,11 +37,8 @@ from .project_operations import OPERATIONS
 from .projects import (
     FUNNEL_STAGES,
     MAX_GPX_BYTES,
-    create_project_from_uploads,
     list_deleted_projects,
     list_projects,
-    migrate_active_project,
-    migrate_active_projects,
     permanently_delete_projects,
     purge_trash,
     read_gpx_sources,
@@ -71,23 +68,34 @@ def create_app(repo_root: Path = None, build_manager: BuildManager = None,
         REPO_ROOT=root,
         PRINTS_DIR=root / "prints",
         TRASH_DIR=root / ".trailprint-trash",
-        ANALYTICS_DIR=root / "data/analytics",
     )
     app.extensions["trailprint_builds"] = build_manager or BuildManager()
     app.extensions["trailprint_bambu"] = bambu_manager or BambuJobManager()
-    analytics = AnalyticsStore(root)
-    app.extensions["trailprint_analytics"] = analytics
-    analytics.run_daily(app.config["PRINTS_DIR"], app.config["TRASH_DIR"])
-    migrate_active_projects(app.config["PRINTS_DIR"])
-    purge_trash(app.config["TRASH_DIR"], retention_days=30,
-                before_remove=analytics.mark_permanently_deleted)
+    identity = ProjectIdentity(root)
+    disable_legacy_scheduler(root)
+    purge_trash(app.config["TRASH_DIR"], retention_days=30)
+
+    @app.context_processor
+    def local_identity():
+        return {"creator_prefix": identity.read().get("prefix", "")}
+
+    @app.route("/settings/identity", methods=["GET", "POST"])
+    def identity_settings():
+        error = None
+        if request.method == "POST":
+            try:
+                identity.configure(request.form.get("prefix", ""))
+            except ValueError as exc:
+                error = str(exc)
+            else:
+                return redirect(url_for("dashboard"))
+        return render_template("identity.html", error=error), 400 if error else 200
 
     @app.get("/")
     def dashboard():
-        for path in app.config["PRINTS_DIR"].iterdir() if app.config["PRINTS_DIR"].is_dir() else []:
-            if path.is_dir() and not path.name.startswith("."):
-                analytics.sync_project(path)
-        projects = list_projects(app.config["PRINTS_DIR"])
+        include_tests = request.args.get("include_tests") == "1"
+        projects = [p for p in list_projects(app.config["PRINTS_DIR"])
+                    if include_tests or not p.is_test]
         grouped = {key: [] for key, _label in FUNNEL_STAGES}
         for project in projects:
             grouped[project.stage].append(project)
@@ -96,18 +104,7 @@ def create_app(repo_root: Path = None, build_manager: BuildManager = None,
             "dashboard.html", projects=projects, grouped_projects=grouped,
             funnel_stages=FUNNEL_STAGES, default_stage=default_stage,
             deleted_count=len(list_deleted_projects(app.config["TRASH_DIR"])),
-            analytics_status_warnings=analytics.status_warnings())
-
-    @app.get("/analytics")
-    def analytics_dashboard():
-        for path in app.config["PRINTS_DIR"].iterdir() if app.config["PRINTS_DIR"].is_dir() else []:
-            if path.is_dir() and not path.name.startswith("."):
-                analytics.sync_project(path)
-        return render_template(
-            "analytics.html",
-            analytics_data=analytics.visualization_data(
-                app.config["PRINTS_DIR"], app.config["TRASH_DIR"],
-                include_tests=request.args.get("include_tests") == "1"))
+            include_tests=include_tests, not_printed=sum(p.stage != "completed" for p in projects))
 
     @app.get("/deleted-projects")
     def deleted_projects():
@@ -120,8 +117,6 @@ def create_app(repo_root: Path = None, build_manager: BuildManager = None,
         try:
             project = restore_project(
                 app.config["PRINTS_DIR"], app.config["TRASH_DIR"], entry_name)
-            analytics.transition(project, "project created")
-            analytics.sync_project(project)
         except (OSError, ValueError) as exc:
             flash(str(exc), "error")
             return redirect(url_for("deleted_projects"))
@@ -133,8 +128,7 @@ def create_app(repo_root: Path = None, build_manager: BuildManager = None,
         try:
             removed = permanently_delete_projects(
                 app.config["TRASH_DIR"], request.form.getlist("entries"),
-                request.form.get("confirmation", ""),
-                before_remove=analytics.mark_permanently_deleted)
+                request.form.get("confirmation", ""))
         except (OSError, ValueError) as exc:
             flash(str(exc), "error")
         else:
@@ -143,6 +137,8 @@ def create_app(repo_root: Path = None, build_manager: BuildManager = None,
 
     @app.get("/projects/new")
     def new_project():
+        if not identity.read().get("prefix"):
+            return redirect(url_for("identity_settings"))
         return render_template("new_project.html")
 
     @app.post("/projects")
@@ -162,11 +158,10 @@ def create_app(repo_root: Path = None, build_manager: BuildManager = None,
                 sources.append((filename, data))
             if sum(len(data) for _filename, data in sources) > MAX_GPX_BYTES:
                 raise ValueError("Combined GPX uploads must be 10 MB or smaller.")
-            analytics.next_project_id()
-            project = create_project_from_uploads(app.config["PRINTS_DIR"], name, sources)
-            analytics.register_project(
-                project, name, is_test=request.form.get("is_test") == "on")
-            project = migrate_active_project(project)
+            if not identity.read().get("prefix"):
+                raise ValueError("Set your local project prefix before creating a project.")
+            project = identity.create_project(app.config["PRINTS_DIR"], name, sources,
+                                              is_test=request.form.get("is_test") == "on")
         except (OSError, ValueError) as exc:
             return render_template(
                 "new_project.html", error=str(exc), name=name,
@@ -186,7 +181,6 @@ def create_app(repo_root: Path = None, build_manager: BuildManager = None,
     @app.get("/projects/<slug>")
     def project_detail(slug):
         project = get_project(slug)
-        analytics.sync_project(project)
         deliverables = project / "deliverables"
         job = app.extensions["trailprint_builds"].for_project(project)
         expected_relief = estimate_print_relief_mm(project / "route.gpx")
@@ -236,10 +230,7 @@ def create_app(repo_root: Path = None, build_manager: BuildManager = None,
                     True if "dot_magnet_recess" not in request.form
                     else "on" in request.form.getlist("dot_magnet_recess")))
             validate_title_fit(settings.plate_title, settings.shape, settings.shape_extra)
-            analytics.ensure_product(project, RAISED_MAP)
             job = app.extensions["trailprint_builds"].start(project, settings)
-            analytics.record_build_requested(
-                project, RAISED_MAP, job.id, asdict(settings))
         except (BuildBusy, OSError, ValueError) as exc:
             flash(str(exc), "error")
         else:
@@ -255,10 +246,8 @@ def create_app(repo_root: Path = None, build_manager: BuildManager = None,
                     raise ValueError("This project is currently building. Wait for the build to finish before deleting it.")
                 if app.extensions["trailprint_bambu"].is_active(project):
                     raise ValueError("This project is currently exporting. Wait for the Bambu project to finish before deleting it.")
-                analytics.sync_project(project)
-                deleted = trash_project(app.config["PRINTS_DIR"], app.config["TRASH_DIR"], slug,
+                trash_project(app.config["PRINTS_DIR"], app.config["TRASH_DIR"], slug,
                                         request.form.get("confirmation", ""))
-                analytics.transition(deleted, "project soft deleted")
         except (OSError, ValueError) as exc:
             flash(str(exc), "error")
         else:
@@ -269,9 +258,7 @@ def create_app(repo_root: Path = None, build_manager: BuildManager = None,
     def production_status(slug):
         project = get_project(slug)
         try:
-            analytics.sync_project(project)
             update_production_status(project, request.form.get("action", ""))
-            analytics.sync_project(project)
         except (OSError, ValueError) as exc:
             flash(str(exc), "error")
         else:
@@ -283,12 +270,6 @@ def create_app(repo_root: Path = None, build_manager: BuildManager = None,
         job = app.extensions["trailprint_builds"].get(job_id)
         if job is None:
             abort(404)
-        if job.state == "success":
-            analytics.sync_project(job.project)
-        if job.state in {"success", "error", "cancelled"}:
-            analytics.record_build_result(
-                job.project, RAISED_MAP, job.id, job.state, job.message,
-                job.outputs, job.validation, job.started_at, job.finished_at)
         return jsonify(app.extensions["trailprint_builds"].serialize(job))
 
     @app.post("/builds/<job_id>/cancel")
@@ -310,7 +291,6 @@ def create_app(repo_root: Path = None, build_manager: BuildManager = None,
     @app.get("/projects/<slug>/preview")
     def preview_project(slug):
         project = get_project(slug)
-        analytics.sync_project(project)
         deliverables = project / "deliverables"
         files = sorted(deliverables.glob("*.stl")) if deliverables.is_dir() else []
         if not files or not (project / "build/preview.png").is_file():
@@ -457,8 +437,6 @@ def create_app(repo_root: Path = None, build_manager: BuildManager = None,
         job = app.extensions["trailprint_bambu"].get(job_id)
         if job is None:
             abort(404)
-        if job.state == "success":
-            analytics.sync_project(job.project)
         return jsonify(app.extensions["trailprint_bambu"].serialize(job))
 
     @app.post("/projects/<slug>/open-bambu-project")

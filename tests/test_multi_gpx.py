@@ -128,6 +128,7 @@ class MultiGpxWebTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temp:
             app = create_app(Path(temp))
+            app.test_client().post("/settings/identity", data={"prefix": "YD"})
             app.config["TESTING"] = True
             client = app.test_client()
             response = client.post("/projects", data={"name": "Triathlon", "gpx": [
@@ -135,7 +136,7 @@ class MultiGpxWebTests(unittest.TestCase):
                 (io.BytesIO(recording(1)), "bike.gpx"),
             ]}, content_type="multipart/form-data")
             self.assertEqual(response.status_code, 302)
-            project = Path(temp) / "prints/0001-triathlon"
+            project = Path(temp) / "prints/YD-0001-triathlon"
             self.assertEqual(len(read_gpx_segments(project / "route.gpx")), 2)
             page = client.get(response.headers["Location"])
             self.assertIn(b"swim.gpx", page.data)
@@ -147,6 +148,7 @@ class MultiGpxWebTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temp:
             app = create_app(Path(temp))
+            app.test_client().post("/settings/identity", data={"prefix": "YD"})
             app.config["TESTING"] = True
             response = app.test_client().post("/projects", data={"name": "Broken", "gpx": [
                 (io.BytesIO(recording()), "good.gpx"),
@@ -154,4 +156,4 @@ class MultiGpxWebTests(unittest.TestCase):
             ]}, content_type="multipart/form-data")
             self.assertEqual(response.status_code, 400)
             self.assertIn(b"bad.gpx", response.data)
-            self.assertFalse((Path(temp) / "prints/0001-broken").exists())
+            self.assertFalse((Path(temp) / "prints/YD-0001-broken").exists())

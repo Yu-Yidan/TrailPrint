@@ -16,8 +16,8 @@
     <ul id="selected-files" aria-live="polite" hidden></ul>
     <label class="field-label" for="name">Project name</label>
     <input class="text-input" id="name" name="name" value="{{ name or '' }}" placeholder="Mount Tam loop" required>
-    <p class="path-preview">Folder: <code>prints/&lt;####&gt;-<span id="slug-preview">project-name</span>/</code></p>
-    <label class="toggle-setting"><input type="checkbox" name="is_test" {% if is_test %}checked{% endif %}><span><strong>Test project</strong><small>Record complete analytics, but exclude this project and its products from dashboard metrics by default.</small></span></label>
+    <p class="path-preview">Folder: <code>prints/{{ creator_prefix }}-&lt;####&gt;-<span id="slug-preview">project_name</span>/</code></p>
+    <label class="toggle-setting"><input type="checkbox" name="is_test" {% if is_test %}checked{% endif %}><span><strong>Test project</strong><small>Exclude this project from production counts by default.</small></span></label>
     <div class="form-actions"><a class="button secondary" href="{{ url_for('dashboard') }}">Cancel</a>
     <button class="button primary" type="submit">Create project</button></div>
   </form>

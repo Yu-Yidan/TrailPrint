@@ -1,8 +1,9 @@
 {% extends "base.html" %}
 {% block title %}Projects · TrailPrint{% endblock %}
 {% block content %}
-{% if analytics_status_warnings %}<div class="notice error"><strong>Workflow metadata needs attention.</strong> Add the missing status{% if analytics_status_warnings|length != 1 %}es{% endif %} to <code>data/analytics/dim_status.csv</code>: {{ analytics_status_warnings|join(', ') }}. This does not block project work.</div>{% endif %}
-<section class="hero funnel-hero"><div><p class="eyebrow">PRODUCTION FUNNEL</p><h1>Print projects</h1><p>Move every trail from source file to finished print.</p></div><div class="hero-actions"><a class="button secondary" href="{{ url_for('deleted_projects') }}">Deleted projects{% if deleted_count %} ({{ deleted_count }}){% endif %}</a><a class="button primary" href="{{ url_for('new_project') }}">＋ New project</a></div></section>
+<section class="hero funnel-hero"><div><p class="eyebrow">PRODUCTION FUNNEL</p><h1>Print projects</h1></div><div class="hero-actions"><a class="button secondary" href="{{ url_for('deleted_projects') }}">Deleted projects{% if deleted_count %} ({{ deleted_count }}){% endif %}</a><a class="button primary" href="{{ url_for('new_project') }}">＋ New project</a></div></section>
+<div class="project-summary"><p><strong>{{ not_printed }} not printed</strong> · This computer only</p>
+<form method="get"><label><input type="checkbox" name="include_tests" value="1" {% if include_tests %}checked{% endif %} onchange="this.form.submit()"> Include test projects</label></form></div>
 <nav class="funnel-tabs" role="tablist" aria-label="Project status" data-default-stage="{{ default_stage }}">
 {% for stage_key, stage_label in funnel_stages %}<button class="funnel-tab" type="button" role="tab" id="tab-{{ stage_key }}" data-stage="{{ stage_key }}" aria-controls="panel-{{ stage_key }}" aria-selected="false">{{ stage_label }} <span>{{ grouped_projects[stage_key]|length }}</span></button>{% endfor %}
 </nav>
