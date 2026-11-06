@@ -16,3 +16,7 @@ data/analytics/
 data/settings/
 prints/*/terrain_colors.json
 result.json
+
+# Production projects are backed up separately from source code.
+prints/*
+!prints/.gitkeep

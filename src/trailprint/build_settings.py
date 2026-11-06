@@ -5,21 +5,26 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Optional
 
-from .analytics import RAISED_MAP
 from .blender_bridge import SHAPE_EXTRAS, BuildSettings
 
 
 def current_model_settings(project: Path, defaults: BuildSettings) -> Optional[BuildSettings]:
-    directory = project / "products" / RAISED_MAP
+    directory = project / "products" / "fridge_magnet_raised_map"
     try:
-        current = json.loads((directory / "current.json").read_text(encoding="utf-8"))
-        identifier = current["id_build"]
-        if not isinstance(identifier, str) or not identifier or Path(identifier).name != identifier:
-            return None
-        run = json.loads((directory / "runs" / f"{identifier}.json").read_text(encoding="utf-8"))
-        saved = run["settings"]
-        if run.get("state") != "success" or not isinstance(saved, dict) or not saved:
-            return None
+        snapshot = project / "build/current-settings.json"
+        if snapshot.is_file():
+            saved = json.loads(snapshot.read_text(encoding="utf-8"))
+            if not isinstance(saved, dict) or not saved:
+                return None
+        else:
+            current = json.loads((directory / "current.json").read_text(encoding="utf-8"))
+            identifier = current["id_build"]
+            if not isinstance(identifier, str) or not identifier or Path(identifier).name != identifier:
+                return None
+            run = json.loads((directory / "runs" / f"{identifier}.json").read_text(encoding="utf-8"))
+            saved = run["settings"]
+            if run.get("state") != "success" or not isinstance(saved, dict) or not saved:
+                return None
         values = asdict(defaults)
         for key in values:
             if key != "max_terrain_relief_mm" and key in saved:

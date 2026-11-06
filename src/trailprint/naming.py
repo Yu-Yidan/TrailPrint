@@ -7,7 +7,7 @@ from pathlib import Path
 
 ID_WIDTH = 4
 MAX_PROJECT_ID = 10 ** ID_WIDTH - 1
-STORAGE_PATTERN = re.compile(r"^(?P<id>\d{4})-(?P<slug>[a-z0-9][a-z0-9-]*)$")
+STORAGE_PATTERN = re.compile(r"^(?:(?P<prefix>[A-Z][A-Z0-9]{1,7})-)?(?P<id>\d{4})-(?P<slug>[a-z0-9][a-z0-9_-]*)$")
 META_FILE = "project.json"
 CUSTOMER_PREVIEW_SUFFIX = "-preview.png"
 UNSAFE_FILENAME = re.compile(r'[\x00-\x1f<>:"/\\|?*]+')
@@ -25,8 +25,9 @@ def format_project_id(value) -> str:
     return f"{identifier:0{ID_WIDTH}d}"
 
 
-def storage_name(identifier, slug: str) -> str:
-    return f"{format_project_id(identifier)}-{slug}"
+def storage_name(identifier, slug: str, prefix: str = "") -> str:
+    identity = f"{prefix}-{format_project_id(identifier)}" if prefix else format_project_id(identifier)
+    return f"{identity}-{slug}"
 
 
 def read_project_meta(project: Path) -> dict:
@@ -62,9 +63,12 @@ def human_name(project: Path) -> str:
 def deliverable_prefix(project: Path) -> str:
     match = STORAGE_PATTERN.fullmatch(project.name)
     if match:
-        return f"{match.group('id')}-"
+        return f"{match.group('prefix') + '-' if match.group('prefix') else ''}{match.group('id')}-"
     meta = read_project_meta(project)
-    return f"{format_project_id(meta['id_project'])}-" if meta.get("id_project") else ""
+    if not meta.get("id_project"):
+        return ""
+    prefix = str(meta.get("creator_prefix", ""))
+    return (f"{prefix}-" if prefix else "") + f"{format_project_id(meta['id_project'])}-"
 
 
 def canonical_3mf_name(project: Path) -> str:

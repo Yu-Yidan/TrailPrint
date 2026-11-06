@@ -233,6 +233,7 @@ class WebTests(unittest.TestCase):
         self.app = create_app(self.root, self.build_manager, self.bambu_manager)
         self.app.config.update(TESTING=True)
         self.client = self.app.test_client()
+        self.client.post("/settings/identity", data={"prefix": "YD"})
 
     def tearDown(self):
         self.environment_patch.stop()
@@ -240,47 +241,23 @@ class WebTests(unittest.TestCase):
 
     def test_dashboard_and_create_redirect(self):
         empty_page = self.client.get("/").data
-        self.assertIn(b"Project created", empty_page)
+        self.assertIn(b"GPX ready", empty_page)
         self.assertIn(b"No projects at this stage", empty_page)
         self.assertIn(b"Deleted projects", empty_page)
-        self.assertIn(b'href="/analytics">Analytics</a>', empty_page)
+        self.assertNotIn(b'href="/analytics"', empty_page)
         self.assertNotIn(b"analytics-home-link", empty_page)
         response = self.client.post("/projects", data={
             "name": "Coastal Run", "gpx": (io.BytesIO(GPX), "coast.gpx")},
             content_type="multipart/form-data")
         self.assertEqual(response.status_code, 302)
-        self.assertTrue((self.root / "prints/0001-coastal-run/route.gpx").is_file())
-        self.assertEqual(response.headers["Location"], "/projects/0001-coastal-run")
+        self.assertTrue((self.root / "prints/YD-0001-coastal_run/route.gpx").is_file())
+        self.assertEqual(response.headers["Location"], "/projects/YD-0001-coastal_run")
         page = self.client.get(response.headers["Location"])
         self.assertIn(b"Coastal Run", page.data)
         self.assertIn(b'TRAILPRINT_MODEL_FONT_CSS = "bold 1000px Arial, sans-serif"', page.data)
 
-    def test_analytics_page_visualizes_statuses_and_creation_history(self):
-        response = self.client.post("/projects", data={
-            "name": "Chart Route", "gpx": (io.BytesIO(GPX), "chart.gpx")},
-            content_type="multipart/form-data")
-        self.assertEqual(response.status_code, 302)
-
-        page = self.client.get("/analytics")
-        self.assertEqual(page.status_code, 200)
-        self.assertIn(b"Project activity", page.data)
-        self.assertIn(b"Product line summary", page.data)
-        self.assertEqual(page.data.count(b'class="status-count-card"'), 5)
-        self.assertNotIn(b"status-bar-track", page.data)
-        self.assertIn(b"fridge_magnet_raised_map", page.data)
-        self.assertIn(b"Cumulative products by product name", page.data)
-        self.assertIn(b'id="created-chart-data"', page.data)
-        self.assertIn(b'name="include_tests"', page.data)
-        self.assertIn(b"analytics.js", page.data)
-        self.assertIn(b"Projects created", page.data)
-        self.assertIn(b'href="/analytics"', page.data)
-
-        response = self.client.get("/static/analytics.js")
-        self.addCleanup(response.close)
-        script = response.data
-        self.assertIn(b"createElementNS", script)
-        self.assertIn(b"viewBox", script)
-        self.assertNotIn(b"Chart.js", script)
+    def test_analytics_removed(self):
+        self.assertEqual(self.client.get("/analytics").status_code, 404)
 
     def test_test_project_is_recorded_and_filtered_by_default(self):
         response = self.client.post("/projects", data={
@@ -288,12 +265,11 @@ class WebTests(unittest.TestCase):
             "gpx": (io.BytesIO(GPX), "test.gpx")},
             content_type="multipart/form-data")
         self.assertEqual(response.status_code, 302)
-        page = self.client.get("/analytics")
-        self.assertIn(b"0</strong><span>Total projects", page.data)
-        self.assertIn(b"1 test project(s) recorded", page.data)
-        included = self.client.get("/analytics?include_tests=1")
-        self.assertIn(b"1</strong><span>Total projects", included.data)
-        project = self.root / "prints/0001-calibration/project.json"
+        page = self.client.get("/")
+        self.assertIn(b"0 not printed", page.data)
+        included = self.client.get("/?include_tests=1")
+        self.assertIn(b"1 not printed", included.data)
+        project = self.root / "prints/YD-0001-calibration/project.json"
         self.assertTrue(json.loads(project.read_text())["dim_is_test"])
 
     def test_invalid_upload_has_no_partial_project(self):
@@ -703,8 +679,8 @@ class WebTests(unittest.TestCase):
         self.assertEqual(page.count(b'class="funnel-tab"'), 5)
         self.assertIn(b'data-stage="created"', page)
         self.assertIn(b'data-stage="stl"', page)
-        self.assertIn(b'Project created <span>1</span>', page)
-        self.assertIn(b'STL generated <span>1</span>', page)
+        self.assertIn(b'GPX ready <span>1</span>', page)
+        self.assertIn(b'STL ready <span>1</span>', page)
         self.assertIn(b"dashboard.js", page)
         self.assertEqual(page.count(b"Project folder"), 2)
 

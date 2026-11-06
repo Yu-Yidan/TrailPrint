@@ -8,7 +8,7 @@ const selectedFiles = document.querySelector('#selected-files');
 
 function slugify(value) {
   return value.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'project-name';
+    .replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') || 'project_name';
 }
 function updateSlug() { preview.textContent = slugify(nameInput.value); }
 function selectFiles(files) {

@@ -10,7 +10,7 @@ import subprocess
 import tempfile
 import time
 import uuid
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -953,6 +953,7 @@ def run_blender_build(project: Path, settings: BuildSettings, blender: Optional[
     else:
         report["terrain_palette"] = {
             "available": False, "error": "Terrain OSM evidence is unavailable."}
+    (staged_build / "current-settings.json").write_text(json.dumps(asdict(settings), indent=2) + "\n")
     for path in staged_build.iterdir():
         changes[build_dir / path.name] = path
     staged_report = staged_build / "validation.json"
