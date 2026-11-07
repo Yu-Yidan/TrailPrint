@@ -55,7 +55,7 @@ from .terrain_colors import (
     load_terrain_defaults,
     save_terrain_preferences,
 )
-from .title import TITLE_LIMITS_MM, TITLE_WIDTH_SCALE, validate_title_fit
+from .title import TITLE_FIT_TOLERANCE_MM, TITLE_LIMITS_MM, TITLE_WIDTH_SCALE, validate_title_fit
 
 
 def create_app(repo_root: Path = None, build_manager: BuildManager = None,
@@ -203,7 +203,7 @@ def create_app(repo_root: Path = None, build_manager: BuildManager = None,
             expected_relief=expected_relief,
             form_settings=form_settings, settings_restored=restored is not None,
             relief_limit=AUTO_RELIEF_LIMIT_MM,
-            plate_title=form_settings.plate_title, title_limits=TITLE_LIMITS_MM,
+            plate_title=form_settings.plate_title, title_limits=TITLE_LIMITS_MM, title_fit_tolerance=TITLE_FIT_TOLERANCE_MM,
             title_width_scale=TITLE_WIDTH_SCALE, model_font_css=MODEL_FONT_BROWSER_CSS,
             has_preview=preview_path.is_file(),
             validation=read_report(project / "build/validation.json"))
@@ -344,6 +344,7 @@ def create_app(repo_root: Path = None, build_manager: BuildManager = None,
             project_title=human_name(project),
             validation=validation,
             customer_preview=customer_preview,
+            has_side_preview=(project / "build/preview-side.png").is_file(),
             bambu_environment=bambu_environment, bambu_defaults=filament_defaults,
             palette_revision=palette_revision(bambu_environment) if bambu_environment else "",
             bambu_error=bambu_error, bambu_job=bambu_job,
@@ -455,9 +456,10 @@ def create_app(repo_root: Path = None, build_manager: BuildManager = None,
     @app.get("/projects/<slug>/preview-image")
     def preview_image(slug):
         project = get_project(slug)
-        if not (project / "build/preview.png").is_file():
+        filename = "preview-side.png" if request.args.get("view") == "side" else "preview.png"
+        if not (project / "build" / filename).is_file():
             abort(404)
-        return send_from_directory(project / "build", "preview.png", as_attachment=False)
+        return send_from_directory(project / "build", filename, as_attachment=False)
 
     @app.post("/projects/<slug>/open-output-folder")
     def open_output_folder(slug):

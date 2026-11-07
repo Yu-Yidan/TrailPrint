@@ -5,7 +5,7 @@
 {% set has_water = 'water' in files|map(attribute='role')|list %}
 <a class="back" href="{{ url_for('project_detail', slug=project.name) }}">← Project settings</a>
 <section class="preview-header"><div><p class="eyebrow">VALIDATED MODEL PREVIEW</p>
-  <h1>{{ project_title }}</h1><p>Bird's-eye view of the generated print files.</p></div>
+  <h1>{{ project_title }}</h1><p>Views of the generated print files.</p></div>
   <div class="bambu-actions">
     {% if customer_preview %}<a class="button secondary" href="{{ url_for('download_file', slug=project.name, filename=customer_preview) }}">Download customer preview</a>{% endif %}
     <form method="post" action="{{ url_for('open_output_folder', slug=project.name) }}">
@@ -16,7 +16,9 @@
 {% if validation.fallback_used %}<div class="notice success"><strong>Automatic recovery used.</strong>
 Terrain and trail were regenerated with Shape Extras set to None; the requested plate and text were preserved.</div>{% endif %}
 <section class="preview-layout">
-  <div class="preview-image-frame"><img src="{{ url_for('preview_image', slug=project.name) }}" alt="Bird's-eye preview of {{ project.name }}"></div>
+  <div class="preview-image-frame"><h2>Top view</h2><img src="{{ url_for('preview_image', slug=project.name) }}" alt="Bird's-eye preview of {{ project.name }}"></div>
+  {% if has_side_preview %}<div class="preview-image-frame"><h2>Angled view</h2><img src="{{ url_for('preview_image', slug=project.name, view='side') }}" alt="Angled preview of {{ project.name }}">
+  {% if validation.get('preview_side', {}).get('customer_filename') %}<a class="button secondary" href="{{ url_for('download_file', slug=project.name, filename=validation.preview_side.customer_filename) }}">Download angled preview</a>{% endif %}</div>{% endif %}
   <aside class="preview-sidebar panel preview-parts"><h2>Model parts</h2>
     <div class="part-list">{% for file in files %}<div class="part-item">
       <span class="part-swatch {{ file.role }}"></span><span><strong>{{ file.name }}</strong><small>{{ file.role|title }}</small></span></div>{% endfor %}</div>

@@ -10,6 +10,7 @@ from .fonts import BLENDER_FONT_REFERENCE_HEIGHT, MODEL_FONT_PATH, require_model
 
 FONT_PATH = MODEL_FONT_PATH
 TEXT_HEIGHT_MM = 5.0
+TITLE_FIT_TOLERANCE_MM = 0.2
 # Measured unscaled `Name` height in Blender with the installed Arial Bold font.
 # The generator scales X/Y to 5 mm and leaves Z at 1. Applying a FONT object's
 # scale sets its font size using the RMS of all three axes, reducing X/Y size.
@@ -17,7 +18,7 @@ BLENDER_REFERENCE_HEIGHT = BLENDER_FONT_REFERENCE_HEIGHT
 _TITLE_AXIS_SCALE = TEXT_HEIGHT_MM / BLENDER_REFERENCE_HEIGHT
 TITLE_WIDTH_SCALE = sqrt((2 * _TITLE_AXIS_SCALE ** 2 + 1) / 3) / _TITLE_AXIS_SCALE
 TITLE_LIMITS_MM = {
-    "HEXAGON": {"INNER TEXT": 45.0, "OUTER TEXT": 60.5, "FRONT TEXT": 60.5},
+    "HEXAGON": {"INNER TEXT": 45.0, "OUTER TEXT": 61.0, "FRONT TEXT": 61.0},
     "OCTAGON": {"OUTER TEXT": 41.3},
     "CIRCLE": {"OUTER TEXT": 77.8},
 }
@@ -55,6 +56,8 @@ def validate_title_fit(value: str, shape: str, shape_extra: str) -> float:
     limit = title_limit_mm(shape, shape_extra)
     if limit is None:
         return 0.0
+    if not (str(shape).upper() == "HEXAGON" and str(shape_extra).upper() in ("OUTER TEXT", "FRONT TEXT")):
+        limit += TITLE_FIT_TOLERANCE_MM
     width = measure_title_width_mm(value)
     if width > limit:
         raise ValueError(

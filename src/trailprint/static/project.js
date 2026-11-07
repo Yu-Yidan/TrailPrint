@@ -20,11 +20,13 @@ function measureTitleWidthMm(value) {
 
 function validateTitleFit() {
   const limit = window.TRAILPRINT_TITLE_LIMITS[shape.value]?.[extra.value];
+  const tolerance = shape.value === "HEXAGON" && ["OUTER TEXT", "FRONT TEXT"].includes(extra.value) ? 0 : window.TRAILPRINT_TITLE_FIT_TOLERANCE;
+  const allowed = limit == null ? null : limit + tolerance;
   const width = measureTitleWidthMm(titleInput.value);
-  const overflowing = limit != null && width > limit;
+  const overflowing = limit != null && width > allowed;
   titleWarning.hidden = !overflowing;
   titleWarning.textContent = overflowing
-    ? `Title is approximately ${width.toFixed(1)} mm wide; this layout allows ${Number(limit).toFixed(1)} mm. Shorten the title to build.`
+    ? `Title is approximately ${width.toFixed(1)} mm wide; this layout allows ${Number(allowed).toFixed(1)} mm. Shorten the title to build.`
     : '';
   titleInput.classList.toggle('invalid', overflowing);
   titleInput.setAttribute('aria-invalid', overflowing ? 'true' : 'false');

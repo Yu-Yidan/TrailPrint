@@ -893,7 +893,7 @@ def run_blender_build(project: Path, settings: BuildSettings, blender: Optional[
         preview = {"valid": False, "error": "Preview rendering timed out."}
     else:
         logs.append(_attempt_log("bird's-eye preview", preview_result))
-        if preview_result.returncode == 0 and preview_stage.is_file() and preview_stage.stat().st_size >= 1000:
+        if preview_stage.is_file() and preview_stage.stat().st_size >= 1000:
             preview = {
                 "valid": True,
                 "filename": "preview.png",
@@ -905,6 +905,14 @@ def run_blender_build(project: Path, settings: BuildSettings, blender: Optional[
                 (preview_result.stderr + preview_result.stdout).splitlines()) if line.strip()),
                 "Blender did not create a usable preview image.")
             preview = {"valid": False, "error": detail}
+    side_stage = attempt_root / "preview-side.png"
+    side_preview = {"valid": side_stage.is_file() and side_stage.stat().st_size >= 1000}
+    if side_preview["valid"]:
+        side_preview.update(filename="preview-side.png",
+                            customer_filename=customer_preview_name(resolved_title, human_name(project)).replace("-preview.png", "-side-preview.png"))
+    else:
+        side_preview["error"] = "Angled preview rendering failed."
+    report["preview_side"] = side_preview
     report["preview"] = preview
     report["duration_seconds"] = round(time.monotonic() - started, 1)
     if cancel_event is not None and cancel_event.is_set():
@@ -922,7 +930,7 @@ def run_blender_build(project: Path, settings: BuildSettings, blender: Optional[
         destination = deliverables / path.name
         changes[destination] = path
         outputs.append(destination)
-    managed = ("preview.png", "elevation.json", "terrain-samples.json",
+    managed = ("preview-side.png", "preview.png", "elevation.json", "terrain-samples.json",
                "terrain-osm-evidence.json", "coastal-water-source.json",
                "terrain-palette.json", "terrain-reference.png", "bambu-validation.json",
                "failed-validation.json")
@@ -930,6 +938,14 @@ def run_blender_build(project: Path, settings: BuildSettings, blender: Optional[
     changes[deliverables / canonical_3mf_name(project)] = None
     if previous_customer_preview:
         changes[deliverables / previous_customer_preview] = None
+    previous_side = previous_customer_preview.replace("-preview.png", "-side-preview.png")
+    if previous_side:
+        changes[deliverables / previous_side] = None
+    if side_preview["valid"]:
+        changes[build_dir / "preview-side.png"] = side_stage
+        side_customer = publication / "customer-side-preview.png"
+        shutil.copy2(side_stage, side_customer)
+        changes[deliverables / side_preview["customer_filename"]] = side_customer
     if preview["valid"]:
         changes[build_dir / "preview.png"] = preview_stage
         customer_stage = publication / "customer-preview.png"

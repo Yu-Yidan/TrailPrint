@@ -26,7 +26,7 @@ class TitleTests(unittest.TestCase):
 
     def test_layout_limits_and_overflow(self):
         self.assertEqual(title_limit_mm("HEXAGON", "INNER TEXT"), 45.0)
-        self.assertEqual(title_limit_mm("HEXAGON", "OUTER TEXT"), 60.5)
+        self.assertEqual(title_limit_mm("HEXAGON", "OUTER TEXT"), 61.0)
         self.assertEqual(title_limit_mm("OCTAGON", "OUTER TEXT"), 41.3)
         self.assertEqual(title_limit_mm("CIRCLE", "OUTER TEXT"), 77.8)
         self.assertIsNone(title_limit_mm("HEXAGON", "NONE"))
@@ -36,6 +36,15 @@ class TitleTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Shorten the title"):
             validate_title_fit("W" * 15, "HEXAGON", "OUTER TEXT")
         validate_title_fit("A Very Long Trail Name", "HEXAGON", "NONE")
+
+    def test_title_tolerance_boundary(self):
+        for width in (60.49, 60.6, 60.7, 61.0):
+            with self.subTest(width=width), patch("trailprint.title.measure_title_width_mm", return_value=width):
+                self.assertEqual(validate_title_fit("Example", "HEXAGON", "OUTER TEXT"), width)
+        with patch("trailprint.title.measure_title_width_mm", return_value=61.001):
+            with self.assertRaisesRegex(ValueError, "61.0 mm"):
+                validate_title_fit("Example", "HEXAGON", "OUTER TEXT")
+        self.assertLess(validate_title_fit("Antelope by Moonlight", "HEXAGON", "OUTER TEXT"), 60.7)
 
     def test_grindstone_matches_generated_title_width(self):
         width = validate_title_fit("UTMB Grindstone", "HEXAGON", "OUTER TEXT")
