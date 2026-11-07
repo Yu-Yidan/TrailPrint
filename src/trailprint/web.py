@@ -55,7 +55,7 @@ from .terrain_colors import (
     load_terrain_defaults,
     save_terrain_preferences,
 )
-from .title import TITLE_LIMITS_MM, TITLE_WIDTH_SCALE, validate_title_fit
+from .title import TITLE_FIT_TOLERANCE_MM, TITLE_LIMITS_MM, TITLE_WIDTH_SCALE, validate_title_fit
 
 
 def create_app(repo_root: Path = None, build_manager: BuildManager = None,
@@ -203,7 +203,7 @@ def create_app(repo_root: Path = None, build_manager: BuildManager = None,
             expected_relief=expected_relief,
             form_settings=form_settings, settings_restored=restored is not None,
             relief_limit=AUTO_RELIEF_LIMIT_MM,
-            plate_title=form_settings.plate_title, title_limits=TITLE_LIMITS_MM,
+            plate_title=form_settings.plate_title, title_limits=TITLE_LIMITS_MM, title_fit_tolerance=TITLE_FIT_TOLERANCE_MM,
             title_width_scale=TITLE_WIDTH_SCALE, model_font_css=MODEL_FONT_BROWSER_CSS,
             has_preview=preview_path.is_file(),
             validation=read_report(project / "build/validation.json"))

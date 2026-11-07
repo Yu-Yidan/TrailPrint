@@ -37,6 +37,15 @@ class TitleTests(unittest.TestCase):
             validate_title_fit("W" * 15, "HEXAGON", "OUTER TEXT")
         validate_title_fit("A Very Long Trail Name", "HEXAGON", "NONE")
 
+    def test_title_tolerance_boundary(self):
+        for width in (60.49, 60.6, 60.7):
+            with self.subTest(width=width), patch("trailprint.title.measure_title_width_mm", return_value=width):
+                self.assertEqual(validate_title_fit("Example", "HEXAGON", "OUTER TEXT"), width)
+        with patch("trailprint.title.measure_title_width_mm", return_value=60.701):
+            with self.assertRaisesRegex(ValueError, "60.7 mm"):
+                validate_title_fit("Example", "HEXAGON", "OUTER TEXT")
+        self.assertLess(validate_title_fit("Antelope by Moonlight", "HEXAGON", "OUTER TEXT"), 60.7)
+
     def test_grindstone_matches_generated_title_width(self):
         width = validate_title_fit("UTMB Grindstone", "HEXAGON", "OUTER TEXT")
         # Actual Arial Bold mesh is 47.196 mm; advance metrics include bearings.

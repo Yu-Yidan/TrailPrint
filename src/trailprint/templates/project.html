@@ -76,6 +76,6 @@
     </form>
   </article>
 </section>
-<script>window.TRAILPRINT_EXTRAS = {{ extras|tojson }}; window.TRAILPRINT_EXTRA_LABELS = {{ extra_labels|tojson }}; window.TRAILPRINT_TITLE_LIMITS = {{ title_limits|tojson }}; window.TRAILPRINT_TITLE_WIDTH_SCALE = {{ title_width_scale|tojson }}; window.TRAILPRINT_MODEL_FONT_CSS = {{ model_font_css|tojson }};</script>
+<script>window.TRAILPRINT_EXTRAS = {{ extras|tojson }}; window.TRAILPRINT_EXTRA_LABELS = {{ extra_labels|tojson }}; window.TRAILPRINT_TITLE_FIT_TOLERANCE = {{ title_fit_tolerance|tojson }}; window.TRAILPRINT_TITLE_LIMITS = {{ title_limits|tojson }}; window.TRAILPRINT_TITLE_WIDTH_SCALE = {{ title_width_scale|tojson }}; window.TRAILPRINT_MODEL_FONT_CSS = {{ model_font_css|tojson }};</script>
 <script src="{{ url_for('static', filename='project.js') }}"></script>
 {% endblock %}

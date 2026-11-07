@@ -10,6 +10,7 @@ from .fonts import BLENDER_FONT_REFERENCE_HEIGHT, MODEL_FONT_PATH, require_model
 
 FONT_PATH = MODEL_FONT_PATH
 TEXT_HEIGHT_MM = 5.0
+TITLE_FIT_TOLERANCE_MM = 0.2
 # Measured unscaled `Name` height in Blender with the installed Arial Bold font.
 # The generator scales X/Y to 5 mm and leaves Z at 1. Applying a FONT object's
 # scale sets its font size using the RMS of all three axes, reducing X/Y size.
@@ -55,6 +56,7 @@ def validate_title_fit(value: str, shape: str, shape_extra: str) -> float:
     limit = title_limit_mm(shape, shape_extra)
     if limit is None:
         return 0.0
+    limit += TITLE_FIT_TOLERANCE_MM
     width = measure_title_width_mm(value)
     if width > limit:
         raise ValueError(
