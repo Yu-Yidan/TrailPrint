@@ -344,6 +344,7 @@ def create_app(repo_root: Path = None, build_manager: BuildManager = None,
             project_title=human_name(project),
             validation=validation,
             customer_preview=customer_preview,
+            has_side_preview=(project / "build/preview-side.png").is_file(),
             bambu_environment=bambu_environment, bambu_defaults=filament_defaults,
             palette_revision=palette_revision(bambu_environment) if bambu_environment else "",
             bambu_error=bambu_error, bambu_job=bambu_job,
@@ -455,9 +456,10 @@ def create_app(repo_root: Path = None, build_manager: BuildManager = None,
     @app.get("/projects/<slug>/preview-image")
     def preview_image(slug):
         project = get_project(slug)
-        if not (project / "build/preview.png").is_file():
+        filename = "preview-side.png" if request.args.get("view") == "side" else "preview.png"
+        if not (project / "build" / filename).is_file():
             abort(404)
-        return send_from_directory(project / "build", "preview.png", as_attachment=False)
+        return send_from_directory(project / "build", filename, as_attachment=False)
 
     @app.post("/projects/<slug>/open-output-folder")
     def open_output_folder(slug):
