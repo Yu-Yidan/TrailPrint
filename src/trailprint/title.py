@@ -18,7 +18,7 @@ BLENDER_REFERENCE_HEIGHT = BLENDER_FONT_REFERENCE_HEIGHT
 _TITLE_AXIS_SCALE = TEXT_HEIGHT_MM / BLENDER_REFERENCE_HEIGHT
 TITLE_WIDTH_SCALE = sqrt((2 * _TITLE_AXIS_SCALE ** 2 + 1) / 3) / _TITLE_AXIS_SCALE
 TITLE_LIMITS_MM = {
-    "HEXAGON": {"INNER TEXT": 45.0, "OUTER TEXT": 60.5, "FRONT TEXT": 60.5},
+    "HEXAGON": {"INNER TEXT": 45.0, "OUTER TEXT": 61.0, "FRONT TEXT": 61.0},
     "OCTAGON": {"OUTER TEXT": 41.3},
     "CIRCLE": {"OUTER TEXT": 77.8},
 }
@@ -56,7 +56,8 @@ def validate_title_fit(value: str, shape: str, shape_extra: str) -> float:
     limit = title_limit_mm(shape, shape_extra)
     if limit is None:
         return 0.0
-    limit += TITLE_FIT_TOLERANCE_MM
+    if not (str(shape).upper() == "HEXAGON" and str(shape_extra).upper() in ("OUTER TEXT", "FRONT TEXT")):
+        limit += TITLE_FIT_TOLERANCE_MM
     width = measure_title_width_mm(value)
     if width > limit:
         raise ValueError(
