@@ -313,6 +313,7 @@ class SettingsTests(unittest.TestCase):
                 config = json.loads(Path(command[-1]).read_text(encoding="utf-8"))
                 if Path(command[-3]).name == "preview_worker.py":
                     Path(config["output_path"]).write_bytes(b"\x89PNG\r\n\x1a\n" + b"0" * 1200)
+                    Path(config["output_path"]).with_name("preview-side.png").write_bytes(b"side" * 400)
                     return subprocess.CompletedProcess(command, 0, "preview ok", "")
                 self.assertEqual(config["plate_title"], "")
                 self.assertEqual(Path(config["model_font_path"]).name, "Arial-Bold-print.ttf")
@@ -352,6 +353,9 @@ class SettingsTests(unittest.TestCase):
                              (project / "build/preview.png").read_bytes())
             report = json.loads((project / "build/validation.json").read_text(encoding="utf-8"))
             self.assertTrue(report["preview"]["valid"])
+            self.assertTrue(report["preview_side"]["valid"])
+            self.assertEqual((project / "deliverables/Project-side-preview.png").read_bytes(),
+                             (project / "build/preview-side.png").read_bytes())
             self.assertEqual(report["preview"]["customer_filename"],
                              "Project-preview.png")
             self.assertEqual(report["trail_clearance_mm"], 0.1)

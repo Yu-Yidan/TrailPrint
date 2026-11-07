@@ -80,6 +80,17 @@ def main():
         scene.render.image_settings.file_format = "PNG"
         scene.render.filepath = str(output)
         bpy.ops.render.render(write_still=True)
+        # Frame the complete assembly in camera space for the angled view.
+        import math
+        camera.location = center + Vector((0, -span * 2, span * 2 * math.tan(math.radians(30))))
+        camera.rotation_euler = (center - camera.location).to_track_quat('-Z', 'Y').to_euler()
+        rotation = camera.rotation_euler.to_matrix().transposed()
+        projected = [rotation @ (point - center) for point in corners]
+        projected_width = max(p.x for p in projected) - min(p.x for p in projected)
+        projected_height = max(p.y for p in projected) - min(p.y for p in projected)
+        camera_data.ortho_scale = max(projected_width, projected_height * 4 / 3) * 1.12
+        scene.render.filepath = str(output.with_name("preview-side.png"))
+        bpy.ops.render.render(write_still=True)
         if not output.is_file() or output.stat().st_size < 1000:
             raise RuntimeError("Blender did not produce a usable preview image")
     except Exception:
