@@ -40,7 +40,7 @@ Terrain and trail were regenerated with Shape Extras set to None; the requested 
   {% macro filament_select(role, required=false) %}
     <select class="text-input" name="{{ role }}_filament" {% if required %}required{% endif %}>
       {% if not bambu_defaults[role] %}<option value="" selected>Choose a filament</option>{% endif %}
-      {% for filament in bambu_environment.filaments %}<option value="{{ filament.number }}" data-color="{{ filament.color }}" {% if bambu_defaults[role] == filament.number %}selected{% endif %}>{{ filament.number }} · {{ filament.name }}</option>{% endfor %}
+      {% for filament in bambu_environment.filaments %}<option value="{{ filament.number }}" data-color="{{ filament.color }}" {% if bambu_defaults[role] == filament.number %}selected{% endif %}>{{ filament.number }} · {{ filament.label|default(filament.name) }}</option>{% endfor %}
     </select><i class="filament-dot" style="--filament-color:{{ bambu_environment.filaments[bambu_defaults[role]-1].color if bambu_defaults[role] else '#777777' }}"></i>
   {% endmacro %}
   <div class="bambu-heading"><div><p class="eyebrow">BAMBU PROJECT</p><h2>Map and DIY kit setup</h2>
@@ -51,9 +51,9 @@ Terrain and trail were regenerated with Shape Extras set to None; the requested 
     </div>{% endif %}
   </div>
   {% set water_estimate = bambu_validation.get('water_layer_estimate') %}
-  <p>Project filaments are saved in TrailPrint, separately from your AMS slots. To update them, sync your AMS in Bambu Studio, then import its filament list here.</p>
+  <p>Object colors are saved in TrailPrint. Assign your physical spools when opening the 3MF in Bambu Studio.</p>
   <form method="post" action="{{ url_for('import_bambu_filaments', slug=project.name) }}">
-    <button class="button secondary" type="submit">Import filaments from Bambu Studio</button>
+    <button class="button secondary" type="submit">Restore default object colors</button>
   </form>
   {% if bambu_output and water_estimate %}<div class="notice success water-layer-estimate"><strong>Estimated mixed-color water layers: {{ water_estimate.mixed_filament_layer_count }}</strong>
     <p>Layer{% if water_estimate.mixed_filament_layer_count != 1 %}s{% endif %} {% for range in water_estimate.mixed_filament_layer_ranges %}{{ range[0] }}{% if range[1] != range[0] %}–{{ range[1] }}{% endif %}{% if not loop.last %}, {% endif %}{% else %}none{% endfor %} at {{ '%.2f'|format(water_estimate.nominal_layer_height_mm) }} mm nominal height; up to {{ water_estimate.manual_swaps_max }} manual swaps.</p>

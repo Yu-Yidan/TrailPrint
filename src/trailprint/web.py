@@ -20,9 +20,9 @@ from .bambu import BambuSettings, default_filament_mapping, discover_environment
 from .bambu_jobs import BambuJobManager
 from .blender_bridge import EXTRA_LABELS, SHAPE_EXTRAS, SHAPE_LABELS, BuildSettings
 from .build_settings import current_model_settings
-from .filament_palette import import_palette as import_filament_palette
-from .filament_palette import load_palette as load_filament_palette
+from .filament_palette import load_object_palette as load_filament_palette
 from .filament_palette import palette_revision, role_defaults
+from .filament_palette import restore_object_palette as import_filament_palette
 from .fonts import MODEL_FONT_BROWSER_CSS
 from .gpx import (
     AUTO_RELIEF_LIMIT_MM,
@@ -357,13 +357,13 @@ def create_app(repo_root: Path = None, build_manager: BuildManager = None,
 
     @app.post("/projects/<slug>/import-filaments")
     def import_bambu_filaments(slug):
-        get_project(slug)
+        project = get_project(slug)
         try:
-            environment = import_filament_palette(root, discover_environment)
+            import_filament_palette(root, discover_environment, project)
         except (OSError, ValueError) as exc:
             flash(str(exc), "error")
         else:
-            flash(f"Imported {len(environment.filaments)} project filaments. Review the color assignments.",
+            flash("Restored the default object colors. Review the assignments.",
                   "success")
         return redirect(url_for("preview_project", slug=slug))
 

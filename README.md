@@ -22,13 +22,15 @@ Each build prepares a private font copy with a thicker comma tail, matching the
 approved print coupon. Comma heads, lengths, spacing, and all other characters
 retain their original design. The installed Arial Bold font is never modified.
 
-TrailPrint remembers its own project filament palette. Opening a single-color
-project in Bambu Studio does not remove these choices. To update the palette,
-sync the AMS in Bambu Studio, then click **Import filaments from Bambu Studio**
-on the model preview page. Saved choices follow matching profiles and colors;
-removed colors require a replacement selection. These project filaments are
-independent of physical AMS slots. Background exports use isolated Bambu data
-and the palette captured when submitted, without changing Studio preferences.
+TrailPrint assigns named default filaments to each object. Trail uses PLA Matte
+Scarlet Red, plate uses PLA Matte Charcoal, low terrain uses PLA Matte Dark Green,
+high terrain and text use PLA Matte Ash Gray, summits use PLA Basic White,
+and water uses PLA Matte Marine Blue. Per-project dropdowns support overrides.
+**Restore default object colors** resets the current project's color selections.
+The first use migrates existing projects and backs up their previous palette and
+color preferences under `data/settings/before-object-defaults/`, preserving elevation
+settings. Physical spools are assigned in Bambu Studio. Background exports capture
+a private palette snapshot when submitted.
 
 ```sh
 python3 -m venv .venv
@@ -235,8 +237,8 @@ The separately printed 1.2 mm trail uses 0.10 mm clearance per side in its
 terrain groove, for a nominal groove width of 1.4 mm.
 
 From the validated preview, TrailPrint can also create a reviewable Bambu Studio
-3MF using the printer, process, filaments, and colors currently configured in
-Bambu Studio. Choose filament numbers for each model role and TrailPrint builds
+3MF using the selected Bambu Studio printer/process and TrailPrint object colors.
+Choose a named filament for each model role and TrailPrint builds
 one calibrated plate containing Trail, multipart Terrain + Water when water is
 available, and multipart Plate + Text. Objects print by object using the
 calibrated layout. Water always uses its selected blue filament as an integrated
@@ -254,8 +256,7 @@ observations into at most four elevation bands. This keeps geographic context
 while requiring no more than three terrain filament changes. The preview shows
 evidence coverage, fitted bands, and confidence, and still offers the original
 manual green/grey/white elevation mode. An Overpass failure never blocks STL
-output. Plate defaults to black filament slot 1; Trail and Text retain
-color-matched defaults.
+output. Plate defaults to Matte Charcoal, trail to Matte Scarlet Red, and text to Matte Ash Gray.
 
 The plate back is intentionally blank apart from the three dot-magnet recesses.
 Include this credit on the product packaging and online listing instead:

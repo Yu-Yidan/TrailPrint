@@ -9,13 +9,51 @@ import pytest
 from trailprint.bambu import BambuEnvironment, BambuSettings
 from trailprint.bambu_jobs import BambuJobManager
 from trailprint.filament_palette import (
+    OBJECT_DEFAULTS,
     import_palette,
+    load_object_palette,
     load_palette,
     palette_path,
     palette_revision,
     role_defaults,
 )
 from trailprint.terrain_colors import save_terrain_preferences
+
+
+def test_object_defaults_migrate_once_and_preserve_overrides(tmp_path):
+    project = tmp_path / 'prints/example'
+    project.mkdir(parents=True)
+    preferences = project / 'terrain_colors.json'
+    preferences.write_text(json.dumps({'trail': 1, 'plate': 3, 'grey_start_m': 900, 'white_start_m': 2200}))
+    selected = load_object_palette(tmp_path, environment)
+    assert len(selected.filaments) == 6
+    assert selected.filaments[OBJECT_DEFAULTS['trail']-1]['color'] == '#DE4343'
+    assert selected.filaments[OBJECT_DEFAULTS['plate']-1]['color'] == '#000000'
+    migrated = json.loads(preferences.read_text())
+    assert migrated['trail'] == 6 and migrated['plate'] == 1
+    assert migrated['grey_start_m'] == 900
+    assert (palette_path(tmp_path).parent/'before-object-defaults/example-terrain-colors.json').exists()
+    migrated['trail'] = 5
+    preferences.write_text(json.dumps(migrated))
+    assert load_object_palette(tmp_path, lambda: None) == selected
+    assert role_defaults(tmp_path, project, selected, {})['trail'] == 5
+    assert len(selected.flush_volumes_matrix) == 36
+    assert len(selected.flush_volumes_vector) == 12
+
+def test_existing_object_palette_updates_only_text_to_ash_gray(tmp_path):
+    project = tmp_path / 'prints/example'
+    project.mkdir(parents=True)
+    selected = load_object_palette(tmp_path, environment)
+    saved = json.loads(palette_path(tmp_path).read_text())
+    saved['object_defaults_version'] = 1
+    palette_path(tmp_path).write_text(json.dumps(saved))
+    preferences = project / 'terrain_colors.json'
+    preferences.write_text(json.dumps({'text': 4, 'trail': 5, 'grey_start_m': 900}))
+    assert load_object_palette(tmp_path, lambda: None) == selected
+    migrated = json.loads(preferences.read_text())
+    assert migrated == {'text': 3, 'trail': 5, 'grey_start_m': 900}
+    assert selected.filaments[migrated['text']-1]['label'] == 'PLA Matte Ash Gray'
+    assert (palette_path(tmp_path).parent/'before-ash-gray-text/example-terrain-colors.json').exists()
 
 
 def environment(colors=("#000000", "#FFFFFF", "#FF0000", "#00AA00")):

@@ -24,12 +24,12 @@ ELEVATION = {
 
 
 class TerrainColorTests(unittest.TestCase):
-    def test_green_defaults_to_fourth_filament(self):
+    def test_green_defaults_to_closest_color(self):
         filaments = FILAMENTS + (
             {"number": 5, "name": "Bright Green", "color": "#19b52e"},
         )
         defaults = color_matched_defaults(filaments)
-        self.assertEqual(defaults["green"], 4)
+        self.assertEqual(defaults["green"], 5)
 
     def test_automatic_band_counts_and_z_mapping(self):
         bands = active_terrain_bands(ELEVATION, 1200, 2300)

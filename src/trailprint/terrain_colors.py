@@ -40,8 +40,6 @@ def color_matched_defaults(filaments) -> dict:
         ))["number"]
         for role, color in DEFAULT_TARGETS.items()
     }
-    if len(filaments) >= 4:
-        defaults["green"] = 4
     return defaults
 
 
