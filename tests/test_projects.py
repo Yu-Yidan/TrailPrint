@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 from trailprint.bambu import BambuEnvironment
 from trailprint.blender_bridge import BuildSettings
-from trailprint.filament_palette import palette_revision, load_object_palette
+from trailprint.filament_palette import load_object_palette, palette_revision
 from trailprint.location import save_location
 from trailprint.projects import (
     create_project,

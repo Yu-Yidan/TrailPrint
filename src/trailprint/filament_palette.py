@@ -4,9 +4,9 @@ import hashlib
 import json
 import math
 import re
+import shutil
 import threading
 import zipfile
-import shutil
 from dataclasses import asdict, replace
 from pathlib import Path
 
@@ -66,7 +66,6 @@ def load_object_palette(root, discover, force=False):
         old = list(live.filaments)
         identities = {(item["name"], item["color"].upper()): i
                       for i, item in enumerate(old)}
-        count = len(filaments)
         fallback = max(500., *live.flush_volumes_matrix)
         vector_fallback = max(140., *live.flush_volumes_vector)
         matrix = []

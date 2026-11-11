@@ -9,14 +9,16 @@ import pytest
 from trailprint.bambu import BambuEnvironment, BambuSettings
 from trailprint.bambu_jobs import BambuJobManager
 from trailprint.filament_palette import (
-    load_object_palette,
     OBJECT_DEFAULTS,
     import_palette,
+    load_object_palette,
     load_palette,
     palette_path,
     palette_revision,
     role_defaults,
 )
+from trailprint.terrain_colors import save_terrain_preferences
+
 
 def test_object_defaults_migrate_once_and_preserve_overrides(tmp_path):
     project = tmp_path / 'prints/example'
@@ -52,7 +54,6 @@ def test_existing_object_palette_updates_only_text_to_ash_gray(tmp_path):
     assert migrated == {'text': 3, 'trail': 5, 'grey_start_m': 900}
     assert selected.filaments[migrated['text']-1]['label'] == 'PLA Matte Ash Gray'
     assert (palette_path(tmp_path).parent/'before-ash-gray-text/example-terrain-colors.json').exists()
-from trailprint.terrain_colors import save_terrain_preferences
 
 
 def environment(colors=("#000000", "#FFFFFF", "#FF0000", "#00AA00")):
