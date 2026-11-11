@@ -16,8 +16,15 @@ COLORS = {
 }
 
 
+def rgba(hex_color):
+    """Convert stored sRGB filament colors to Blender's linear material colors."""
+    values = [int(hex_color[i:i+2], 16)/255 for i in (1, 3, 5)]
+    return tuple(v/12.92 if v <= .04045 else ((v+.055)/1.055)**2.4 for v in values) + (1.,)
+
+
 def main():
     try:
+        import bmesh
         import bpy
         from mathutils import Vector
 
@@ -36,11 +43,37 @@ def main():
             if not imported:
                 raise RuntimeError(f"Could not import {Path(item['path']).name}")
             material = bpy.data.materials.new(f"TrailPrint {item['role']}")
-            material.diffuse_color = COLORS.get(item["role"], COLORS["other"])
+            selected = config.get("color_settings", {})
+            role_colors = selected.get("role_colors", {})
+            color = role_colors.get(item["role"])
+            material.diffuse_color = rgba(color) if color else COLORS.get(item["role"], COLORS["other"])
             material.roughness = 0.75
             for obj in imported:
                 obj.data.materials.clear()
                 obj.data.materials.append(material)
+                if item["role"] == "terrain" and selected.get("terrain_bands"):
+                    mesh = bmesh.new()
+                    mesh.from_mesh(obj.data)
+                    bottom = min(vertex.co.z for vertex in mesh.verts)
+                    bands = selected["terrain_bands"]
+                    heights = sorted({bottom + band[key] for band in bands for key in ("min_z", "max_z")})
+                    for height in heights:
+                        bmesh.ops.bisect_plane(mesh, geom=list(mesh.verts)+list(mesh.edges)+list(mesh.faces),
+                                              plane_co=(0, 0, height), plane_no=(0, 0, 1), dist=1e-6)
+                    for band in bands:
+                        band_material = bpy.data.materials.new("Terrain " + band["role"])
+                        band_material.diffuse_color = rgba(band["color"])
+                        band_material.roughness = .75
+                        obj.data.materials.append(band_material)
+                    for face in mesh.faces:
+                        z = face.calc_center_median().z - bottom
+                        face.material_index = 0
+                        for index, band in enumerate(bands, 1):
+                            # Include the top surface; the later band wins on shared boundaries.
+                            if band["min_z"] - 1e-5 <= z <= band["max_z"] + 1e-5:
+                                face.material_index = index
+                    mesh.to_mesh(obj.data)
+                    mesh.free()
                 objects.append(obj)
 
         if not objects:

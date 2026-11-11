@@ -1012,9 +1012,15 @@ def create_bambu_project(project: Path, settings: BambuSettings,
         if diy_case_report is not None:
             report["diy_case"] = diy_case_report
         staged_report = temp_root / "bambu-validation.json"
+        from .export_previews import stage_export_previews
+
+        preview_changes, preview_report = stage_export_previews(
+            project, temp_root, settings, environment, terrain_bands)
+        report["preview_colors"] = preview_report
         _write_json(staged_report, report)
         destination = project / "deliverables" / canonical_3mf_name(project)
-        publish_files({destination: staged, build_dir / "bambu-validation.json": staged_report}, build_dir)
+        publish_files({destination: staged, build_dir / "bambu-validation.json": staged_report,
+                       **preview_changes}, build_dir)
         return destination
     finally:
         shutil.rmtree(temp_root, ignore_errors=True)
