@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 from trailprint.bambu import BambuEnvironment
 from trailprint.blender_bridge import BuildSettings
-from trailprint.filament_palette import palette_revision
+from trailprint.filament_palette import palette_revision, load_object_palette
 from trailprint.location import save_location
 from trailprint.projects import (
     create_project,
@@ -195,10 +195,10 @@ class ProjectServiceTests(unittest.TestCase):
 
 
 class WebTests(unittest.TestCase):
-    def test_import_changes_palette_and_rejects_an_old_export_form(self):
+    def test_restore_keeps_object_palette_when_bambu_filaments_change(self):
         project = create_project(self.root / "prints", "Colors", GPX)
         self.client.post(f"/projects/{project.name}/import-filaments")
-        old_revision = palette_revision(self.bambu_environment)
+        old_revision = palette_revision(load_object_palette(self.root, lambda: self.bambu_environment))
         with patch("trailprint.web.discover_environment", return_value=BambuEnvironment(
                 self.bambu_environment.binary, self.bambu_environment.data_dir,
                 self.bambu_environment.machine, self.bambu_environment.process,
@@ -210,7 +210,8 @@ class WebTests(unittest.TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertIsNone(self.bambu_manager.started)
         with self.client.session_transaction() as session:
-            self.assertIn("palette changed", session["_flashes"][-1][1])
+            self.assertIn("Rebuild the terrain", session["_flashes"][-1][1])
+        self.assertEqual(palette_revision(load_object_palette(self.root, lambda: None)), old_revision)
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -475,7 +476,7 @@ class WebTests(unittest.TestCase):
         self.assertIn(b"Bambu Lab P1S 0.4 nozzle", page.data)
         self.assertNotIn(b"Export unavailable", page.data)
         response = self.client.post("/projects/build-me/bambu", data={
-            "palette_revision": palette_revision(self.bambu_environment),
+            "palette_revision": palette_revision(load_object_palette(self.root, lambda: self.bambu_environment)),
             "trail_filament": "3", "land_filament": "4",
             "mountain_filament": "1", "summit_filament": "2",
             "plate_filament": "1", "text_filament": "2",
@@ -526,7 +527,7 @@ class WebTests(unittest.TestCase):
         self.assertNotIn(b"Sentinel", page)
 
         response = self.client.post("/projects/osm-map/bambu", data={
-            "palette_revision": palette_revision(self.bambu_environment),
+            "palette_revision": palette_revision(load_object_palette(self.root, lambda: self.bambu_environment)),
             "terrain_mode": "osm", "trail_filament": "3", "land_filament": "4",
             "mountain_filament": "1", "summit_filament": "2",
             "plate_filament": "1", "text_filament": "2",
@@ -561,7 +562,7 @@ class WebTests(unittest.TestCase):
         self.assertNotIn(b'name="water_placement"', page.data)
 
         response = self.client.post("/projects/wet-route/bambu", data={
-            "palette_revision": palette_revision(self.bambu_environment),
+            "palette_revision": palette_revision(load_object_palette(self.root, lambda: self.bambu_environment)),
             "terrain_mode": "manual", "trail_filament": "3",
             "land_filament": "4", "mountain_filament": "1",
             "summit_filament": "2", "plate_filament": "1",

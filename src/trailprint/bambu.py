@@ -209,7 +209,6 @@ def default_filament_mapping(filaments: Iterable[dict]) -> dict:
             for role, color in targets.items()} if filaments else {}
     if defaults:
         defaults["terrain"] = 1
-        defaults["plate"] = 1
         terrain = color_matched_defaults(filaments)
         defaults.update(terrain)
     return defaults
