@@ -154,7 +154,9 @@ rebuild invalidates its previous app-generated 3MF and Bambu validation report;
 failed or cancelled builds preserve the previous deliverables. Failed-attempt
 diagnostics are stored in `build/failed-validation.json`, separately from
 `build/validation.json`, which describes the last successfully published model.
-Bambu exports likewise publish the 3MF and its report together. This protects
+Bambu exports publish the 3MF, both assembled previews, their downloadable
+copies, and validation reports together. Preview rendering failures preserve
+the previous export and images. This protects
 against handled file-operation failures, rather than machine or process crashes.
 
 The dashboard uses compact, sticky tabs for Project created, STL generated, 3MF
@@ -224,7 +226,10 @@ project's output folder in Finder. While Blender runs, the settings panel is
 replaced by the live build phase and progress. A running build can be cancelled;
 TrailPrint stops Blender and discards staged work while preserving prior STL,
 3MF, preview, and validation files. Cancelled and failed jobs preserve the last successful model settings. Preview colors use green terrain, red trail, blue water,
-black plate, and white text; STL files themselves remain colorless. Builds include
+black plate, and white text initially. Generating a 3MF refreshes both preview
+views using the selected object filaments and the exported manual or OSM terrain
+elevation bands, then returns to the updated preview. STL files themselves
+remain colorless. Builds include
 lakes, major rivers, and coastal sea by default as recessed Terrain inlays.
 Each inland water body samples the terrain immediately outside its shoreline.
 Level shorelines produce a flat two-layer, 0.40 mm inlay; changing shorelines

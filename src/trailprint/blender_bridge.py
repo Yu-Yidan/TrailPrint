@@ -582,9 +582,11 @@ def _failure_detail(result: subprocess.CompletedProcess) -> str:
 
 
 def _render_preview(stls: List[Path], project_slug: str, output: Path, config_path: Path,
-                    blender_path: Path, timeout: int, cancel_event=None) -> subprocess.CompletedProcess:
+                    blender_path: Path, timeout: int, cancel_event=None,
+                    color_settings=None) -> subprocess.CompletedProcess:
     config_path.write_text(json.dumps({
         "output_path": str(output),
+        "color_settings": color_settings or {},
         "stl_files": [{"path": str(path), "role": mesh_role(path, project_slug)}
                       for path in stls],
     }), encoding="utf-8")

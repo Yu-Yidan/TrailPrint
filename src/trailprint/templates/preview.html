@@ -17,8 +17,8 @@
 Terrain and trail were regenerated with Shape Extras set to None; the requested plate and text were preserved.</div>{% endif %}
 <section class="preview-layout">
   <div class="preview-images">
-  <div class="preview-image-frame"><h2>Top view</h2><img src="{{ url_for('preview_image', slug=project.name) }}" alt="Bird's-eye preview of {{ project.name }}"></div>
-  {% if has_side_preview %}<div class="preview-image-frame"><h2>Angled view</h2><img src="{{ url_for('preview_image', slug=project.name, view='side') }}" alt="Angled preview of {{ project.name }}">
+  <div class="preview-image-frame"><h2>Top view</h2><img src="{{ url_for('preview_image', slug=project.name, v=preview_version) }}" alt="Bird's-eye preview of {{ project.name }}"></div>
+  {% if has_side_preview %}<div class="preview-image-frame"><h2>Angled view</h2><img src="{{ url_for('preview_image', slug=project.name, view='side', v=preview_version) }}" alt="Angled preview of {{ project.name }}">
   {% if validation.get('preview_side', {}).get('customer_filename') %}<a class="button secondary" href="{{ url_for('download_file', slug=project.name, filename=validation.preview_side.customer_filename) }}">Download angled preview</a>{% endif %}</div>{% endif %}
   </div>
   <div class="preview-details">
@@ -58,7 +58,7 @@ Terrain and trail were regenerated with Shape Extras set to None; the requested 
   {% if bambu_output and water_estimate %}<div class="notice success water-layer-estimate"><strong>Estimated mixed-color water layers: {{ water_estimate.mixed_filament_layer_count }}</strong>
     <p>Layer{% if water_estimate.mixed_filament_layer_count != 1 %}s{% endif %} {% for range in water_estimate.mixed_filament_layer_ranges %}{{ range[0] }}{% if range[1] != range[0] %}–{{ range[1] }}{% endif %}{% if not loop.last %}, {% endif %}{% else %}none{% endfor %} at {{ '%.2f'|format(water_estimate.nominal_layer_height_mm) }} mm nominal height; up to {{ water_estimate.manual_swaps_max }} manual swaps.</p>
     <p class="fine-print">Unsliced estimate. Bambu Studio's exact count may change after slicing, especially with variable layer height.</p></div>{% endif %}
-  {% if bambu_job %}<div class="build-status {{ bambu_job.state }}" id="bambu-status" data-job-id="{{ bambu_job.id }}" data-open-folder-url="{{ url_for('open_output_folder', slug=project.name) }}" data-home-url="{{ url_for('dashboard') }}">
+  {% if bambu_job %}<div class="build-status {{ bambu_job.state }}" id="bambu-status" data-job-id="{{ bambu_job.id }}" data-open-folder-url="{{ url_for('open_output_folder', slug=project.name) }}" data-home-url="{{ url_for('preview_project', slug=project.name) }}">
     <strong id="bambu-state">{{ bambu_job.state|title }}</strong><p id="bambu-message">{{ bambu_job.message }}</p><small id="bambu-elapsed"></small>
   </div>{% endif %}
   {% if bambu_error %}<div class="notice error">{{ bambu_error }}</div>
