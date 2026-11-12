@@ -88,3 +88,5 @@ bounded precision retry without weakening trail clearance checks.
 `../water-growth-fragments.json` captures two original water-fragment footprints and their conflicting widened candidates from the Big Dam Bridge route. Coordinates are model millimetres; no project metadata is included. The pair exercises coordinated allocation before shoreline coordinate normalization.
 
 `../water-neck-precision.json` contains the Big Dam Bridge zero-offset water footprint and protected footprint in model millimetres. An attached 0.01 mm precision model falsely splits its printable connection during erosion; width calculations must use full precision before final coordinate cleanup. No project metadata is included.
+
+`water-overfull-sliver-edge.gpx` retains route coordinates and elevations without names, timestamps or extensions. Its water-basin Boolean produces an overfull edge whose nearly collinear sliver vertices are hidden from the defect-edge graph. `../water-overfull-sliver-edge.npz` captures the corresponding terrain in model millimetres without project metadata, for an offline repair regression.
