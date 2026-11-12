@@ -137,15 +137,33 @@ def groove_material_overlap(terrain_path, corridor, floor_z):
     return float(_material_above_floor(terrain, floor_z).intersection(corridor).area)
 
 
-def _stitch_collinear_boundaries(mesh):
+def _stitch_collinear_boundaries(mesh, include_slivers=False):
     """Split existing edges at numerical T junctions; never cap actual holes."""
     splits = 0
     for _ in range(10):
         counts = np.bincount(mesh.edges_unique_inverse)
         graph = {}
-        for a, b in mesh.edges_unique[counts != 2]:
+        for (a, b), count in zip(mesh.edges_unique[counts != 2], counts[counts != 2]):
             graph.setdefault(int(a), set()).add(int(b))
             graph.setdefault(int(b), set()).add(int(a))
+            # An overfull edge can hide a T junction inside nearly collinear
+            # sliver faces: their other edges each still have two incident faces.
+            if not include_slivers or count != 4:
+                continue
+            delta = mesh.vertices[b] - mesh.vertices[a]
+            squared = np.dot(delta, delta)
+            if squared < 1e-16:
+                continue
+            adjacent = mesh.faces[np.any(mesh.faces == a, axis=1)
+                                  & np.any(mesh.faces == b, axis=1)]
+            for vertex in np.unique(adjacent):
+                if vertex in (a, b):
+                    continue
+                fraction = np.dot(mesh.vertices[vertex] - mesh.vertices[a], delta) / squared
+                distance = np.linalg.norm(mesh.vertices[vertex] - mesh.vertices[a] - fraction * delta)
+                if 0 < fraction < 1 and distance <= 5e-6:
+                    graph[int(a)].add(int(vertex))
+                    graph.setdefault(int(vertex), set()).add(int(a))
         groups = []
         while graph:
             pending = [next(iter(graph))]
@@ -419,6 +437,21 @@ def repair_terrain_for_water_boolean(terrain_path: Path, output_path: Path,
         if mesh.is_watertight and mesh.is_winding_consistent:
             break
     restored_base = False
+    if not mesh.is_watertight:
+        candidate, splits = _stitch_collinear_boundaries(mesh.copy(), include_slivers=True)
+        if splits:
+            candidate, cleanup = _terrain_repair_pass(candidate)
+            candidate = trimesh.load_mesh(io.BytesIO(candidate.export(file_type="stl")),
+                                          file_type="stl", process=True)
+            if (candidate.is_watertight and candidate.is_winding_consistent
+                    and np.array_equal(candidate.bounds, mesh.bounds)
+                    and candidate.volume > 0
+                    and abs(candidate.volume - mesh.volume) <= .00001):
+                mesh = candidate
+                passes.append({"pass": len(passes) + 1, **cleanup,
+                               "tiny_edge_collapses": 0,
+                               "overfull_sliver_splits": splits,
+                               **_terrain_repair_defects(mesh)})
     if not mesh.is_watertight and base_reference_path is not None:
         reference = trimesh.load_mesh(base_reference_path, process=True)
         mesh, restored_base = _restore_reference_base(mesh, reference)
