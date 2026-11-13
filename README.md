@@ -264,7 +264,7 @@ OpenStreetMap land-cover evidence can provide an editable starting suggestion;
 its availability never blocks STL
 output. Plate defaults to Matte Charcoal, trail to Matte Scarlet Red, and text to Matte Nardo Grey.
 
-Preview rendering uses the same neutral studio lighting and filament color conversion for initial builds, preview refreshes, and 3MF exports. Saved object colors and valid saved elevation bands are reused during initial rendering. Both PNG views remain in deliverables even though the page omits their headings and angled-view download button.
+Preview rendering uses the same neutral studio lighting, oblique shadows, terrain-detail shading, and filament color conversion for initial builds, preview refreshes, and 3MF exports. Saved object colors and valid saved elevation bands are reused during initial rendering. Both PNG views remain in deliverables even though the page omits their headings and angled-view download button.
 
 The plate back is intentionally blank apart from the three dot-magnet recesses.
 Include this credit on the product packaging and online listing instead:
