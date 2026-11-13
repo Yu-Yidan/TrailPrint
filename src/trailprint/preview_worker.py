@@ -6,13 +6,9 @@ import traceback
 from pathlib import Path
 
 COLORS = {
-    "terrain": (0.12, 0.50, 0.18, 1.0),
-    "trail": (0.80, 0.03, 0.02, 1.0),
-    "plate": (0.01, 0.01, 0.01, 1.0),
-    "text": (1.0, 1.0, 1.0, 1.0),
-    "attribution": (0.50, 0.50, 0.50, 1.0),
-    "water": (0.02, 0.30, 0.85, 1.0),
-    "other": (0.35, 0.50, 0.44, 1.0),
+    "terrain": "#68724D", "trail": "#DE4343", "plate": "#000000",
+    "text": "#757575", "attribution": "#757575", "water": "#0078BF",
+    "other": "#757575",
 }
 
 
@@ -46,7 +42,7 @@ def main():
             selected = config.get("color_settings", {})
             role_colors = selected.get("role_colors", {})
             color = role_colors.get(item["role"])
-            material.diffuse_color = rgba(color) if color else COLORS.get(item["role"], COLORS["other"])
+            material.diffuse_color = rgba(color or COLORS.get(item["role"], COLORS["other"]))
             material.roughness = 0.75
             for obj in imported:
                 obj.data.materials.clear()
@@ -97,7 +93,16 @@ def main():
         scene = bpy.context.scene
         scene.camera = camera
         scene.render.engine = "BLENDER_WORKBENCH"
+        studio = bpy.context.preferences.studio_lights.load(
+            str(Path(__file__).with_name("preview-neutral.sl")), 'STUDIO')
         scene.display.shading.light = "STUDIO"
+        scene.display.shading.studio_light = studio.name
+        scene.display.shading.show_specular_highlight = True
+        scene.display.shading.shadow_intensity = .15
+        scene.display.shading.curvature_ridge_factor = .3
+        scene.display.shading.curvature_valley_factor = .3
+        scene.display.shading.cavity_ridge_factor = .3
+        scene.display.shading.cavity_valley_factor = .3
         scene.display.shading.color_type = "MATERIAL"
         scene.display.shading.show_shadows = True
         scene.display.shading.show_cavity = True
@@ -107,6 +112,9 @@ def main():
         scene.display.shading.background_type = "VIEWPORT"
         scene.display.shading.background_color = (0.18, 0.18, 0.18)
         scene.view_settings.view_transform = "Standard"
+        scene.view_settings.look = 'None'
+        scene.view_settings.exposure = 0
+        scene.view_settings.gamma = 1
         scene.render.resolution_x = 1200
         scene.render.resolution_y = 900
         scene.render.resolution_percentage = 100

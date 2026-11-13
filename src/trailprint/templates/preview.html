@@ -17,9 +17,9 @@
 Terrain and trail were regenerated with Shape Extras set to None; the requested plate and text were preserved.</div>{% endif %}
 <section class="preview-layout">
   <div class="preview-images">
-  <div class="preview-image-frame"><h2>Top view</h2><img src="{{ url_for('preview_image', slug=project.name, v=preview_version) }}" alt="Bird's-eye preview of {{ project.name }}"></div>
-  {% if has_side_preview %}<div class="preview-image-frame"><h2>Angled view</h2><img src="{{ url_for('preview_image', slug=project.name, view='side', v=preview_version) }}" alt="Angled preview of {{ project.name }}">
-  {% if validation.get('preview_side', {}).get('customer_filename') %}<a class="button secondary" href="{{ url_for('download_file', slug=project.name, filename=validation.preview_side.customer_filename) }}">Download angled preview</a>{% endif %}</div>{% endif %}
+  <div class="preview-image-frame"><img src="{{ url_for('preview_image', slug=project.name, v=preview_version) }}" alt="Bird's-eye preview of {{ project.name }}"></div>
+  {% if has_side_preview %}<div class="preview-image-frame"><img src="{{ url_for('preview_image', slug=project.name, view='side', v=preview_version) }}" alt="Angled preview of {{ project.name }}">
+</div>{% endif %}
   </div>
   <div class="preview-details">
   <aside class="preview-sidebar panel preview-parts"><h2>Model parts</h2>
@@ -43,21 +43,17 @@ Terrain and trail were regenerated with Shape Extras set to None; the requested 
       {% for filament in bambu_environment.filaments %}<option value="{{ filament.number }}" data-color="{{ filament.color }}" {% if bambu_defaults[role] == filament.number %}selected{% endif %}>{{ filament.number }} · {{ filament.label|default(filament.name) }}</option>{% endfor %}
     </select><i class="filament-dot" style="--filament-color:{{ bambu_environment.filaments[bambu_defaults[role]-1].color if bambu_defaults[role] else '#777777' }}"></i>
   {% endmacro %}
-  <div class="bambu-heading"><div><p class="eyebrow">BAMBU PROJECT</p><h2>Map and DIY kit setup</h2>
-    <p>The calibrated map plate contains Trail · Terrain{% if has_water %} + Water{% endif %} · Plate + Text and prints by object. Optionally add the integrated-knuckle case as a second plate.</p></div>
+  <div class="bambu-heading"><div><p class="eyebrow">BAMBU PROJECT</p><h2>Bambu Project setup</h2>
+    <p>The calibrated map plate contains Trail · Terrain{% if has_water %} + Water{% endif %} · Plate + Text and prints by object.</p></div>
     {% if bambu_output %}<div class="bambu-actions">
       <a class="button secondary" href="{{ url_for('download_file', slug=project.name, filename=project.name ~ '.3mf') }}">Download 3MF</a>
       <form method="post" action="{{ url_for('open_bambu_project', slug=project.name) }}"><button class="button secondary" type="submit">Open in Bambu Studio</button></form>
     </div>{% endif %}
   </div>
-  {% set water_estimate = bambu_validation.get('water_layer_estimate') %}
   <p>Object colors are saved in TrailPrint. Assign your physical spools when opening the 3MF in Bambu Studio.</p>
   <form method="post" action="{{ url_for('import_bambu_filaments', slug=project.name) }}">
     <button class="button secondary" type="submit">Restore default object colors</button>
   </form>
-  {% if bambu_output and water_estimate %}<div class="notice success water-layer-estimate"><strong>Estimated mixed-color water layers: {{ water_estimate.mixed_filament_layer_count }}</strong>
-    <p>Layer{% if water_estimate.mixed_filament_layer_count != 1 %}s{% endif %} {% for range in water_estimate.mixed_filament_layer_ranges %}{{ range[0] }}{% if range[1] != range[0] %}–{{ range[1] }}{% endif %}{% if not loop.last %}, {% endif %}{% else %}none{% endfor %} at {{ '%.2f'|format(water_estimate.nominal_layer_height_mm) }} mm nominal height; up to {{ water_estimate.manual_swaps_max }} manual swaps.</p>
-    <p class="fine-print">Unsliced estimate. Bambu Studio's exact count may change after slicing, especially with variable layer height.</p></div>{% endif %}
   {% if bambu_job %}<div class="build-status {{ bambu_job.state }}" id="bambu-status" data-job-id="{{ bambu_job.id }}" data-open-folder-url="{{ url_for('open_output_folder', slug=project.name) }}" data-home-url="{{ url_for('preview_project', slug=project.name) }}">
     <strong id="bambu-state">{{ bambu_job.state|title }}</strong><p id="bambu-message">{{ bambu_job.message }}</p><small id="bambu-elapsed"></small>
   </div>{% endif %}
@@ -66,41 +62,29 @@ Terrain and trail were regenerated with Shape Extras set to None; the requested 
     <input type="hidden" name="palette_revision" value="{{ palette_revision }}">
     {% if none in bambu_defaults.values() %}<p class="notice">Some saved colors are no longer in the palette. Choose replacement filaments before exporting.</p>{% endif %}
     <div class="bambu-profile"><span><strong>Printer</strong>{{ bambu_environment.machine }}</span><span><strong>Process</strong>{{ bambu_environment.process }}</span></div>
-    {% if elevation %}<div class="terrain-mode-picker">
-      {% if osm_palette %}<label><input type="radio" name="terrain_mode" value="osm" checked> OSM-inspired</label>{% endif %}
-      <label><input type="radio" name="terrain_mode" value="manual" {% if not osm_palette %}checked{% endif %}> Manual elevation</label>
+    <div id="band-editor" data-settings='{{ band_editor|tojson }}'>
+      <label>Terrain filament <select name="terrain_color" id="terrain-color" class="text-input">
+      {% for key, value in band_editor.colors.items() %}<option value="{{ key }}" {% if band_editor.saved.get('terrain', 'green') == key %}selected{% endif %}>{{ value[0] }}</option>{% endfor %}
+      </select></label>
+      <label><input type="checkbox" id="advanced-terrain" name="advanced_terrain" {% if band_editor.saved.get('advanced') %}checked{% endif %}> Advanced terrain colors</label>
+      <div id="band-controls" hidden><div class="band-editor-scroll"><div class="band-editor-grid"><div id="band-scale" aria-label="Elevation bands, highest first"></div><div id="band-rows"></div></div></div>
+      <button type="button" id="add-band" class="button secondary">Add divider</button><button type="button" id="reset-bands" class="button secondary">Reset bands</button><button type="button" id="osm-bands" class="button secondary">Use OSM suggestion</button>
+      <p id="band-error" role="alert"></p></div>
+      <input type="hidden" name="terrain_bands" id="terrain-bands">
     </div>
-    {% if osm_palette %}<div class="terrain-elevation osm-terrain-settings">
-      <strong>OpenStreetMap-inspired elevation palette</strong>
-      <p>{% for band in osm_palette.display_bands %}<span class="terrain-role {{ band.role }}">{{ band.role|title }} {{ '%.0f'|format(band.display_min) }}–{{ '%.0f'|format(band.display_max) }} {{ elevation.unit }}</span>{% if not loop.last %} → {% endif %}{% endfor %}</p>
-      <p class="fine-print">Mapped evidence covers {{ '%.0f'|format(osm_palette.mapped_coverage * 100) }}% of terrain samples; approximate band match {{ '%.0f'|format(osm_palette.confidence * 100) }}%. {{ osm_palette.attribution }}</p>
-    </div>{% endif %}
-    <div class="terrain-elevation manual-terrain-settings" id="terrain-elevation" data-min="{{ elevation.minimum }}" data-max="{{ elevation.maximum }}" {% if osm_palette %}hidden{% endif %}>
-      <strong>Terrain elevation {{ '%.0f'|format(elevation.minimum) }}–{{ '%.0f'|format(elevation.maximum) }} {{ elevation.unit }}</strong>
-      <div class="compact-grid">
-        <label><span>Mountain starts ({{ elevation.unit }})</span><input class="text-input" id="grey-start" name="grey_start" type="number" step="any" value="{{ '%.2f'|format(elevation.grey_start) }}" required></label>
-        <label><span>Snow starts ({{ elevation.unit }})</span><input class="text-input" id="white-start" name="white_start" type="number" step="any" value="{{ '%.2f'|format(elevation.white_start) }}" required></label>
-      </div><p class="fine-print" id="terrain-band-summary"></p>
-    </div>{% else %}<div class="notice error"><strong>Elevation colors unavailable.</strong> Rebuild this project to capture its downloaded terrain elevation range.</div>{% endif %}
     <div class="filament-grid">
-      {% for role in ['trail', 'plate', 'text'] + (['water'] if has_water else []) %}<label><span>{{ role|title }} filament</span>
+      {% for role in ['trail', 'plate', 'text', 'water'] %}<label><span>{{ role|title }} filament</span>
         {{ filament_select(role, true) }}
       </label>{% endfor %}
-      {% for role in ['land', 'mountain', 'summit'] %}<label class="manual-terrain-settings" {% if osm_palette %}hidden{% endif %}><span>{{ role|title }} filament</span>
-        {{ filament_select(role) }}
-      </label>{% endfor %}
-      {% if osm_palette %}{% for role in ['black', 'green', 'grey', 'white'] %}<label class="osm-terrain-settings"><span>{{ role|title }} filament</span>
-        {{ filament_select(role) }}
-      </label>{% endfor %}{% endif %}
     </div>
     <div class="notice"><strong>Data credit for packaging and product listing</strong>
       <p class="fine-print">Map data © OpenStreetMap contributors — openstreetmap.org/copyright. Elevation data © Mapterhorn — mapterhorn.com/attribution.</p>
     </div>
-    <label class="toggle-setting"><input type="checkbox" name="generate_diy_kit"><span><strong>Generate DIY kit</strong><small>Add a support-free, print-in-place case as plate 2. The case reuses the selected {% if osm_palette %}Grey{% else %}Mountain{% endif %} terrain-rock filament.</small></span></label>
-    <label class="save-terrain-defaults"><input type="checkbox" name="save_terrain_defaults"> Save terrain{% if has_water %} and water{% endif %} filaments and elevations as defaults</label>
     {% if bambu_missing_roles %}<div class="notice error"><strong>Export unavailable.</strong>
       This build is missing: {{ bambu_missing_roles|join(', ')|title }}. Rebuild the STL set first.</div>{% endif %}
     <div class="notice error"><strong>Object-by-object print · purge multiplier 0.6.</strong> The prime tower is disabled; confirm AMS mapping and color transitions in Bambu Studio before printing.</div>
+    <button type="button" class="button secondary" id="refresh-preview" data-status-url="{{ url_for('preview_job_status', slug=project.name, job_id='PREVIEW_JOB_ID') }}" data-url="{{ url_for('refresh_project_preview', slug=project.name) }}" {% if bambu_missing_roles %}disabled{% endif %}>Refresh preview</button>
+    <p id="preview-refresh-status" role="status">{% if validation.get('preview_only') %}Preview colors have not been exported to the 3MF.{% endif %}</p>
     <button class="button primary" type="submit" {% if not bambu_ready or (bambu_job and bambu_job.state in ['queued','running']) %}disabled{% endif %}>Create Bambu 3MF</button>
   </form>{% endif %}
 </section>

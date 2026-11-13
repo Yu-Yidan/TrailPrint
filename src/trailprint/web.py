@@ -1,5 +1,6 @@
 """Local browser interface for TrailPrint."""
 
+import json
 import subprocess
 from dataclasses import asdict, replace
 from pathlib import Path
@@ -16,12 +17,22 @@ from flask import (
     url_for,
 )
 
-from .bambu import BambuSettings, default_filament_mapping, discover_environment
+from .bambu import (
+    BambuSettings,
+    default_filament_mapping,
+    discover_environment,
+    nominal_layer_height,
+)
 from .bambu_jobs import BambuJobManager
 from .blender_bridge import EXTRA_LABELS, SHAPE_EXTRAS, SHAPE_LABELS, BuildSettings
 from .build_settings import current_model_settings
+from .filament_palette import (
+    OBJECT_DEFAULTS,
+    ensure_terrain_palette,
+    palette_revision,
+    role_defaults,
+)
 from .filament_palette import load_object_palette as load_filament_palette
-from .filament_palette import palette_revision, role_defaults
 from .filament_palette import restore_object_palette as import_filament_palette
 from .fonts import MODEL_FONT_BROWSER_CSS
 from .gpx import (
@@ -49,11 +60,8 @@ from .projects import (
     update_production_status,
 )
 from .terrain_colors import (
-    display_elevation,
     elevation_metadata,
-    elevation_to_meters,
     load_terrain_defaults,
-    save_terrain_preferences,
 )
 from .title import TITLE_FIT_TOLERANCE_MM, TITLE_LIMITS_MM, TITLE_WIDTH_SCALE, validate_title_fit
 
@@ -296,143 +304,178 @@ def create_app(repo_root: Path = None, build_manager: BuildManager = None,
         if not files or not (project / "build/preview.png").is_file():
             flash("Build the project before opening its preview.", "error")
             return redirect(url_for("project_detail", slug=slug))
-        preview_files = [{
-            "name": path.name, "role": mesh_role(path, slug),
-        } for path in files]
+        preview_files = [
+            {
+                "name": path.name,
+                "role": mesh_role(path, slug),
+            }
+            for path in files
+        ]
         available_roles = {item["role"] for item in preview_files}
-        missing_roles = [role for role in
-                         ("trail", "terrain", "plate", "text")
-                         if role not in available_roles]
+        missing_roles = [
+            role for role in ("trail", "terrain", "plate", "text") if role not in available_roles
+        ]
         try:
-            bambu_environment = load_filament_palette(root, discover_environment)
+            bambu_environment, terrain_slots = ensure_terrain_palette(
+                root, load_filament_palette(root, discover_environment)
+            )
             bambu_error = ""
             filament_defaults = default_filament_mapping(bambu_environment.filaments)
-            terrain_defaults = load_terrain_defaults(
-                root, project, bambu_environment.filaments)
+            terrain_defaults = load_terrain_defaults(root, project, bambu_environment.filaments)
             filament_defaults.update(terrain_defaults)
             filament_defaults = role_defaults(root, project, bambu_environment, filament_defaults)
         except ValueError as exc:
             bambu_environment, filament_defaults, terrain_defaults, bambu_error = None, {}, {}, str(exc)
+        from .terrain_bands import COLORS
+        from .terrain_colors import _read_json
+
+        saved_bands = _read_json(project / "terrain-bands.json")
+        if bambu_environment:
+            filament_defaults["terrain"] = terrain_slots.get(
+                saved_bands.get("terrain", "green"), terrain_slots["green"]
+            )
         elevation = elevation_metadata(project)
-        unit_system = str(elevation.get("unit_system", "IMPERIAL")).upper()
-        elevation_view = ({
-            "minimum": display_elevation(elevation["source_min_m"], unit_system),
-            "maximum": display_elevation(elevation["source_max_m"], unit_system),
-            "grey_start": display_elevation(terrain_defaults.get("grey_start_m", 1200), unit_system),
-            "white_start": display_elevation(terrain_defaults.get("white_start_m", 2300), unit_system),
-            "unit": "m" if unit_system == "METRIC" else "ft",
-            "unit_system": unit_system,
-        } if elevation else {})
         osm_palette = load_palette(project)
-        if osm_palette and elevation:
-            osm_palette = {**osm_palette, "display_bands": [{
-                **band,
-                "display_min": display_elevation(band["min_elevation_m"], unit_system),
-                "display_max": display_elevation(band["max_elevation_m"], unit_system),
-            } for band in osm_palette["bands"]]}
         validation = read_report(project / "build/validation.json")
-        customer_preview = str(
-            validation.get("preview", {}).get("customer_filename", ""))
-        if (Path(customer_preview).name != customer_preview
-                or not customer_preview.endswith("-preview.png")
-                or not (deliverables / customer_preview).is_file()):
+        customer_preview = str(validation.get("preview", {}).get("customer_filename", ""))
+        if (
+            Path(customer_preview).name != customer_preview
+            or not customer_preview.endswith("-preview.png")
+            or not (deliverables / customer_preview).is_file()
+        ):
             customer_preview = ""
         bambu_job = app.extensions["trailprint_bambu"].for_project(project)
-        bambu_validation = read_report(project / "build/bambu-validation.json")
         return render_template(
-            "preview.html", project=project, files=preview_files,
+            "preview.html",
+            project=project,
+            files=preview_files,
             project_title=human_name(project),
             validation=validation,
             customer_preview=customer_preview,
             preview_version=(project / "build/preview.png").stat().st_mtime_ns,
             has_side_preview=(project / "build/preview-side.png").is_file(),
-            bambu_environment=bambu_environment, bambu_defaults=filament_defaults,
+            bambu_environment=bambu_environment,
+            bambu_defaults=filament_defaults,
             palette_revision=palette_revision(bambu_environment) if bambu_environment else "",
-            bambu_error=bambu_error, bambu_job=bambu_job,
-            bambu_validation=bambu_validation,
-            elevation=elevation_view,
-            osm_palette=osm_palette,
+            bambu_error=bambu_error,
+            bambu_job=bambu_job,
+            band_editor=dict(
+                elevation=elevation,
+                colors=COLORS,
+                saved=saved_bands,
+                suggestions=osm_palette.get("bands", []) if osm_palette else [],
+                layer_height=nominal_layer_height(bambu_environment) if bambu_environment else 0.2,
+            ),
             bambu_missing_roles=missing_roles,
-            bambu_ready=not missing_roles and bool(elevation),
-            bambu_output=(project / "deliverables" / canonical_3mf_name(project)).is_file())
+            bambu_ready=not missing_roles,
+            bambu_output=(project / "deliverables" / canonical_3mf_name(project)).is_file(),
+        )
 
     @app.post("/projects/<slug>/import-filaments")
     def import_bambu_filaments(slug):
         project = get_project(slug)
         try:
             import_filament_palette(root, discover_environment, project)
+            from .terrain_colors import _atomic_json
+
+            _atomic_json(
+                project / "terrain-bands.json", dict(terrain="green", advanced=False, bands=[])
+            )
         except (OSError, ValueError) as exc:
             flash(str(exc), "error")
         else:
-            flash("Restored the default object colors. Review the assignments.",
-                  "success")
+            flash("Restored the default object colors. Review the assignments.", "success")
         return redirect(url_for("preview_project", slug=slug))
 
-    @app.post("/projects/<slug>/bambu")
+    from .preview_jobs import PreviewJobs
+    preview_jobs = PreviewJobs()
+    app.extensions['trailprint_previews'] = preview_jobs
+
+    def read_bambu_submission(project):
+        from .terrain_bands import validate_ranges
+
+        environment, slots = ensure_terrain_palette(
+            root, load_filament_palette(root, discover_environment)
+        )
+        if request.form.get("palette_revision") != palette_revision(environment):
+            raise ValueError("The filament palette changed. Refresh and review the color selections.")
+        mode = "custom" if request.form.get("advanced_terrain") == "on" else "single"
+        color = request.form.get("terrain_color", "green")
+        if color not in slots:
+            raise ValueError("Choose a valid terrain color.")
+        ranges = json.loads(request.form.get("terrain_bands", "[]")) if mode == "custom" else []
+        if mode == "custom":
+            ranges = validate_ranges(
+                ranges, elevation_metadata(project), nominal_layer_height(environment)
+            )
+        roles = ["trail", "plate", "text"]
+        settings = BambuSettings.validated(
+            len(environment.filaments),
+            **{role: request.form.get(role + "_filament") for role in roles},
+            land=slots[color],
+            mountain=OBJECT_DEFAULTS["attribution"],
+            water=request.form.get("water_filament") or OBJECT_DEFAULTS["water"],
+            terrain_mode=mode,
+            custom_bands=ranges,
+            band_filaments=[slots[item["color"]] for item in ranges],
+        )
+        return settings, environment, color, mode, roles
+
+    def save_bambu_preferences(project, settings, environment, color, mode, roles):
+        from .terrain_colors import _atomic_json, _read_json, project_settings_path
+
+        _atomic_json(
+            project / "terrain-bands.json",
+            dict(
+                terrain=color,
+                advanced=mode == "custom",
+                bands=json.loads(request.form.get("terrain_bands", "[]")),
+            ),
+        )
+
+        preferences = _read_json(project_settings_path(project))
+        preferences.update({role: getattr(settings, role + "_filament") for role in roles})
+        preferences.update(
+            water=settings.water_filament, palette_revision=palette_revision(environment)
+        )
+        _atomic_json(project_settings_path(project), preferences)
+
+    @app.post('/projects/<slug>/refresh-preview')
+    def refresh_project_preview(slug):
+        project = get_project(slug)
+        try:
+            submission = read_bambu_submission(project)
+            settings, environment, *_ = submission
+            job = preview_jobs.start(
+                project, settings, environment, lambda: save_bambu_preferences(project, *submission)
+            )
+            return jsonify(id=job["id"], state=job["state"])
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            return jsonify(error=str(exc)), 400
+
+    @app.post('/projects/<slug>/bambu')
     def build_bambu_project(slug):
         project = get_project(slug)
         try:
-            environment = load_filament_palette(root, discover_environment)
-            if request.form.get("palette_revision") != palette_revision(environment):
-                raise ValueError("The filament palette changed. Refresh and review the color selections.")
-            elevation = elevation_metadata(project)
-            if not elevation:
-                raise ValueError("Rebuild the terrain before creating elevation colors.")
-            unit_system = str(elevation.get("unit_system", "IMPERIAL")).upper()
-            grey_start_m = elevation_to_meters(
-                request.form.get("grey_start"), unit_system)
-            white_start_m = elevation_to_meters(
-                request.form.get("white_start"), unit_system)
-            terrain_mode = request.form.get("terrain_mode", "manual")
-            active_roles = ["trail", "plate", "text"] + (
-                ["black", "green", "grey", "white"] if terrain_mode == "osm"
-                else ["land", "mountain", "summit"])
-            if any(mesh_role(path, project.name) == "water"
-                   for path in (project / "deliverables").glob("*.stl")):
-                active_roles.append("water")
-            if any(not request.form.get(f"{role}_filament") for role in active_roles):
-                raise ValueError("Choose a filament for each active model part before exporting.")
-            palette = load_palette(project) if terrain_mode == "osm" else {}
-            settings = BambuSettings.validated(
-                len(environment.filaments),
-                trail=request.form.get("trail_filament"),
-                land=request.form.get("land_filament") or 1,
-                mountain=request.form.get("mountain_filament") or 1,
-                summit=request.form.get("summit_filament") or 1,
-                plate=request.form.get("plate_filament"),
-                text=request.form.get("text_filament"),
-                water=request.form.get("water_filament", 1),
-                grey_start_m=grey_start_m, white_start_m=white_start_m,
-                black=request.form.get("black_filament") or 1,
-                green=request.form.get(
-                    "green_filament", request.form.get("land_filament", 1)) or 1,
-                grey=request.form.get(
-                    "grey_filament", request.form.get("mountain_filament", 1)) or 1,
-                white=request.form.get(
-                    "white_filament", request.form.get("summit_filament", 1)) or 1,
-                terrain_mode=terrain_mode,
-                automatic_bands=palette.get("bands", ()),
-                generate_diy_kit=request.form.get("generate_diy_kit") == "on")
-            color_preferences = {
-                **settings.terrain_filaments(),
-                "trail": settings.trail_filament, "plate": settings.plate_filament,
-                "text": settings.text_filament, "palette_revision": palette_revision(environment),
-                "grey_start_m": grey_start_m,
-                "white_start_m": white_start_m,
-            }
-            if any(mesh_role(path, project.name) == "water"
-                   for path in (project / "deliverables").glob("*.stl")):
-                color_preferences["water"] = settings.water_filament
-            save_terrain_preferences(
-                root, project, color_preferences,
-                save_defaults=request.form.get("save_terrain_defaults") == "on")
+            submission = read_bambu_submission(project)
+            settings, environment, *_ = submission
+            save_bambu_preferences(project, *submission)
             job = app.extensions["trailprint_bambu"].start(project, settings, environment=environment)
-        except (OSError, ValueError) as exc:
+        except (OSError, ValueError, KeyError, TypeError) as exc:
             flash(str(exc), "error")
         else:
             flash("Bambu Studio project export started.", "success")
-        return redirect(url_for("preview_project", slug=slug,
-                                bambu_job=job.id if 'job' in locals() else None))
+        return redirect(
+            url_for("preview_project", slug=slug, bambu_job=job.id if "job" in locals() else None)
+        )
+
+    @app.get('/projects/<slug>/preview-jobs/<job_id>')
+    def preview_job_status(slug, job_id):
+        project = get_project(slug)
+        job = preview_jobs.jobs.get(job_id)
+        if not job or job["project"] != str(project.resolve()):
+            abort(404)
+        return jsonify({key: value for key, value in job.copy().items() if key != "project"})
 
     @app.get("/bambu-builds/<job_id>")
     def bambu_build_status(job_id):

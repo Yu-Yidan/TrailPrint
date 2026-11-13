@@ -210,8 +210,9 @@ class WebTests(unittest.TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertIsNone(self.bambu_manager.started)
         with self.client.session_transaction() as session:
-            self.assertIn("Rebuild the terrain", session["_flashes"][-1][1])
-        self.assertEqual(palette_revision(load_object_palette(self.root, lambda: None)), old_revision)
+            self.assertIn("filament palette changed", session["_flashes"][-1][1])
+        self.assertEqual(load_object_palette(self.root, lambda: None).filaments[:6],
+                         load_object_palette(self.root, lambda: self.bambu_environment).filaments[:6])
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -438,8 +439,8 @@ class WebTests(unittest.TestCase):
         self.assertIn(b'class="preview-sidebar panel preview-validation"', page.data)
         self.assertNotIn(b"Reset view", page.data)
         self.assertNotIn(b"preview.js", page.data)
-        self.assertIn(b"Map and DIY kit setup", page.data)
-        self.assertIn(b'name="generate_diy_kit"', page.data)
+        self.assertIn(b"Bambu Project setup", page.data)
+        self.assertNotIn(b'name="generate_diy_kit"', page.data)
         self.assertNotIn(b'name="generate_diy_kit" checked', page.data)
         self.assertIn(b"Data credit for packaging and product listing", page.data)
         self.assertIn(b"Map data \xc2\xa9 OpenStreetMap contributors", page.data)
@@ -460,87 +461,6 @@ class WebTests(unittest.TestCase):
         (project / "build/preview.png").unlink()
         self.assertEqual(self.client.get("/projects/build-me/preview-image").status_code, 404)
 
-    def test_bambu_export_starts_with_terrain_band_assignments(self):
-        project = create_project(self.root / "prints", "Build Me", GPX)
-        for name in ("build-me.stl", "build-me_Trail.stl", "build-me_Plate.stl",
-                     "build-me_Text.stl"):
-            (project / "deliverables" / name).write_bytes(b"stl")
-        (project / "build/preview.png").write_bytes(b"png")
-        (project / "build/elevation.json").write_text(json.dumps({
-            "source_min_m": 500, "source_max_m": 2500,
-            "model_surface_min_z_mm": 5.5, "model_surface_max_z_mm": 25.5,
-            "min_thickness_mm": 2, "unit_system": "IMPERIAL",
-        }), encoding="utf-8")
-
-        page = self.client.get("/projects/build-me/preview")
-        self.assertIn(b"Bambu Lab P1S 0.4 nozzle", page.data)
-        self.assertNotIn(b"Export unavailable", page.data)
-        response = self.client.post("/projects/build-me/bambu", data={
-            "palette_revision": palette_revision(load_object_palette(self.root, lambda: self.bambu_environment)),
-            "trail_filament": "3", "land_filament": "4",
-            "mountain_filament": "1", "summit_filament": "2",
-            "plate_filament": "1", "text_filament": "2",
-            "grey_start": "4000", "white_start": "7500",
-            "generate_diy_kit": "on"})
-
-        self.assertEqual(response.status_code, 302)
-        self.assertEqual(self.bambu_manager.started.settings.by_role(),
-                         {"trail": 3, "terrain": 4, "plate": 1, "text": 2,
-                          "attribution": 1})
-        self.assertEqual(self.bambu_manager.started.settings.terrain_filaments(),
-                         {"land": 4, "mountain": 1, "summit": 2})
-        self.assertTrue(self.bambu_manager.started.settings.generate_diy_kit)
-        self.assertEqual(self.bambu_manager.started.settings.diy_case_filament(), 1)
-
-    def test_osm_palette_is_default_and_uses_server_owned_bands(self):
-        project = create_project(self.root / "prints", "OSM Map", GPX)
-        for name in ("osm-map.stl", "osm-map_Trail.stl", "osm-map_Plate.stl",
-                     "osm-map_Text.stl"):
-            (project / "deliverables" / name).write_bytes(b"stl")
-        (project / "build/preview.png").write_bytes(b"png")
-        (project / "build/elevation.json").write_text(json.dumps({
-            "source_min_m": 0, "source_max_m": 1000,
-            "model_surface_min_z_mm": 2, "model_surface_max_z_mm": 12,
-            "min_thickness_mm": 2, "unit_system": "METRIC",
-        }), encoding="utf-8")
-        bands = [
-            {"role": "green", "min_z": 2, "max_z": 6,
-             "min_elevation_m": 0, "max_elevation_m": 400},
-            {"role": "grey", "min_z": 6, "max_z": 9,
-             "min_elevation_m": 400, "max_elevation_m": 700},
-            {"role": "white", "min_z": 9, "max_z": 12,
-             "min_elevation_m": 700, "max_elevation_m": 1000},
-        ]
-        (project / "build/terrain-palette.json").write_text(json.dumps({
-            "version": 2, "available": True, "source": "OpenStreetMap",
-            "attribution": "© OpenStreetMap contributors", "mapped_coverage": .4,
-            "confidence": .8, "bands": bands,
-        }), encoding="utf-8")
-
-        page = self.client.get("/projects/osm-map/preview").data
-        self.assertIn(b'value="osm" checked', page)
-        self.assertIn(b"OpenStreetMap-inspired elevation palette", page)
-        self.assertIn(b"Mapped evidence covers 40%", page)
-        self.assertNotIn(b"One-plate export unavailable", page)
-        self.assertIn(b'type="submit" >Create Bambu 3MF</button>', page)
-        self.assertNotIn(b"Satellite", page)
-        self.assertNotIn(b"Sentinel", page)
-
-        response = self.client.post("/projects/osm-map/bambu", data={
-            "palette_revision": palette_revision(load_object_palette(self.root, lambda: self.bambu_environment)),
-            "terrain_mode": "osm", "trail_filament": "3", "land_filament": "4",
-            "mountain_filament": "1", "summit_filament": "2",
-            "plate_filament": "1", "text_filament": "2",
-            "black_filament": "1", "green_filament": "4",
-            "grey_filament": "1", "white_filament": "2",
-            "grey_start": "400", "white_start": "800",
-        })
-        self.assertEqual(response.status_code, 302)
-        settings = self.bambu_manager.started.settings
-        self.assertEqual(settings.terrain_mode, "osm")
-        self.assertEqual(settings.automatic_bands, tuple(bands))
-        self.assertEqual(settings.by_role()["terrain"], 4)
-
     def test_water_build_uses_combined_terrain_object_and_blue_filament(self):
         project = create_project(self.root / "prints", "Wet Route", GPX)
         for name in ("wet-route.stl", "wet-route_Trail.stl", "wet-route_Plate.stl",
@@ -555,7 +475,7 @@ class WebTests(unittest.TestCase):
 
         page = self.client.get("/projects/wet-route/preview")
 
-        self.assertIn(b"Map and DIY kit setup", page.data)
+        self.assertIn(b"Bambu Project setup", page.data)
         self.assertIn(b"Terrain + Water", page.data)
         self.assertNotIn(b"One-plate export unavailable", page.data)
         self.assertIn(b'name="water_filament"', page.data)
@@ -572,7 +492,7 @@ class WebTests(unittest.TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertEqual(self.bambu_manager.started.settings.water_filament, 4)
 
-    def test_preview_shows_combined_water_layer_estimate(self):
+    def test_preview_hides_legacy_water_layer_estimate(self):
         project = create_project(self.root / "prints", "Mixed Water", GPX)
         for name in ("mixed-water.stl", "mixed-water_Trail.stl",
                      "mixed-water_Plate.stl", "mixed-water_Text.stl",
@@ -597,10 +517,10 @@ class WebTests(unittest.TestCase):
 
         page = self.client.get("/projects/mixed-water/preview").data
 
-        self.assertIn(b"Map and DIY kit setup", page)
+        self.assertIn(b"Bambu Project setup", page)
         self.assertIn(b"Terrain + Water", page)
         self.assertNotIn(b"One-plate export unavailable", page)
-        self.assertIn(b"Estimated mixed-color water layers: 13", page)
+        self.assertNotIn(b"Estimated mixed-color water layers", page)
         self.assertNotIn(b'name="water_placement"', page)
 
     def test_bambu_script_opens_output_folder_after_success(self):
