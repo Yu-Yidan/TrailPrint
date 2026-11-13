@@ -11,6 +11,9 @@ daily project creation in Pacific time without an external chart service.
 ## Quick start
 
 Python 3.9+, Blender 5.2, and an enabled TrailPrint3D add-on are required.
+The bridge supports TrailPrint3D 4.0's generation context and layout controls,
+while retaining the older generation hook. App text fields keep their labeled
+edge positions when using the new layouts.
 
 Generated titles and model text use Arial Bold from the installed macOS font
 file. Builds fail with a clear error if it is missing. Title-fit warnings use
