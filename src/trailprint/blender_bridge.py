@@ -581,6 +581,43 @@ def _failure_detail(result: subprocess.CompletedProcess) -> str:
     )
 
 
+def initial_preview_colors(project, elevation=None):
+    """Resolve saved object colors without requiring slicer discovery."""
+    from .preview_worker import COLORS
+    from .terrain_bands import COLORS as TERRAIN_COLORS
+    from .terrain_colors import _read_json
+
+    colors = dict(COLORS)
+    layer_height = .2
+    root = project.parent.parent
+    try:
+        from .filament_palette import _environment, palette_path, role_defaults
+        palette = _read_json(palette_path(root))
+        environment = _environment(palette['active'])
+        from .bambu import nominal_layer_height
+        layer_height = nominal_layer_height(environment)
+        roles = role_defaults(root, project, environment, {})
+        for role in ('trail', 'plate', 'text', 'water', 'attribution'):
+            slot = roles.get(role)
+            if slot:
+                colors[role] = environment.filaments[slot-1]['color']
+    except (KeyError, IndexError, TypeError, ValueError):
+        pass
+    saved = _read_json(project/'terrain-bands.json')
+    selected = saved.get('terrain', 'green')
+    colors['terrain'] = TERRAIN_COLORS.get(selected, TERRAIN_COLORS['green'])[1]
+    bands = []
+    if saved.get('advanced') and elevation:
+        from .terrain_bands import export_ranges
+        try:
+            ranges = export_ranges(saved.get('bands', []), elevation, layer_height)
+            colors['terrain'] = TERRAIN_COLORS[ranges[0]['color']][1]
+            bands = [{**band, 'color': TERRAIN_COLORS[band['color']][1]} for band in ranges[1:]]
+        except (ValueError, KeyError, TypeError):
+            pass
+    return {'role_colors': colors, 'terrain_bands': bands}
+
+
 def _render_preview(stls: List[Path], project_slug: str, output: Path, config_path: Path,
                     blender_path: Path, timeout: int, cancel_event=None,
                     color_settings=None) -> subprocess.CompletedProcess:
@@ -884,7 +921,7 @@ def run_blender_build(project: Path, settings: BuildSettings, blender: Optional[
     try:
         preview_result = _render_preview(
             staged, project.name, preview_stage, attempt_root / "preview-job.json",
-            blender_path, remaining, cancel_event)
+            blender_path, remaining, cancel_event, color_settings=initial_preview_colors(project, elevation))
     except BuildCancelled:
         log_path.write_text("Build cancelled during preview rendering.\n", encoding="utf-8")
         shutil.rmtree(attempt_root, ignore_errors=True)

@@ -5,8 +5,6 @@ import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
 
-import trimesh
-
 from trailprint.bambu import (
     ONE_PLATE_LAYOUT,
     WALL_GENERATOR,
@@ -17,7 +15,6 @@ from trailprint.bambu import (
     assemble_manifest,
     default_filament_mapping,
     discover_environment,
-    estimate_water_layer_changes,
     validate_3mf,
 )
 
@@ -120,49 +117,9 @@ class BambuProjectTests(unittest.TestCase):
         self.assertEqual([item["assemble_index"] for item in objects],
                          [[0], [2], [2], [2], [1], [1]])
 
-    def test_diy_case_adds_second_plate_with_terrain_rock_filament(self):
-        files = {role: Path(f"/{role}.stl")
-                 for role in ("trail", "terrain", "plate", "text")}
-        with tempfile.TemporaryDirectory() as temp:
-            case = Path(temp) / "diy-case.stl"
-            trimesh.creation.box(extents=(80, 190, 8)).export(case)
-            manual = BambuSettings(
-                3, 4, 2, 1, 1, 2, generate_diy_kit=True)
-            manifest = assemble_manifest(files, manual, 4, diy_case=case)
-            self.assertEqual([item["plate_name"] for item in manifest["plates"]],
-                             ["TrailPrint", "DIY Case"])
-            self.assertEqual(manifest["plates"][1]["objects"][0]["filaments"], [2])
-            self.assertEqual(manifest["plates"][1]["plate_params"]["enable_support"], "0")
-            osm = BambuSettings(
-                3, 4, 2, 1, 1, 2, grey_filament=3, terrain_mode="osm",
-                automatic_bands=({"role": "green"},), generate_diy_kit=True)
-            self.assertEqual(osm.diy_case_filament(), 3)
 
-    def test_estimates_mixed_water_layers_and_manual_swaps(self):
-        settings = BambuSettings(3, 4, 1, 2, 1, 2, water_filament=2)
-        estimate = estimate_water_layer_changes(
-            [(0.15, 0.55), (0.45, 0.75)], 0, 0.2, 0.2, settings, [])
 
-        self.assertEqual(estimate["water_layer_ranges"], [[1, 4]])
-        self.assertEqual(estimate["mixed_filament_layer_count"], 4)
-        self.assertEqual(estimate["manual_swaps_max"], 8)
-        self.assertFalse(estimate["is_exact"])
 
-    def test_matching_water_and_terrain_filaments_need_no_swaps(self):
-        settings = BambuSettings(3, 4, 1, 2, 1, 2, water_filament=4)
-        estimate = estimate_water_layer_changes(
-            [(0.2, 0.6)], 0, 0.2, 0.3, settings, [])
-        self.assertEqual(estimate["water_layer_count"], 3)
-        self.assertEqual(estimate["mixed_filament_layer_count"], 0)
-        self.assertEqual(estimate["manual_swaps_max"], 0)
-
-    def test_two_layer_water_on_layer_boundaries_is_not_overcounted(self):
-        settings = BambuSettings(3, 4, 1, 2, 1, 2, water_filament=2)
-        estimate = estimate_water_layer_changes(
-            [(19.8, 20.2)], 3.8, 0.2, 0.2, settings, [])
-
-        self.assertEqual(estimate["water_layer_count"], 2)
-        self.assertEqual(estimate["water_layer_ranges"], [[81, 82]])
 
     def test_osm_mode_uses_lowest_band_as_terrain_base(self):
         bands = ({"role": "black", "min_z": 2.0, "max_z": 5.0},
@@ -254,52 +211,6 @@ class BambuProjectTests(unittest.TestCase):
             self.assertEqual(report["water_filament"], 2)
             self.assertEqual(ranges.find("object").attrib["id"], "2")
 
-    def test_validates_diy_case_as_second_plate(self):
-        with tempfile.TemporaryDirectory() as temp:
-            output = Path(temp) / "diy.3mf"
-            settings = {
-                "enable_prime_tower": "0",
-                "prime_tower_enable_framework": "0",
-                "enable_tower_interface_features": "0",
-                "initial_layer_print_height": "0.2",
-                "flush_multiplier": ["0.6"],
-                "flush_volumes_matrix": [
-                    str(0 if row == column else 100)
-                    for row in range(4) for column in range(4)
-                ],
-                "flush_volumes_vector": ["0"] * 8,
-                "print_sequence": "by object",
-                "wall_generator": "classic",
-                "different_settings_to_system": [
-                    "wall_generator;enable_prime_tower"
-                ],
-                "first_layer_print_sequence": ["0"],
-                "other_layers_print_sequence": ["0"],
-                "other_layers_print_sequence_nums": "0",
-            }
-            model = '''<config>
-              <object id="2"><metadata key="extruder" value="3"/><part><metadata key="source_file" value="model_Trail.stl"/></part></object>
-              <object id="4"><metadata key="extruder" value="4"/><part><metadata key="source_file" value="model.stl"/><metadata key="source_object_id" value="1"/></part></object>
-              <object id="7"><part><metadata key="source_file" value="model_Plate.stl"/><metadata key="extruder" value="1"/></part><part><metadata key="source_file" value="model_Text.stl"/><metadata key="extruder" value="2"/></part><part><metadata key="source_file" value="model_Attribution.stl"/><metadata key="extruder" value="3"/></part></object>
-              <object id="9"><metadata key="extruder" value="3"/><part><metadata key="source_file" value="diy-case.stl"/></part></object>
-              <plate><metadata key="plater_name" value="TrailPrint"/><model_instance><metadata key="object_id" value="2"/></model_instance><model_instance><metadata key="object_id" value="4"/></model_instance><model_instance><metadata key="object_id" value="7"/></model_instance></plate>
-              <plate><metadata key="plater_name" value="DIY Case"/><model_instance><metadata key="object_id" value="9"/></model_instance></plate>
-            </config>'''
-            with zipfile.ZipFile(output, "w", zipfile.ZIP_STORED) as archive:
-                archive.writestr("3D/3dmodel.model", b"x" * 3000)
-                archive.writestr("Metadata/project_settings.config", json.dumps(settings))
-                archive.writestr("Metadata/model_settings.config", model)
-
-            report = validate_3mf(
-                output,
-                {"trail": 3, "terrain": 4, "plate": 1, "text": 2,
-                 "attribution": 3},
-                terrain_filaments={"land": 4, "mountain": 3, "summit": 2},
-                filament_count=4, diy_case_filament=3)
-
-            self.assertTrue(report["diy_kit_included"])
-            self.assertEqual(report["plates"], 2)
-            self.assertEqual(report["diy_case_filament"], 3)
 
     def test_validation_rejects_non_classic_wall_generator(self):
         with tempfile.TemporaryDirectory() as temp:

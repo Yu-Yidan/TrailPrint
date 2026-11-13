@@ -14,16 +14,39 @@ from .bambu import BambuEnvironment
 from .terrain_colors import _atomic_json, _read_json, project_settings_path, settings_path
 
 _LOCK = threading.RLock()
-ROLES = ("trail", "plate", "text", "land", "mountain", "summit", "water",
-         "black", "green", "grey", "white")
-OBJECT_DEFAULTS = {"plate": 1, "black": 1, "land": 2, "terrain": 2,
-                   "green": 2, "mountain": 3, "grey": 3, "attribution": 3,
-                   "text": 3, "summit": 4, "white": 4, "water": 5, "trail": 6}
+ROLES = (
+    "trail",
+    "plate",
+    "text",
+    "land",
+    "mountain",
+    "summit",
+    "water",
+    "black",
+    "green",
+    "grey",
+    "white",
+)
+OBJECT_DEFAULTS = {
+    "plate": 1,
+    "black": 1,
+    "land": 2,
+    "terrain": 2,
+    "green": 2,
+    "mountain": 3,
+    "grey": 3,
+    "attribution": 3,
+    "text": 3,
+    "summit": 4,
+    "white": 4,
+    "water": 5,
+    "trail": 6,
+}
 OBJECT_PALETTE = (
     ("PLA Matte Charcoal", "#000000", "Matte"),
     ("PLA Matte Dark Green", "#68724D", "Matte"),
-    ("PLA Matte Ash Gray", "#9B9EA0", "Matte"),
-    ("PLA Basic White", "#FFFFFF", "Basic"),
+    ("PLA Matte Nardo Grey", "#757575", "Matte"),
+    ("PLA Matte Ivory White", "#FFFFFF", "Matte"),
     ("PLA Matte Marine Blue", "#0078BF", "Matte"),
     ("PLA Matte Scarlet Red", "#DE4343", "Matte"),
 )
@@ -38,12 +61,19 @@ def load_object_palette(root, discover, force=False):
             if saved["object_defaults_version"] == 1:
                 backup = path.parent / "before-ash-gray-text"
                 backup.mkdir(parents=True, exist_ok=True)
-                preferences = [settings_path(root), *sorted((Path(root)/"prints").glob("*/terrain_colors.json"))]
+                preferences = [
+                    settings_path(root),
+                    *sorted((Path(root) / "prints").glob("*/terrain_colors.json")),
+                ]
                 for preference in preferences:
                     value = _read_json(preference)
-                    name = "global-bambu.json" if preference == settings_path(root) else preference.parent.name + "-terrain-colors.json"
-                    if preference.exists() and not (backup/name).exists():
-                        shutil.copy2(preference, backup/name)
+                    name = (
+                        "global-bambu.json"
+                        if preference == settings_path(root)
+                        else preference.parent.name + "-terrain-colors.json"
+                    )
+                    if preference.exists() and not (backup / name).exists():
+                        shutil.copy2(preference, backup / name)
                     value["text"] = OBJECT_DEFAULTS["text"]
                     _atomic_json(preference, value)
                 saved["object_defaults_version"] = 2
@@ -52,47 +82,61 @@ def load_object_palette(root, discover, force=False):
         live = discover()
         profiles = {}
         for family in ("Matte", "Basic"):
-            matches = [item["name"] for item in live.filaments
-                       if f"PLA {family}" in item["name"]]
+            matches = [item["name"] for item in live.filaments if f"PLA {family}" in item["name"]]
             if not matches:
                 printer = live.machine.removeprefix("Bambu Lab ")
                 if "nozzle" not in printer:
                     printer += " 0.4 nozzle"
                 matches = [f"Bambu PLA {family} @BBL {printer}"]
             profiles[family] = matches[0]
-        filaments = tuple({"number": i + 1, "name": profiles[family],
-                           "label": label, "color": color}
-                          for i, (label, color, family) in enumerate(OBJECT_PALETTE))
+        filaments = tuple(
+            {"number": i + 1, "name": profiles[family], "label": label, "color": color}
+            for i, (label, color, family) in enumerate(OBJECT_PALETTE)
+        )
         old = list(live.filaments)
-        identities = {(item["name"], item["color"].upper()): i
-                      for i, item in enumerate(old)}
-        fallback = max(500., *live.flush_volumes_matrix)
-        vector_fallback = max(140., *live.flush_volumes_vector)
+        identities = {(item["name"], item["color"].upper()): i for i, item in enumerate(old)}
+        fallback = max(500.0, *live.flush_volumes_matrix)
+        vector_fallback = max(140.0, *live.flush_volumes_vector)
         matrix = []
         vector = []
         for i, item in enumerate(filaments):
             source = identities.get((item["name"], item["color"]))
-            vector.extend(live.flush_volumes_vector[source*2:source*2+2]
-                          if source is not None else [vector_fallback]*2)
+            vector.extend(
+                live.flush_volumes_vector[source * 2 : source * 2 + 2]
+                if source is not None
+                else [vector_fallback] * 2
+            )
             for j, other in enumerate(filaments):
                 target = identities.get((other["name"], other["color"]))
-                value = (live.flush_volumes_matrix[source*len(old)+target]
-                         if source is not None and target is not None else fallback)
-                matrix.append(0. if i == j else value)
-        environment = replace(live, filaments=filaments,
-                              flush_volumes_matrix=tuple(matrix),
-                              flush_volumes_vector=tuple(vector))
+                value = (
+                    live.flush_volumes_matrix[source * len(old) + target]
+                    if source is not None and target is not None
+                    else fallback
+                )
+                matrix.append(0.0 if i == j else value)
+        environment = replace(
+            live,
+            filaments=filaments,
+            flush_volumes_matrix=tuple(matrix),
+            flush_volumes_vector=tuple(vector),
+        )
         revision = palette_revision(environment)
         backup = path.parent / "before-object-defaults"
         backup.mkdir(parents=True, exist_ok=True)
-        if path.exists() and not (backup/path.name).exists():
-            shutil.copy2(path, backup/path.name)
-        preferences = [settings_path(root), *sorted((Path(root)/"prints").glob("*/terrain_colors.json"))]
+        if path.exists() and not (backup / path.name).exists():
+            shutil.copy2(path, backup / path.name)
+        preferences = [
+            settings_path(root),
+            *sorted((Path(root) / "prints").glob("*/terrain_colors.json")),
+        ]
         for preference in preferences:
             value = _read_json(preference)
             if preference.exists():
-                destination = backup / ("global-bambu.json" if preference == settings_path(root)
-                                        else preference.parent.name + "-terrain-colors.json")
+                destination = backup / (
+                    "global-bambu.json"
+                    if preference == settings_path(root)
+                    else preference.parent.name + "-terrain-colors.json"
+                )
                 if not destination.exists():
                     shutil.copy2(preference, destination)
             value.update(OBJECT_DEFAULTS, palette_revision=revision)
@@ -110,6 +154,14 @@ def restore_object_palette(root, discover, project=None):
         path = project_settings_path(project) if project is not None else settings_path(root)
         preferences = _read_json(path)
         preferences.update(OBJECT_DEFAULTS, palette_revision=palette_revision(environment))
+        preferences["text"] = next(
+            (
+                item["number"]
+                for item in environment.filaments
+                if item.get("label") == "PLA Matte Nardo Grey"
+            ),
+            OBJECT_DEFAULTS["text"],
+        )
         _atomic_json(path, preferences)
         return environment
 
@@ -132,42 +184,70 @@ def _environment(value):
         matrix = tuple(float(v) for v in value["flush_volumes_matrix"])
         vector = tuple(float(v) for v in value["flush_volumes_vector"])
         count = len(filaments)
-        if (not count or len(matrix) != count*count or len(vector) != count*2
-                or any(not math.isfinite(v) or v < 0 for v in (*matrix, *vector))
-                or any(item["number"] != i+1 or not item["name"]
-                       or not re.fullmatch(r"#[0-9a-fA-F]{6}", item["color"])
-                       for i, item in enumerate(filaments))):
+        if (
+            not count
+            or len(matrix) != count * count
+            or len(vector) != count * 2
+            or any(not math.isfinite(v) or v < 0 for v in (*matrix, *vector))
+            or any(
+                item["number"] != i + 1
+                or not item["name"]
+                or not re.fullmatch(r"#[0-9a-fA-F]{6}", item["color"])
+                for i, item in enumerate(filaments)
+            )
+        ):
             raise ValueError()
-        return BambuEnvironment(Path(value["binary"]), Path(value["data_dir"]),
-                                value["machine"], value["process"], filaments,
-                                float(value["flush_multiplier"]), matrix, vector)
+        return BambuEnvironment(
+            Path(value["binary"]),
+            Path(value["data_dir"]),
+            value["machine"],
+            value["process"],
+            filaments,
+            float(value["flush_multiplier"]),
+            matrix,
+            vector,
+        )
     except (KeyError, TypeError, ValueError) as exc:
-        raise ValueError("The saved filament palette is invalid. Import it from Bambu Studio.") from exc
+        raise ValueError(
+            "The saved filament palette is invalid. Import it from Bambu Studio."
+        ) from exc
 
 
 def palette_path(root):
-    return Path(root)/"data/settings/filament_palette.json"
+    return Path(root) / "data/settings/filament_palette.json"
 
 
 def _recover(root, live):
     """Bootstrap from the newest compatible multicolor export when live has one color."""
     if len(live.filaments) > 1:
         return live
-    candidates = sorted((Path(root)/"prints").glob("*/deliverables/*.3mf"),
-                        key=lambda p: p.stat().st_mtime, reverse=True)
+    candidates = sorted(
+        (Path(root) / "prints").glob("*/deliverables/*.3mf"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
     for path in candidates:
         try:
             with zipfile.ZipFile(path) as archive:
                 settings = json.loads(archive.read("Metadata/project_settings.config"))
             names, colors = settings["filament_settings_id"], settings["filament_colour"]
-            if (len(names) < 2 or len(names) != len(colors)
-                    or settings["printer_settings_id"] != live.machine):
+            if (
+                len(names) < 2
+                or len(names) != len(colors)
+                or settings["printer_settings_id"] != live.machine
+            ):
                 continue
-            value = _payload(replace(live, filaments=tuple(
-                {"number": i+1, "name": name, "color": color}
-                for i, (name, color) in enumerate(zip(names, colors))),
-                flush_volumes_matrix=tuple(settings["flush_volumes_matrix"]),
-                flush_volumes_vector=tuple(settings["flush_volumes_vector"])))
+            value = _payload(
+                replace(
+                    live,
+                    filaments=tuple(
+                        {"number": i + 1, "name": name, "color": color}
+                        for i, (name, color) in enumerate(zip(names, colors))
+                    ),
+                    flush_volumes_matrix=tuple(settings["flush_volumes_matrix"]),
+                    flush_volumes_vector=tuple(settings["flush_volumes_vector"]),
+                )
+            )
             return _environment(value)
         except (OSError, KeyError, TypeError, ValueError, zipfile.BadZipFile):
             continue
@@ -182,8 +262,14 @@ def load_palette(root, discover):
             return _environment(value.get("active", {}))
         environment = _environment(_payload(_recover(root, discover())))
         revision = palette_revision(environment)
-        _atomic_json(path, {"active": _payload(environment), "legacy_revision": revision,
-                            "history": {revision: _payload(environment)}})
+        _atomic_json(
+            path,
+            {
+                "active": _payload(environment),
+                "legacy_revision": revision,
+                "history": {revision: _payload(environment)},
+            },
+        )
         return environment
 
 
@@ -204,11 +290,38 @@ def import_palette(root, discover):
 def role_defaults(root, project, environment, defaults):
     """Map saved slot choices by profile/color rather than by a changed slot number."""
     value = _read_json(palette_path(root))
-    current = {(item["name"], item["color"].upper()): item["number"]
-               for item in reversed(environment.filaments)}
+    current = {
+        (item["name"], item["color"].upper()): item["number"]
+        for item in reversed(environment.filaments)
+    }
+    nardo_slot = next(
+        (f["number"] for f in environment.filaments if f.get("label") == "PLA Matte Nardo Grey"),
+        None,
+    )
+    ivory_slot = next(
+        (f["number"] for f in environment.filaments if f.get("label") == "PLA Matte Ivory White"),
+        None,
+    )
+    for old in value.get("history", {}).values():
+        for filament in old.get("filaments", []):
+            identity = (filament["name"], filament["color"].upper())
+            if identity[1] == "#9B9EA0" and nardo_slot:
+                current.setdefault(identity, nardo_slot)
+            if identity[1] == "#FFFFFF" and "Basic" in identity[0] and ivory_slot:
+                current.setdefault(identity, ivory_slot)
     result = dict(defaults)
     if value.get("object_defaults_version") in (1, 2):
         result.update(OBJECT_DEFAULTS)
+    nardo = next(
+        (
+            item["number"]
+            for item in environment.filaments
+            if item.get("label") == "PLA Matte Nardo Grey"
+        ),
+        None,
+    )
+    if nardo is not None:
+        result["text"] = nardo
     for path in (settings_path(root), project_settings_path(project)):
         preferences = _read_json(path)
         revision = preferences.get("palette_revision", value.get("legacy_revision"))
@@ -216,10 +329,107 @@ def role_defaults(root, project, environment, defaults):
         for role in ROLES:
             if role not in preferences:
                 continue
+            if (
+                nardo is not None
+                and path == settings_path(root)
+                and role == "text"
+                and preferences[role] == OBJECT_DEFAULTS["text"]
+            ):
+                continue
             try:
                 slot = int(preferences[role])
-                item = previous[slot-1] if slot > 0 else {}
+                item = previous[slot - 1] if slot > 0 else {}
                 result[role] = current.get((item["name"], item["color"].upper()))
             except (KeyError, IndexError, TypeError, ValueError):
                 result[role] = None
     return result
+
+
+def ensure_terrain_palette(root, environment):
+    """Normalize the app palette, preserving history for saved color choices."""
+    from .terrain_bands import COLORS
+
+    with _LOCK:
+        saved = _read_json(palette_path(root))
+        filaments = list(environment.filaments)
+        slots = {}
+        for key, (label, color) in COLORS.items():
+            match = next(
+                (
+                    item
+                    for item in filaments
+                    if item.get("label") == label
+                    or (item["color"].upper() == color and "Matte" in item["name"])
+                ),
+                None,
+            )
+            if match is None:
+                match = dict(
+                    number=len(filaments) + 1,
+                    name=environment.filaments[0]["name"],
+                    label=label,
+                    color=color,
+                )
+                filaments.append(match)
+            slots[key] = match["number"]
+        if len(filaments) != len(environment.filaments):
+            old = len(environment.filaments)
+            size = len(filaments)
+            matrix = tuple(
+                environment.flush_volumes_matrix[i * old + j]
+                if i < old and j < old
+                else (0 if i == j else 623)
+                for i in range(size)
+                for j in range(size)
+            )
+            vector = tuple(environment.flush_volumes_vector) + (140,) * (2 * (size - old))
+            environment = replace(
+                environment,
+                filaments=tuple(filaments),
+                flush_volumes_matrix=matrix,
+                flush_volumes_vector=vector,
+            )
+            saved.setdefault("history", {})[palette_revision(environment)] = _payload(environment)
+            saved["active"] = _payload(environment)
+            _atomic_json(palette_path(root), saved)
+        # Replace retired entries in place, then remove duplicate replacements.
+        old_items = list(environment.filaments)
+        chosen = []
+        seen = set()
+        for index, item in enumerate(old_items):
+            replacement = index
+            if item.get("label") == "PLA Matte Ash Gray":
+                replacement = slots["nardo"] - 1
+            elif item.get("label") == "PLA Basic White":
+                replacement = slots["ivory"] - 1
+            candidate = old_items[replacement]
+            identity = (candidate["name"], candidate["color"].upper())
+            if identity not in seen:
+                seen.add(identity)
+                chosen.append(replacement)
+        if chosen != list(range(len(old_items))):
+            saved.setdefault("history", {})[palette_revision(environment)] = _payload(environment)
+            count = len(old_items)
+            environment = replace(
+                environment,
+                filaments=tuple(
+                    {**old_items[index], "number": number + 1}
+                    for number, index in enumerate(chosen)
+                ),
+                flush_volumes_matrix=tuple(
+                    environment.flush_volumes_matrix[i * count + j] for i in chosen for j in chosen
+                ),
+                flush_volumes_vector=tuple(
+                    value
+                    for i in chosen
+                    for value in environment.flush_volumes_vector[2 * i : 2 * i + 2]
+                ),
+            )
+            saved["active"] = _payload(environment)
+            saved["history"][palette_revision(environment)] = _payload(environment)
+            _atomic_json(palette_path(root), saved)
+            slots = {
+                key: next(f["number"] for f in environment.filaments if f["color"].upper() == color)
+                for key, (_, color) in COLORS.items()
+            }
+        return environment, slots

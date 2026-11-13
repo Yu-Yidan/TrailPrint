@@ -14,7 +14,6 @@ from typing import Dict, Iterable
 
 import trimesh
 
-from .diy_case import generate_diy_case
 from .mesh_validation import mesh_role
 from .naming import canonical_3mf_name
 from .publishing import publish_files
@@ -79,14 +78,15 @@ class BambuSettings:
     white_filament: int = 1
     terrain_mode: str = "manual"
     automatic_bands: tuple = ()
-    generate_diy_kit: bool = False
+    custom_bands: tuple = ()
+    band_filaments: tuple = ()
 
     @classmethod
     def validated(cls, filament_count, trail=1, land=1, mountain=1, summit=1,
                   plate=1, text=1, water=1, grey_start_m=DEFAULT_GREY_START_M,
                   white_start_m=DEFAULT_WHITE_START_M, black=1, green=1, grey=1,
                   white=1, terrain_mode="manual", automatic_bands=(),
-                  generate_diy_kit=False):
+                  custom_bands=(), band_filaments=()):
         try:
             values = [int(value) for value in
                       (trail, land, mountain, summit, plate, text, water,
@@ -104,11 +104,16 @@ class BambuSettings:
         if white_start_m <= grey_start_m:
             raise ValueError("Snow elevation must be higher than mountain elevation.")
         terrain_mode = str(terrain_mode).lower()
-        if terrain_mode not in {"manual", "osm"}:
+        if terrain_mode not in {"single", "custom", "manual", "osm"}:
             raise ValueError("Terrain color mode must be manual or OSM-inspired.")
         bands = tuple(dict(item) for item in automatic_bands) if automatic_bands else ()
         if terrain_mode == "osm" and not bands:
             raise ValueError("OSM-inspired terrain bands are unavailable.")
+        if terrain_mode == 'custom':
+            if not 1 <= len(custom_bands) <= 5 or len(band_filaments) != len(custom_bands):
+                raise ValueError('Choose matching terrain bands and filaments.')
+            if any(not isinstance(value, int) or not 1 <= value <= filament_count for value in band_filaments):
+                raise ValueError('Choose valid terrain band filaments.')
         return cls(
             trail_filament=values[0], land_filament=values[1],
             mountain_filament=values[2], summit_filament=values[3],
@@ -118,10 +123,10 @@ class BambuSettings:
             green_filament=values[8], grey_filament=values[9],
             white_filament=values[10], terrain_mode=terrain_mode,
             automatic_bands=bands,
-            generate_diy_kit=bool(generate_diy_kit))
+            custom_bands=tuple(custom_bands), band_filaments=tuple(band_filaments))
 
     def by_role(self) -> dict:
-        terrain = self.land_filament
+        terrain = self.band_filaments[0] if self.terrain_mode == "custom" else self.land_filament
         if self.terrain_mode == "osm" and self.automatic_bands:
             terrain = self.terrain_filaments()[self.automatic_bands[0]["role"]]
         attribution = (self.grey_filament if self.terrain_mode == "osm"
@@ -136,12 +141,8 @@ class BambuSettings:
         if self.terrain_mode == "osm":
             values.update(black=self.black_filament, green=self.green_filament,
                           grey=self.grey_filament, white=self.white_filament)
+        values.update({"band_"+str(i): value for i, value in enumerate(self.band_filaments)})
         return values
-
-    def diy_case_filament(self) -> int:
-        """Reuse the filament assigned to the terrain's grey rock band."""
-        return (self.grey_filament if self.terrain_mode == "osm"
-                else self.mountain_filament)
 
 
 def discover_environment(data_dir: Path = BAMBU_DATA, binary: Path = BAMBU_APP) -> BambuEnvironment:
@@ -284,7 +285,7 @@ def _resting_z(path: Path) -> float:
 
 
 def assemble_manifest(files: dict, settings: BambuSettings, filament_count: int,
-                      positions=None, diy_case: Path = None) -> dict:
+                      positions=None) -> dict:
     positions = positions or {role: (0.0, 0.0)
                               for role in ("trail", "terrain", "plate_text")}
     values = settings.by_role()
@@ -317,18 +318,6 @@ def assemble_manifest(files: dict, settings: BambuSettings, filament_count: int,
             *plate_objects,
         ],
     }]
-    if diy_case is not None:
-        mesh = trimesh.load(diy_case, force="mesh", process=False)
-        center = mesh.bounds[:, :2].mean(axis=0)
-        plates.append({
-            "plate_name": "DIY Case", "need_arrange": False,
-            "filaments_count": filament_count,
-            "plate_params": {"enable_support": "0"},
-            "objects": [_object(
-                diy_case, settings.diy_case_filament(),
-                position=(128.0 - float(center[0]), 128.0 - float(center[1]))
-            )],
-        })
     return {"plates": plates}
 
 
@@ -431,95 +420,6 @@ def prepare_one_plate_layout(files: dict, temp_root: Path) -> tuple:
     return prepared, positions, report
 
 
-def estimate_water_layer_changes(water_bounds, terrain_base_z, nominal_layer_height,
-                                 initial_layer_height, settings, terrain_bands) -> dict:
-    """Estimate unsliced layers where water and terrain use different filaments."""
-    nominal = float(nominal_layer_height)
-    initial = float(initial_layer_height)
-    if not math.isfinite(nominal) or nominal <= 0:
-        nominal = 0.2
-    if not math.isfinite(initial) or initial <= 0:
-        initial = nominal
-    base = float(terrain_base_z)
-
-    def layer_at(z_value):
-        relative = max(0.0, float(z_value) - base)
-        if relative <= initial:
-            return 1
-        return 1 + math.ceil((relative - initial) / nominal - 1e-9)
-
-    water_layers = set()
-    for minimum, maximum in water_bounds:
-        if not all(math.isfinite(float(value)) for value in (minimum, maximum)):
-            continue
-        # A solid whose lower face lies exactly on a layer boundary starts in
-        # the layer above that boundary; the lower layer contains no volume.
-        first = layer_at(float(minimum) + nominal * 1e-3)
-        last = layer_at(maximum)
-        water_layers.update(range(first, last + 1))
-
-    def layer_midpoint(layer):
-        if layer == 1:
-            return base + initial / 2
-        bottom = initial + (layer - 2) * nominal
-        return base + bottom + nominal / 2
-
-    terrain_filaments = settings.terrain_filaments()
-    base_filament = settings.by_role()["terrain"]
-
-    def terrain_filament(z_value):
-        filament = base_filament
-        for band in terrain_bands:
-            if float(band["min_z"]) <= z_value < float(band["max_z"]):
-                filament = terrain_filaments[band["role"]]
-        return filament
-
-    mixed_layers = sorted(layer for layer in water_layers
-                          if terrain_filament(layer_midpoint(layer))
-                          != settings.water_filament)
-
-    def ranges(layers):
-        output = []
-        for layer in layers:
-            if not output or layer != output[-1][1] + 1:
-                output.append([layer, layer])
-            else:
-                output[-1][1] = layer
-        return output
-
-    return {
-        "method": "unsliced_nominal_layer_height",
-        "is_exact": False,
-        "nominal_layer_height_mm": nominal,
-        "initial_layer_height_mm": initial,
-        "water_layer_count": len(water_layers),
-        "water_layer_ranges": ranges(sorted(water_layers)),
-        "mixed_filament_layer_count": len(mixed_layers),
-        "mixed_filament_layer_ranges": ranges(mixed_layers),
-        "manual_swaps_max": len(mixed_layers) * 2,
-    }
-
-
-def _validated_mesh_bounds(project: Path) -> tuple:
-    """Return terrain base Z and water Z intervals from the validated STL report."""
-    try:
-        report = json.loads((project / "build/validation.json").read_text(encoding="utf-8"))
-        files = report["final"]["files"]
-    except (OSError, KeyError, TypeError, ValueError):
-        return 0.0, []
-    terrain_base = 0.0
-    water_bounds = []
-    for item in files:
-        bounds = item.get("bounds_mm", ())
-        if len(bounds) != 2 or len(bounds[0]) != 3 or len(bounds[1]) != 3:
-            continue
-        if item.get("role") == "terrain":
-            terrain_base = float(bounds[0][2])
-        elif item.get("role") == "water":
-            water_bounds.append((float(bounds[0][2]), float(bounds[1][2])))
-    return terrain_base, water_bounds
-
-
 def _write_json(path: Path, value) -> None:
     path.write_text(json.dumps(value, indent=2), encoding="utf-8")
 
@@ -554,7 +454,7 @@ def _terrain_model_index(model_settings) -> str:
             source_stem = Path(source_file).stem.lower()
             if (not source_file or source_stem.endswith(
                     ("_trail", "_plate", "_text", "_attribution", "_water",
-                     "ocean", "diy-case"))):
+                     "ocean"))):
                 continue
             source_object_id = next((node.attrib.get("value")
                                      for node in part.findall("metadata")
@@ -662,7 +562,7 @@ def _enforce_project_settings(path: Path, environment: BambuEnvironment,
 
 def validate_3mf(path: Path, expected_filaments: dict, expected_bands=None,
                  terrain_filaments=None, water_filament=None,
-                 filament_count=None, diy_case_filament=None) -> dict:
+                 filament_count=None) -> dict:
     if not path.is_file() or path.stat().st_size < 1000:
         raise ValueError("Bambu Studio did not produce a usable 3MF project.")
     try:
@@ -752,8 +652,7 @@ def validate_3mf(path: Path, expected_filaments: dict, expected_bands=None,
                      if child.attrib.get("key") == key), None)
         return item.attrib.get("value", "") if item is not None else ""
 
-    expected_plate_names = (["TrailPrint", "DIY Case"] if diy_case_filament is not None
-                            else ["TrailPrint"])
+    expected_plate_names = ["TrailPrint"]
     plate_names = [metadata(plate, "plater_name") for plate in plates]
     if plate_names != expected_plate_names:
         raise ValueError(
@@ -834,17 +733,6 @@ def validate_3mf(path: Path, expected_filaments: dict, expected_bands=None,
         raise ValueError(
             "Plate or Text filament assignment was not preserved "
             f"(expected {expected_parts}, got {part_filaments}).")
-    if diy_case_filament is not None:
-        case_ids = [metadata(instance, "object_id")
-                    for instance in plates[1].findall("model_instance")]
-        case_objects = [objects[item] for item in case_ids if item in objects]
-        if len(case_objects) != 1:
-            raise ValueError("The DIY Case plate must contain exactly one case object.")
-        sources = object_sources(case_objects[0])
-        if not any("diy-case" in Path(source).stem for source in sources):
-            raise ValueError("The DIY Case plate does not contain the generated case.")
-        if object_filament(case_objects[0]) != str(diy_case_filament):
-            raise ValueError("The DIY case did not reuse the grey terrain-rock filament.")
     if plate_metadata is not None:
         plate_json = plate_metadata.get("bbox_objects", [])
         if not plate_metadata.get("is_seq_print") or len(plate_json) != 3:
@@ -890,9 +778,7 @@ def validate_3mf(path: Path, expected_filaments: dict, expected_bands=None,
             "prime_tower": False, "purge_multiplier": PURGE_MULTIPLIER,
             "print_sequence": PRINT_SEQUENCE,
             "wall_generator": WALL_GENERATOR,
-            "plate_metadata": plate_metadata is not None,
-            "diy_kit_included": diy_case_filament is not None,
-            "diy_case_filament": diy_case_filament}
+            "plate_metadata": plate_metadata is not None}
 
 
 def create_bambu_project(project: Path, settings: BambuSettings,
@@ -909,7 +795,7 @@ def create_bambu_project(project: Path, settings: BambuSettings,
         green=settings.green_filament, grey=settings.grey_filament,
         white=settings.white_filament, terrain_mode=settings.terrain_mode,
         automatic_bands=settings.automatic_bands,
-        generate_diy_kit=settings.generate_diy_kit)
+        custom_bands=settings.custom_bands, band_filaments=settings.band_filaments)
     files = _role_files(project)
     build_dir = project / "build"
     build_dir.mkdir(parents=True, exist_ok=True)
@@ -925,15 +811,16 @@ def create_bambu_project(project: Path, settings: BambuSettings,
         except (TypeError, ValueError):
             nominal_layer_height = 0.2
         try:
-            initial_layer_height = float(process.get(
-                "initial_layer_print_height", nominal_layer_height))
-        except (TypeError, ValueError):
-            initial_layer_height = nominal_layer_height
-        try:
             elevation = elevation_metadata(project)
-            if not elevation:
+            if settings.terrain_mode == "single":
+                terrain_bands = []
+            elif settings.terrain_mode == "custom":
+                from .terrain_bands import export_ranges
+                terrain_bands = export_ranges(settings.custom_bands, elevation, nominal_layer_height)[1:]
+            elif not elevation:
                 raise ValueError("missing elevation metadata")
-            terrain_bands = (list(settings.automatic_bands[1:])
+            if settings.terrain_mode in {"manual", "osm"}:
+                terrain_bands = (list(settings.automatic_bands[1:])
                              if settings.terrain_mode == "osm"
                              else active_terrain_bands(
                                  elevation, settings.grey_start_m,
@@ -960,7 +847,6 @@ def create_bambu_project(project: Path, settings: BambuSettings,
                         "prime_tower_enable_framework": "0",
                         "enable_tower_interface_features": "0",
                         "filament_colour": colors})
-        initial_layer_height = FIRST_LAYER_HEIGHT_MM
         machine_path, process_path = temp_root / "machine.json", temp_root / "process.json"
         _write_json(machine_path, machine)
         _write_json(process_path, process)
@@ -971,15 +857,9 @@ def create_bambu_project(project: Path, settings: BambuSettings,
             _write_json(target, value)
             filament_paths.append(target)
         layout_files, positions, layout_report = prepare_one_plate_layout(files, temp_root)
-        diy_case_path = None
-        diy_case_report = None
-        if settings.generate_diy_kit:
-            diy_case_path = temp_root / "diy-case.stl"
-            diy_case_report = generate_diy_case(
-                files["trail"], diy_case_path, temp_root / "diy-case-work")
         manifest_path = temp_root / "assemble.json"
         _write_json(manifest_path, assemble_manifest(
-            layout_files, settings, count, positions, diy_case_path))
+            layout_files, settings, count, positions))
         command = [str(environment.binary), "--datadir", str(temp_root / "bambu-data"),
                    "--debug", "2", "--ensure-on-bed",
                    "--allow-multicolor-oneplate",
@@ -1000,17 +880,8 @@ def create_bambu_project(project: Path, settings: BambuSettings,
         water_filament = settings.water_filament if files.get("water") else None
         report = validate_3mf(staged, settings.by_role(), terrain_bands,
                               settings.terrain_filaments(), water_filament,
-                              count,
-                              (settings.diy_case_filament()
-                               if settings.generate_diy_kit else None))
-        if water_filament is not None:
-            terrain_base, water_bounds = _validated_mesh_bounds(project)
-            report["water_layer_estimate"] = estimate_water_layer_changes(
-                water_bounds, terrain_base, nominal_layer_height,
-                initial_layer_height, settings, terrain_bands)
+                              count)
         report["layout"] = layout_report
-        if diy_case_report is not None:
-            report["diy_case"] = diy_case_report
         staged_report = temp_root / "bambu-validation.json"
         from .export_previews import stage_export_previews
 
@@ -1024,3 +895,13 @@ def create_bambu_project(project: Path, settings: BambuSettings,
         return destination
     finally:
         shutil.rmtree(temp_root, ignore_errors=True)
+
+
+def nominal_layer_height(environment):
+    try:
+        root = environment.data_dir / "system/BBL"
+        process = _flatten_profile(environment.process, root, _profile_index(root))
+        height = float(process.get("layer_height", 0.2))
+        return height if math.isfinite(height) and height > 0 else 0.2
+    except (OSError, ValueError, KeyError, TypeError):
+        return 0.2

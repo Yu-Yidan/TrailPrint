@@ -27,7 +27,7 @@ retain their original design. The installed Arial Bold font is never modified.
 
 TrailPrint assigns named default filaments to each object. Trail uses PLA Matte
 Scarlet Red, plate uses PLA Matte Charcoal, low terrain uses PLA Matte Dark Green,
-high terrain and text use PLA Matte Ash Gray, summits use PLA Basic White,
+high terrain and text use PLA Matte Nardo Grey, summits use PLA Matte Ivory White,
 and water uses PLA Matte Marine Blue. Per-project dropdowns support overrides.
 **Restore default object colors** resets the current project's color selections.
 The first use migrates existing projects and backs up their previous palette and
@@ -229,7 +229,7 @@ project's output folder in Finder. While Blender runs, the settings panel is
 replaced by the live build phase and progress. A running build can be cancelled;
 TrailPrint stops Blender and discards staged work while preserving prior STL,
 3MF, preview, and validation files. Cancelled and failed jobs preserve the last successful model settings. Preview colors use green terrain, red trail, blue water,
-black plate, and white text initially. Generating a 3MF refreshes both preview
+black plate, and Nardo Grey text initially. Generating a 3MF refreshes both preview
 views using the selected object filaments and the exported manual or OSM terrain
 elevation bands, then returns to the updated preview. STL files themselves
 remain colorless. Builds include
@@ -251,20 +251,20 @@ one calibrated plate containing Trail, multipart Terrain + Water when water is
 available, and multipart Plate + Text. Objects print by object using the
 calibrated layout. Water always uses its selected blue filament as an integrated
 part within the Terrain object; it is never independently placed or exported as
-a separate plate. Mountain and snow-cap
-colors are assigned to Terrain by elevation. An unchecked-by-default DIY kit
-option adds a second plate containing an adaptive, print-in-place integrated-knuckle
-case. The case reuses the filament assigned to grey terrain rock. The 3MF is validated before
-replacing an earlier export. The prime tower is disabled and the purge multiplier
-is 0.6, so always confirm the AMS mapping and contamination risk in Bambu Studio
-before slicing or printing. During a build, TrailPrint uses
-OpenStreetMap forest, rocky-terrain, glacier, and explicitly queried lava-field
-polygons as land-cover evidence and fits green, grey, white, and black
-observations into at most four elevation bands. This keeps geographic context
-while requiring no more than three terrain filament changes. The preview shows
-evidence coverage, fitted bands, and confidence, and still offers the original
-manual green/grey/white elevation mode. An Overpass failure never blocks STL
-output. Plate defaults to Matte Charcoal, trail to Matte Scarlet Red, and text to Matte Ash Gray.
+a separate plate. Terrain defaults to PLA Matte Dark Green. Advanced terrain
+colors support one to five contiguous elevation ranges, selected from Matte
+Charcoal Black, Dark Brown, Ivory White, Nardo Grey, and Dark Green. The vertical editor aligns each color with its controls, highest elevation first.
+Drag dividers vertically or type exact lower elevations; thickness in millimetres
+and approximate layer counts are calculated readouts. New dividers split the
+highest band. Refresh Preview renders both angles from the current selections
+without generating a 3MF; edits mark the displayed preview outdated, and
+preview-only colors are identified as not yet exported. Choices are remembered per project, with no export-time
+global default writes. Both preview angles use the same ranges as the 3MF.
+OpenStreetMap land-cover evidence can provide an editable starting suggestion;
+its availability never blocks STL
+output. Plate defaults to Matte Charcoal, trail to Matte Scarlet Red, and text to Matte Nardo Grey.
+
+Preview rendering uses the same neutral studio lighting and filament color conversion for initial builds, preview refreshes, and 3MF exports. Saved object colors and valid saved elevation bands are reused during initial rendering. Both PNG views remain in deliverables even though the page omits their headings and angled-view download button.
 
 The plate back is intentionally blank apart from the three dot-magnet recesses.
 Include this credit on the product packaging and online listing instead:

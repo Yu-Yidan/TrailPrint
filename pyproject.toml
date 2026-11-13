@@ -31,7 +31,7 @@ trailprint = "trailprint.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-trailprint = ["templates/*.html", "static/*.css", "static/*.js"]
+trailprint = ["templates/*.html", "static/*.css", "static/*.js", "*.sl"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

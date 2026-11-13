@@ -1,6 +1,5 @@
 """Background coordination for Bambu Studio project exports."""
 
-import json
 import threading
 import time
 import uuid
@@ -59,19 +58,6 @@ class BambuJobManager:
             job.state, job.message = "error", str(exc)
         else:
             message = "Validated Bambu project created."
-            try:
-                report = json.loads((job.project / "build/bambu-validation.json")
-                                    .read_text(encoding="utf-8"))
-                if report.get("diy_kit_included"):
-                    message += " DIY case added as plate 2."
-                estimate = report.get("water_layer_estimate")
-                if estimate:
-                    count = estimate["mixed_filament_layer_count"]
-                    swaps = estimate["manual_swaps_max"]
-                    message += (f" Estimated {count} mixed-color water layer(s), "
-                                f"up to {swaps} manual swaps; exact after slicing.")
-            except (OSError, KeyError, TypeError, ValueError):
-                pass
             job.state, job.message, job.output = "success", message, output.name
         job.finished_at = time.time()
 

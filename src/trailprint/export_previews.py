@@ -35,6 +35,7 @@ def stage_export_previews(project, stage, settings, environment, bands):
         raise ValueError("Export preview rendering failed: " + (result.stderr or result.stdout)[-1500:])
     report_path = project/"build/validation.json"
     report = json.loads(report_path.read_text(encoding="utf-8"))
+    report.pop("preview_only", None)
     changes = {}
     revision = hashlib.sha256(json.dumps(config, sort_keys=True).encode()).hexdigest()
     for key, filename in [("preview", "preview.png"), ("preview_side", "preview-side.png")]:
