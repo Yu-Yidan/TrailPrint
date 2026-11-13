@@ -27,8 +27,27 @@ def configure_model_font(props, path=None):
 def configure_plate_text(props, config):
     """Pass manually entered plate strings to Blender without token expansion."""
     props.titlefield = config["plate_title"]
-    for index in range(1, 6):
-        setattr(props, f"textfield{index}", config[f"plate_text_{index}"])
+    # v4 orders hexagon slots clockwise from upper left; the app keeps its
+    # existing lower-left, bottom, lower-right, upper-right, upper-left fields.
+    order = ((5, 1, 2, 3, 4)
+             if hasattr(props, "textLayout") and config.get("shape") == "HEXAGON"
+             else (1, 2, 3, 4, 5))
+    for index, source in enumerate(order, 1):
+        setattr(props, f"textfield{index}", config[f"plate_text_{source}"])
+
+
+def configure_generation_layout(props, config):
+    if hasattr(props, "textLayout"):
+        props.shapeExtrasActive = config["shape_extra"] != "NONE"
+        props.plateMode = "SOLID_PLATE"
+        props.textLayout = {"NONE": "NONE", "INNER TEXT": "ON_MAP",
+                            "OUTER TEXT": "CURVED" if config["shape"] == "CIRCLE" else "OUTER_EDGE",
+                            "FRONT TEXT": "FRONT_FACE"}[config["shape_extra"]]
+        props.textPlacement = False
+        props.elevationMode = "PROPORTIONAL"
+    else:
+        props.shapeTextStyle = config["shape_extra"]
+        props.fixedElevationScale = False
 
 
 def literal_shape_text(value, text_object):
@@ -645,12 +664,13 @@ def main():
         props.export_path = config["export_path"] + os.sep
         props.trailName = config["project_name"]
         props.shape = config["shape"]
-        props.shapeTextStyle = config["shape_extra"]
+        props.shapeRotation = 0
+        props.text_angle_preset = 0
+        configure_generation_layout(props, config)
         props.num_subdivisions = int(config["resolution"])
         configure_plate_text(props, config)
         props.xTerrainOffset = float(config["x_offset"])
         props.yTerrainOffset = float(config["y_offset"])
-        props.fixedElevationScale = False
         props.scaleElevation = 1.0
         props.plateInsertValue = float(config.get("plate_recess_depth", 0))
         props.tolerance = float(config.get("trail_clearance_mm", 0.1))
@@ -661,9 +681,12 @@ def main():
         props.disable_3mf_export = True
         props.exportformat = "STL"
         terrain_utils = importlib.import_module(module_root + ".utils.terrain")
-        generation_utils = importlib.import_module(module_root + ".utils.generation")
+        generation_utils = importlib.import_module(utils.runGeneration.__module__)
         text_utils = importlib.import_module(module_root + ".utils.text_objects")
         original_shape_text = text_utils.replaceShapeText
+        text_layouts = (importlib.import_module(module_root + ".utils.text_layouts")
+                        if hasattr(props, "textLayout") else text_utils)
+        original_layout_text = text_layouts.replaceShapeText
         original_color_mode = generation_utils._rg_apply_single_color_mode
         original_plate_insert = terrain_utils.plateInsert
         original_elevation = elevation_utils.get_tile_elevation
@@ -694,9 +717,12 @@ def main():
         terrain_samples = []
         terrain_bounds = {}
 
-        def local_color_mode(terrain, *args, **kwargs):
+        def local_color_mode(generation, *args, **kwargs):
             nonlocal coastal_expected, original_terrain
-            elements = args[1] if len(args) > 1 else kwargs.get("terrain", {})
+            context = generation if hasattr(generation, "runtime") else None
+            terrain = context.runtime.mapObject if context else generation
+            elements = (context.runtime.elements if context
+                        else (args[1] if len(args) > 1 else kwargs.get("terrain", {})))
             ocean = elements.get("ocean")
             coastal_expected |= bool(ocean is not None and len(ocean.data.vertices))
             # Geographic fetching is complete at this point. Perform the groove
@@ -729,10 +755,14 @@ def main():
             Path(config["export_path"]).joinpath("generation-local-origin.json").write_text(
                 json.dumps({"translation_mm": list(translation),
                             "phase": "before groove and water Booleans"}, indent=2))
-            return original_color_mode(terrain, *args, **kwargs)
+            return original_color_mode(generation, *args, **kwargs)
 
         def capture_elevation(*args, **kwargs):
             geo_utils = importlib.import_module(module_root + ".utils.geo")
+            context = args[0] if hasattr(args[0], "runtime") else None
+            obj = context.runtime.mapObject if context else args[0]
+            if context:
+                elevation_utils.compute_and_store_tile_bounds(context)
 
             def fetch_tile(z, x, y):
                 response = elevation_utils.requests.get(
@@ -756,14 +786,13 @@ def main():
 
             props.api = "MAPTERHORN"
             values, difference = verified_blender_elevations(
-                args[0], props, elevation_utils, geo_utils,
+                obj, props, elevation_utils, geo_utils,
                 config["elevation_cache_dir"],
                 Path(config["export_path"]) / "terrain-data-validation.json",
                 decode_tile, fetch_tile, kwargs.get("progress_cb"))
             elevation_values.extend(float(value) for value in values
                                     if math.isfinite(float(value)))
             try:
-                obj = args[0]
                 geo_utils = importlib.import_module(module_root + ".utils.geo")
                 vertices = list(obj.data.vertices)
                 paired_count = min(len(vertices), len(values))
@@ -781,11 +810,15 @@ def main():
                         terrain_samples.append([lat, lon, elevation])
                 decision = terrain_relief_scaling(
                     values[:paired_count], mercator_factors,
-                    float(props.get("sScaleHor", props.sScaleHor)),
+                    float(context.runtime.sScaleHor if context else props.get("sScaleHor", props.sScaleHor)),
                     float(config.get("max_terrain_relief_mm", 15.0)),
                     float(config.get("terrain_elevation_multiplier", 1.0)))
                 print("[terrain relief cap] " + json.dumps(decision, sort_keys=True))
-                props.fixedElevationScale = False
+                if context:
+                    context.settings.elevationMode = "PROPORTIONAL"
+                    context.settings.scaleElevation = 1.0
+                else:
+                    props.fixedElevationScale = False
                 props.scaleElevation = 1.0
                 elevation_scaling.update(decision)
                 terrain_bounds.update({
@@ -799,7 +832,11 @@ def main():
                 multiplier = elevation_scaling["elevation_multiplier"]
                 scaled_values = [float(value) * multiplier for value in values]
                 scaled_difference = max(scaled_values) - min(scaled_values)
+                if context:
+                    context.runtime.tileVerts, context.runtime.elDiff = scaled_values, scaled_difference
                 return scaled_values, scaled_difference
+            if context:
+                context.runtime.tileVerts, context.runtime.elDiff = values, difference
             return values, difference
 
         terrain_utils.plateInsert = with_plate_clearance(
@@ -807,6 +844,7 @@ def main():
         elevation_utils.get_tile_elevation = capture_elevation
         generation_utils._rg_apply_single_color_mode = local_color_mode
         text_utils.replaceShapeText = literal_shape_text
+        text_layouts.replaceShapeText = literal_shape_text
         try:
             utils.runGeneration(0)
             coverage = Path(config["export_path"]) / "terrain-data-validation.json"
@@ -819,6 +857,7 @@ def main():
             elevation_utils.get_tile_elevation = original_elevation
             generation_utils._rg_apply_single_color_mode = original_color_mode
             text_utils.replaceShapeText = original_shape_text
+            text_layouts.replaceShapeText = original_layout_text
             for name, original in original_mesh_modes.items():
                 setattr(mesh_ops, name, original)
         if coastal_expected and not coastal_sources:
