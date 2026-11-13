@@ -98,15 +98,16 @@ def main():
         scene.display.shading.light = "STUDIO"
         scene.display.shading.studio_light = studio.name
         scene.display.shading.show_specular_highlight = True
-        scene.display.shading.shadow_intensity = .15
-        scene.display.shading.curvature_ridge_factor = .3
-        scene.display.shading.curvature_valley_factor = .3
-        scene.display.shading.cavity_ridge_factor = .3
-        scene.display.shading.cavity_valley_factor = .3
+        scene.display.light_direction = (.4, .5, .77)
+        scene.display.shading.shadow_intensity = .35
+        scene.display.shading.curvature_ridge_factor = .35
+        scene.display.shading.curvature_valley_factor = .5
+        scene.display.shading.cavity_ridge_factor = .35
+        scene.display.shading.cavity_valley_factor = .6
         scene.display.shading.color_type = "MATERIAL"
         scene.display.shading.show_shadows = True
         scene.display.shading.show_cavity = True
-        scene.display.shading.cavity_type = "WORLD"
+        scene.display.shading.cavity_type = "BOTH"
         if hasattr(scene.display.shading, "show_object_outline"):
             scene.display.shading.show_object_outline = True
         scene.display.shading.background_type = "VIEWPORT"
