@@ -493,6 +493,58 @@ def _has_process_override(settings: dict, key: str) -> bool:
     return key in {item for item in str(overrides[0]).split(";") if item}
 
 
+def _paint_code(filament: int) -> str:
+    """Encode a whole-face filament using Bambu's TriangleSelector format."""
+    if filament < 3:
+        return format(filament << 2, 'X')
+    remainder = filament - 3
+    return format(remainder % 15, 'X') + 'F' * (remainder // 15) + 'C'
+
+
+def _water_paint_models(archive, verify=False) -> dict:
+    """Protect water from object-wide height overrides without splitting assembly."""
+    metadata = ET.fromstring(archive.read('Metadata/model_settings.config'))
+    water = {}
+    for part in metadata.findall('.//part'):
+        values = {n.get('key'): n.get('value') for n in part.findall('metadata')}
+        stem = Path(values.get('source_file', '')).stem.lower()
+        if stem.endswith(('_water', 'ocean')):
+            water[part.get('id')] = _paint_code(int(values['extruder']))
+    if not water:
+        return {}
+    main = ET.fromstring(archive.read('3D/3dmodel.model'))
+    paths = {}
+    for component in main.findall('.//{*}component'):
+        ident = component.get('objectid')
+        if ident in water:
+            path = component.get('{http://schemas.microsoft.com/3dmanufacturing/production/2015/06}path', '/3D/3dmodel.model')
+            paths.setdefault(path.lstrip('/'), {})[ident] = water[ident]
+    if {i for ids in paths.values() for i in ids} != set(water):
+        raise ValueError('Generated water mesh references could not be resolved.')
+    changed = {}
+    ET.register_namespace('', 'http://schemas.microsoft.com/3dmanufacturing/core/2015/02')
+    ET.register_namespace('p', 'http://schemas.microsoft.com/3dmanufacturing/production/2015/06')
+    for path, ids in paths.items():
+        model = ET.fromstring(archive.read(path))
+        found = set()
+        for obj in model.findall('.//{*}object'):
+            if obj.get('id') not in ids:
+                continue
+            triangles = obj.findall('.//{*}triangle')
+            if not triangles:
+                raise ValueError('Generated water mesh has no faces.')
+            code = ids[obj.get('id')]
+            for triangle in triangles:
+                if verify and triangle.get('paint_color') != code:
+                    raise ValueError('Water filament is not protected from terrain height colors.')
+                triangle.set('paint_color', code)
+            found.add(obj.get('id'))
+        if found != set(ids):
+            raise ValueError('Generated water mesh is missing.')
+        changed[path] = ET.tostring(model, encoding='utf-8', xml_declaration=True)
+    return changed
+
+
 def _enforce_project_settings(path: Path, environment: BambuEnvironment,
                               terrain_bands=None, terrain_filaments=None,
                               nominal_layer_height=0.2, layout_report=None) -> None:
@@ -526,6 +578,7 @@ def _enforce_project_settings(path: Path, environment: BambuEnvironment,
             })
             _declare_process_override(settings, "wall_generator", count)
             _declare_process_override(settings, "enable_prime_tower", count)
+            water_models = _water_paint_models(source) if terrain_bands else {}
             with zipfile.ZipFile(replacement, "w", zipfile.ZIP_DEFLATED) as target:
                 for item in source.infolist():
                     if item.filename in {"Metadata/layer_config_ranges.xml",
@@ -534,6 +587,7 @@ def _enforce_project_settings(path: Path, environment: BambuEnvironment,
                     data = (json.dumps(settings, separators=(",", ":")).encode("utf-8")
                             if item.filename == "Metadata/project_settings.config"
                             else source.read(item.filename))
+                    data = water_models.get(item.filename, data)
                     target.writestr(item, data)
                 if terrain_bands:
                     target.writestr("Metadata/layer_config_ranges.xml",
@@ -586,6 +640,8 @@ def validate_3mf(path: Path, expected_filaments: dict, expected_bands=None,
                     archive.read("Metadata/plate_1.json").decode("utf-8"))
             ranges_xml = (archive.read("Metadata/layer_config_ranges.xml").decode("utf-8")
                           if "Metadata/layer_config_ranges.xml" in names else "")
+            if expected_bands and water_filament is not None:
+                _water_paint_models(archive, verify=True)
     except (OSError, zipfile.BadZipFile, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ValueError("Generated Bambu project could not be validated.") from exc
     for key in ("enable_prime_tower", "prime_tower_enable_framework",
