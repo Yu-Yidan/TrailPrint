@@ -1,5 +1,9 @@
 # GPX test fixtures
 
+`dolly-sods-water.gpx` retains only route coordinates and elevations, without
+names, timestamps or extensions. It checks v4 water generation for significant
+Wikidata-tagged streams while minor unnamed streams remain disabled.
+
 Place representative `.gpx` files in this folder when you want them used for
 future TrailPrint3D fixes and regression checks.
 

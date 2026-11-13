@@ -150,7 +150,7 @@ class BambuProjectTests(unittest.TestCase):
             }
             model = '''<config>
               <object id="2"><metadata key="extruder" value="3"/><part><metadata key="source_file" value="model_Trail.stl"/><metadata key="source_object_id" value="0"/></part></object>
-              <object id="4"><part><metadata key="source_file" value="model.stl"/><metadata key="source_object_id" value="1"/><metadata key="extruder" value="4"/></part><part><metadata key="source_file" value="model_WATER.stl"/><metadata key="source_object_id" value="2"/><metadata key="extruder" value="2"/></part></object>
+              <object id="4"><part><metadata key="source_file" value="model.stl"/><metadata key="source_object_id" value="1"/><metadata key="extruder" value="4"/></part><part id="9"><metadata key="source_file" value="model_WATER.stl"/><metadata key="source_object_id" value="2"/><metadata key="extruder" value="2"/></part></object>
               <object id="7"><part id="1"><metadata key="source_file" value="model_Plate.stl"/><metadata key="source_object_id" value="2"/><metadata key="extruder" value="1"/></part><part id="2"><metadata key="source_file" value="model_Text.stl"/><metadata key="source_object_id" value="3"/><metadata key="extruder" value="2"/></part><part id="3"><metadata key="source_file" value="model_Attribution.stl"/><metadata key="source_object_id" value="4"/><metadata key="extruder" value="1"/></part></object>
               <plate><metadata key="plater_name" value="TrailPrint"/><model_instance><metadata key="object_id" value="2"/></model_instance><model_instance><metadata key="object_id" value="4"/></model_instance><model_instance><metadata key="object_id" value="7"/></model_instance></plate>
             </config>'''
@@ -160,7 +160,8 @@ class BambuProjectTests(unittest.TestCase):
                 {"name": "assemble", "bbox": [25, 6, 145, 111]},
             ]}
             with zipfile.ZipFile(output, "w", zipfile.ZIP_STORED) as archive:
-                archive.writestr("3D/3dmodel.model", b"x" * 3000)
+                archive.writestr("3D/3dmodel.model", "<model xmlns:p=\"http://schemas.microsoft.com/3dmanufacturing/production/2015/06\"><resources><object id=\"4\"><components><component objectid=\"9\" p:path=\"/3D/water.model\"/></components></object></resources><!--" + "x" * 3000 + "--></model>")
+                archive.writestr("3D/water.model", "<model><resources><object id=\"9\"><mesh><triangles><triangle v1=\"0\" v2=\"1\" v3=\"2\"/></triangles></mesh></object></resources></model>")
                 archive.writestr("Metadata/project_settings.config", json.dumps(settings))
                 archive.writestr("Metadata/model_settings.config", model)
                 archive.writestr("Metadata/plate_1.json", json.dumps(plate_json))
@@ -175,6 +176,10 @@ class BambuProjectTests(unittest.TestCase):
             bands = [{"role": "mountain", "min_z": 8.0, "max_z": 17.0},
                      {"role": "summit", "min_z": 17.0, "max_z": 20.0}]
             terrain_filaments = {"land": 4, "mountain": 1, "summit": 2}
+            from trailprint.bambu import _water_paint_models
+            with zipfile.ZipFile(output) as archive:
+                with self.assertRaisesRegex(ValueError, 'not protected'):
+                    _water_paint_models(archive, verify=True)
             _enforce_project_settings(output, environment, bands, terrain_filaments)
             _enforce_project_settings(output, environment, bands, terrain_filaments)
             report = validate_3mf(

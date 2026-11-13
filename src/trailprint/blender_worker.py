@@ -510,9 +510,25 @@ def create_plate_attribution(bpy, module_root, plate):
     }
 
 
+def major_water_query_compat(query):
+    """Retain the older major-water policy for Wikidata-tagged streams."""
+    if not query:
+        return query
+    marker = 'way["waterway"~"river|canal"];'
+    extra = 'way["waterway"~"stream|ditch|drain"]["wikidata"];'
+    return query.replace(marker, marker + '\n  ' + extra)
+
+
 def configure_water(props, enabled, min_area_mm2=25.0):
     """Keep every supported water source behind one printability control."""
     enabled = bool(enabled)
+    if hasattr(props, 'show_water'):
+        props.show_water = enabled
+        props.elementChoice = enabled
+        props.col_wBodiesActive = enabled
+        props.col_wMajorActive = enabled
+        props.col_wMinorActive = False
+        props.elementSource = 'OSM'
     props.col_wPondsActive = enabled
     props.col_wBigRiversActive = enabled
     props.col_wSmallRiversActive = False
@@ -683,6 +699,26 @@ def main():
         terrain_utils = importlib.import_module(module_root + ".utils.terrain")
         generation_utils = importlib.import_module(utils.runGeneration.__module__)
         text_utils = importlib.import_module(module_root + ".utils.text_objects")
+        water_query_hooks = []
+        if hasattr(props, 'show_water'):
+            fetch_group = importlib.import_module(module_root + '.utils.osm.fetch_group')
+            original_query = fetch_group._build_union_query
+            original_cache = fetch_group._make_cache_path
+
+            def water_query(*args, **kwargs):
+                return major_water_query_compat(original_query(*args, **kwargs))
+
+            def water_cache(bbox, kind, settings=None):
+                path = Path(original_cache(bbox, kind, settings))
+                # Existing v4 WATER caches may have filtered these streams out.
+                if kind == 'WATER':
+                    path = path.with_name('trailprint-major-water-v1-' + path.name)
+                return str(path)
+
+            water_query_hooks = [(fetch_group, '_build_union_query', original_query),
+                                 (fetch_group, '_make_cache_path', original_cache)]
+            fetch_group._build_union_query = water_query
+            fetch_group._make_cache_path = water_cache
         original_shape_text = text_utils.replaceShapeText
         text_layouts = (importlib.import_module(module_root + ".utils.text_layouts")
                         if hasattr(props, "textLayout") else text_utils)
@@ -853,6 +889,8 @@ def main():
                 detail = "; ".join(coverage_result.get("errors", [])) or "No coverage report"
                 raise RuntimeError(f"Elevation coverage validation failed: {detail}")
         finally:
+            for module, name, original in water_query_hooks:
+                setattr(module, name, original)
             terrain_utils.plateInsert = original_plate_insert
             elevation_utils.get_tile_elevation = original_elevation
             generation_utils._rg_apply_single_color_mode = original_color_mode
