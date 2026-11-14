@@ -21,7 +21,7 @@ class PreviewJobs:
     def __init__(self):
         self.jobs = {}
 
-    def start(self, project, settings, environment, before_start=lambda: None):
+    def start(self, project, settings, environment, before_start=lambda: None, scale=None):
         identifier = uuid.uuid4().hex
         OPERATIONS.acquire(project, "rendering previews", identifier)
         settings, environment = deepcopy(settings), deepcopy(environment)
@@ -30,12 +30,14 @@ class PreviewJobs:
             project=str(project.resolve()),
             state="queued",
             message="Waiting to render",
+            scale=scale,
         )
         self.jobs[identifier] = job
         try:
-            before_start()
+            if scale is None:
+                before_start()
             threading.Thread(
-                target=self.run, args=(job, project, settings, environment), daemon=True
+                target=self.run, args=(job, project, settings, environment, before_start if scale is not None else None), daemon=True
             ).start()
         except Exception:
             OPERATIONS.release(project, identifier)
@@ -43,11 +45,34 @@ class PreviewJobs:
             raise
         return job
 
-    def run(self, job, project, settings, environment):
+    def run(self, job, project, settings, environment, save_preferences=None):
         stage = None
         try:
             job.update(state="running", message="Rendering top and angled previews")
             stage = Path(tempfile.mkdtemp(prefix="preview-", dir=project / "build"))
+            original = project
+            geometry_changes = {}
+            if job.get('scale') is not None:
+                from .blender_bridge import BuildSettings, run_blender_build
+                saved = json.loads((project / 'build/current-settings.json').read_text())
+                if float(saved.get('terrain_elevation_multiplier', 1)) != job['scale']:
+                    job.update(message='Rebuilding terrain and trail at the selected elevation scale')
+                    project = stage / project.name
+                    project.mkdir()
+                    shutil.copy2(original / 'route.gpx', project / 'route.gpx')
+                    for name in ('project.json',):
+                        if (original / name).exists():
+                            shutil.copy2(original / name, project / name)
+                    saved['terrain_elevation_multiplier'] = job['scale']
+                    run_blender_build(project, BuildSettings.validated(**saved))
+                    geometry_changes.update({path: None for path in (original / 'deliverables').glob('*.stl')})
+                    for folder in ('build', 'deliverables'):
+                        for path in (project / folder).iterdir():
+                            if path.is_file():
+                                geometry_changes[original / folder / path.name] = path
+                    from .naming import canonical_3mf_name
+                    geometry_changes[original / 'deliverables' / canonical_3mf_name(original)] = None
+                    job['geometry_changed'] = True
             bands = (
                 export_ranges(
                     settings.custom_bands,
@@ -62,7 +87,11 @@ class PreviewJobs:
             report = json.loads(changes[report_path].read_text())
             report["preview_only"] = True
             changes[report_path].write_text(json.dumps(report, indent=2))
-            publish_files(changes, project / "build")
+            changes = {original / path.relative_to(project): value for path, value in changes.items()}
+            publish_files({**geometry_changes, **changes}, original / "build")
+            if save_preferences is not None:
+                save_preferences()
+            project = original
             revision = hashlib.sha256((project / "build/preview.png").read_bytes()).hexdigest()
             job.update(
                 state="success",

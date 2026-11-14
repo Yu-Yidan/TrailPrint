@@ -9,6 +9,24 @@ from trailprint.preview_jobs import PreviewJobs
 from trailprint.project_operations import OPERATIONS
 
 
+def test_scale_failure_keeps_previous_model_and_preferences(tmp_path):
+    (tmp_path / 'build').mkdir()
+    (tmp_path / 'build/current-settings.json').write_text(json.dumps({'terrain_elevation_multiplier': 2}))
+    (tmp_path / 'route.gpx').write_text('route')
+    old = tmp_path / 'build/preview.png'
+    old.write_bytes(b'original')
+    job = dict(id='scale', scale=3)
+    saved = []
+    with patch('trailprint.blender_bridge.run_blender_build', side_effect=ValueError('failed')) as build:
+        PreviewJobs().run(job, tmp_path, BambuSettings.validated(6), SimpleNamespace(), lambda: saved.append(True))
+    assert job['state'] == 'error'
+    assert build.call_args.args[1].terrain_elevation_multiplier == 3
+    assert build.call_args.args[0] != tmp_path
+    assert old.read_bytes() == b'original'
+    assert json.loads((tmp_path / 'build/current-settings.json').read_text())['terrain_elevation_multiplier'] == 2
+    assert not saved
+
+
 def test_refresh_failure_preserves_existing_exports_and_releases_lock(tmp_path):
     (tmp_path / "build").mkdir()
     (tmp_path / "build/preview.png").write_bytes(b"previous")

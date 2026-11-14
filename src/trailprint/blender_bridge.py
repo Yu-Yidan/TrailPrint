@@ -663,6 +663,19 @@ def _process_generated_stage(stage, slug, corrections, blender_path, timeout,
     return water
 
 
+def _serialize_build(function):
+    import threading
+    from functools import wraps
+    lock = threading.Lock()
+
+    @wraps(function)
+    def run(*args, **kwargs):
+        with lock:
+            return function(*args, **kwargs)
+    return run
+
+
+@_serialize_build
 def run_blender_build(project: Path, settings: BuildSettings, blender: Optional[Path] = None,
                       timeout: int = 3600, cancel_event=None) -> List[Path]:
     project = project.resolve()

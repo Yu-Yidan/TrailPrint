@@ -350,6 +350,7 @@ def create_app(repo_root: Path = None, build_manager: BuildManager = None,
             project=project,
             files=preview_files,
             project_title=human_name(project),
+            elevation_scale=read_report(project / 'build/current-settings.json').get('terrain_elevation_multiplier', 1),
             validation=validation,
             customer_preview=customer_preview,
             preview_version=(project / "build/preview.png").stat().st_mtime_ns,
@@ -446,8 +447,18 @@ def create_app(repo_root: Path = None, build_manager: BuildManager = None,
         try:
             submission = read_bambu_submission(project)
             settings, environment, *_ = submission
+            saved_scale = float(read_report(project / 'build/current-settings.json').get('terrain_elevation_multiplier', 1))
+            scale = float(request.form.get('terrain_elevation_multiplier', saved_scale))
+            if scale not in (1, 1.5, 2, 2.5, 3, saved_scale):
+                raise ValueError('Choose a supported elevation scale.')
+            from flask import copy_current_request_context
+
+            @copy_current_request_context
+            def save_preferences():
+                save_bambu_preferences(project, *submission)
+
             job = preview_jobs.start(
-                project, settings, environment, lambda: save_bambu_preferences(project, *submission)
+                project, settings, environment, save_preferences, scale=scale
             )
             return jsonify(id=job["id"], state=job["state"])
         except (OSError, ValueError, KeyError, TypeError) as exc:
@@ -457,6 +468,9 @@ def create_app(repo_root: Path = None, build_manager: BuildManager = None,
     def build_bambu_project(slug):
         project = get_project(slug)
         try:
+            saved_scale = float(read_report(project / 'build/current-settings.json').get('terrain_elevation_multiplier', 1))
+            if float(request.form.get('terrain_elevation_multiplier', saved_scale)) != saved_scale:
+                raise ValueError('Refresh preview to apply the selected elevation scale before exporting.')
             submission = read_bambu_submission(project)
             settings, environment, *_ = submission
             save_bambu_preferences(project, *submission)

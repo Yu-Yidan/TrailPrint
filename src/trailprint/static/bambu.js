@@ -169,6 +169,7 @@ function initializePreviewRefresh(refreshButton) {
         status.textContent = job.message;
       } while (['queued','running'].includes(job.state));
       if (job.state !== 'success') throw Error(job.message);
+      if (job.geometry_changed) { window.location.reload(); return; }
       document.querySelectorAll('.preview-images img').forEach(img => {
         const url = new URL(img.src);url.searchParams.set('v',job.revision);img.src=url.href;
       });
