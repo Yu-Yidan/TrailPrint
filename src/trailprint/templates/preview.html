@@ -83,6 +83,11 @@ Terrain and trail were regenerated with Shape Extras set to None; the requested 
     {% if bambu_missing_roles %}<div class="notice error"><strong>Export unavailable.</strong>
       This build is missing: {{ bambu_missing_roles|join(', ')|title }}. Rebuild the STL set first.</div>{% endif %}
     <div class="notice error"><strong>Object-by-object print · purge multiplier 0.6.</strong> The prime tower is disabled; confirm AMS mapping and color transitions in Bambu Studio before printing.</div>
+    <label>Elevation scale <select class="text-input" name="terrain_elevation_multiplier">
+    {% for scale in [1, 1.5, 2, 2.5, 3] %}<option value="{{ scale }}" {% if scale == elevation_scale %}selected{% endif %}>{{ scale }}×</option>{% endfor %}
+    {% if elevation_scale not in [1, 1.5, 2, 2.5, 3] %}<option selected value="{{ elevation_scale }}">{{ elevation_scale }}×</option>{% endif %}
+    </select></label><p>Changing elevation rebuilds terrain and trail. Relief is capped at 15 mm.</p>
+    {% if band_editor.elevation %}<p>Current relief: {{ '%.2f'|format(band_editor.elevation.model_surface_max_z_mm - band_editor.elevation.model_surface_min_z_mm) }} mm.{% if band_editor.elevation.get('cap_applied') %} The relief cap limited the requested elevation scale.{% endif %}</p>{% endif %}
     <button type="button" class="button secondary" id="refresh-preview" data-status-url="{{ url_for('preview_job_status', slug=project.name, job_id='PREVIEW_JOB_ID') }}" data-url="{{ url_for('refresh_project_preview', slug=project.name) }}" {% if bambu_missing_roles %}disabled{% endif %}>Refresh preview</button>
     <p id="preview-refresh-status" role="status">{% if validation.get('preview_only') %}Preview colors have not been exported to the 3MF.{% endif %}</p>
     <button class="button primary" type="submit" {% if not bambu_ready or (bambu_job and bambu_job.state in ['queued','running']) %}disabled{% endif %}>Create Bambu 3MF</button>
